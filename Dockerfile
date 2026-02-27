@@ -3,7 +3,10 @@ FROM node:20-slim
 
 # Install build dependencies for better-sqlite3 (python3, make, g++)
 # These are often needed if prebuilds aren't available for the architecture
-RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
+# Added flags to bypass "Release file is not valid yet" errors caused by clock skew
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && \
+    apt-get install -y python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
