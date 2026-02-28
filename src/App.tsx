@@ -6,6 +6,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { DiceRoller } from './components/DiceRoller';
 import { Codex } from './components/Codex';
 import { CharacterView } from './components/CharacterView';
+import { PromptModal } from './components/PromptModal';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
 import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1079,6 +1080,7 @@ export default function App() {
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
+      <PromptModal />
     </div>
     } />
     </Routes>

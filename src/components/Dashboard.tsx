@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2 } from 'lucide-react';
+import { customPrompt, customConfirm } from './PromptModal';
 
 interface DashboardProps {
   data: DashboardData;
@@ -41,8 +42,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             <Activity size={12} /> Party Status
           </h3>
           <button 
-            onClick={() => {
-              const name = prompt("Character Name");
+            onClick={async () => {
+              const name = await customPrompt("Character Name");
               if (name) {
                 onUpdate?.({ 
                   ...data, 
@@ -80,7 +81,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex flex-col items-end">
                     <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => {
+                        onClick={async () => {
                           if (!sessionId) return;
                           // Use Base64 encoding for the character name to handle special characters safely
                           // We must encodeURIComponent the Base64 string because it can contain '/' which breaks routing
@@ -97,8 +98,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       <h4 className="font-display text-lg text-white flex items-center gap-2 group">
                         {char.name}
                         <button 
-                          onClick={() => {
-                            const next = prompt(`Rename ${char.name}`, char.name);
+                          onClick={async () => {
+                            const next = await customPrompt(`Rename ${char.name}`, char.name);
                             if (next) updateChar(char.name, { name: next });
                           }}
                           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
@@ -110,8 +111,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     {isMechanicEnabled('goal') && (
                       <p 
                         className="text-[10px] text-white/40 uppercase tracking-tighter cursor-pointer hover:text-white transition-colors"
-                        onClick={() => {
-                          const next = prompt(`Update goal for ${char.name}`, char.goal);
+                        onClick={async () => {
+                          const next = await customPrompt(`Update goal for ${char.name}`, char.goal);
                           if (next) updateChar(char.name, { goal: next });
                         }}
                       >
@@ -152,7 +153,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                             </div>
                             <div className="p-1">
                               <button 
-                                onClick={() => {
+                                onClick={async () => {
                                   if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
                                   setActiveTokenMenu(null);
                                 }}
@@ -162,7 +163,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                                 <RotateCcw size={12} /> Use for Reroll
                               </button>
                               <button 
-                                onClick={() => {
+                                onClick={async () => {
                                   if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
                                   setActiveTokenMenu(null);
                                 }}
@@ -172,7 +173,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                                 <ZapOff size={12} /> Use for Flashback
                               </button>
                               <button 
-                                onClick={() => {
+                                onClick={async () => {
                                   if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
                                   setActiveTokenMenu(null);
                                 }}
@@ -183,8 +184,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                               </button>
                               <div className="h-px bg-white/5 my-1" />
                               <button 
-                                onClick={() => {
-                                  const next = prompt(`Set tokens for ${char.name} (0-3)`, char.tokens.toString());
+                                onClick={async () => {
+                                  const next = await customPrompt(`Set tokens for ${char.name} (0-3)`, char.tokens.toString());
                                   if (next !== null) updateChar(char.name, { tokens: Math.min(3, Math.max(0, parseInt(next))) });
                                   setActiveTokenMenu(null);
                                 }}
@@ -198,8 +199,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       </AnimatePresence>
                     </div>
                     <button 
-                      onClick={() => {
-                        if (confirm(`Delete character ${char.name}?`)) {
+                      onClick={async () => {
+                        if (await customConfirm(`Delete character ${char.name}?`)) {
                           onUpdate?.({ ...data, characters: data.characters.filter(c => c.name !== char.name) });
                         }
                       }}
@@ -213,10 +214,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               
               <div className="grid grid-cols-2 gap-4">
                 {isMechanicEnabled('hp') && (
-                  <div className="space-y-1 group/stat cursor-pointer" onClick={() => {
+                  <div className="space-y-1 group/stat cursor-pointer" onClick={async () => {
                     const current = parseInt(char.hp.split('/')[0]);
                     const max = parseInt(char.hp.split('/')[1]);
-                    const next = prompt(`Update HP for ${char.name} (Current: ${char.hp})`, char.hp);
+                    const next = await customPrompt(`Update HP for ${char.name} (Current: ${char.hp})`, char.hp);
                     if (next) updateChar(char.name, { hp: next });
                   }}>
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/60">
@@ -232,8 +233,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </div>
                 )}
                 {isMechanicEnabled('stress') && (
-                  <div className="space-y-1 group/stat cursor-pointer" onClick={() => {
-                    const next = prompt(`Update Stress for ${char.name} (0-10)`, char.stress.toString());
+                  <div className="space-y-1 group/stat cursor-pointer" onClick={async () => {
+                    const next = await customPrompt(`Update Stress for ${char.name} (0-10)`, char.stress.toString());
                     if (next !== null) updateChar(char.name, { stress: Math.min(10, Math.max(0, parseInt(next))) });
                   }}>
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/60">
@@ -253,8 +254,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               {isMechanicEnabled('condition') && char.condition && (
                 <div 
                   className="text-[10px] italic text-orange-300/80 bg-orange-500/10 px-2 py-1 rounded border border-orange-500/20 cursor-pointer hover:bg-orange-500/20 transition-all"
-                  onClick={() => {
-                    const next = prompt(`Update condition for ${char.name}`, char.condition);
+                  onClick={async () => {
+                    const next = await customPrompt(`Update condition for ${char.name}`, char.condition);
                     if (next !== null) updateChar(char.name, { condition: next });
                   }}
                 >
@@ -267,8 +268,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex justify-between items-center">
                     <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Inventory</h5>
                     <button 
-                      onClick={() => {
-                        const next = prompt(`Add item to ${char.name}'s inventory`);
+                      onClick={async () => {
+                        const next = await customPrompt(`Add item to ${char.name}'s inventory`);
                         if (next) updateChar(char.name, { inventory: [...(char.inventory || []), next] });
                       }}
                       className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
@@ -284,7 +285,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       >
                         {item}
                         <button 
-                          onClick={() => {
+                          onClick={async () => {
                             const newInv = [...(char.inventory || [])];
                             newInv.splice(idx, 1);
                             updateChar(char.name, { inventory: newInv });
@@ -306,8 +307,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex justify-between items-center">
                     <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Equipment</h5>
                     <button 
-                      onClick={() => {
-                        const slot = prompt("New slot name (e.g. Ring, Spirit Bone):");
+                      onClick={async () => {
+                        const slot = await customPrompt("New slot name (e.g. Ring, Spirit Bone):");
                         if (slot) {
                           const newEq = [...(char.equipment || []), { slot, item: "Пусто" }];
                           updateChar(char.name, { equipment: newEq });
@@ -324,8 +325,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         <div className="flex items-center gap-2 overflow-hidden">
                           <span 
                             className="text-[9px] text-white/40 uppercase font-bold cursor-pointer hover:text-white truncate min-w-[50px]"
-                            onClick={() => {
-                              const next = prompt(`Rename slot:`, eq.slot);
+                            onClick={async () => {
+                              const next = await customPrompt(`Rename slot:`, eq.slot);
                               if (next) {
                                 const newEq = [...(char.equipment || [])];
                                 newEq[eqIdx] = { ...eq, slot: next };
@@ -337,8 +338,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           </span>
                           <span 
                             className="text-[10px] text-white/80 cursor-pointer hover:text-emerald-400 truncate"
-                            onClick={() => {
-                              const next = prompt(`Equip item in ${eq.slot}:`, eq.item);
+                            onClick={async () => {
+                              const next = await customPrompt(`Equip item in ${eq.slot}:`, eq.item);
                               if (next !== null) {
                                 const newEq = [...(char.equipment || [])];
                                 newEq[eqIdx] = { ...eq, item: next || "Пусто" };
@@ -350,7 +351,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           </span>
                         </div>
                         <button 
-                          onClick={() => {
+                          onClick={async () => {
                             const newEq = [...(char.equipment || [])];
                             newEq.splice(eqIdx, 1);
                             updateChar(char.name, { equipment: newEq });
@@ -370,10 +371,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex justify-between items-center">
                     <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Relationships</h5>
                     <button 
-                      onClick={() => {
-                        const target = prompt("NPC Name");
-                        const status = prompt("Status (e.g. Friend, Enemy)", "Neutral");
-                        const level = prompt("Level (-10 to 10)", "0");
+                      onClick={async () => {
+                        const target = await customPrompt("NPC Name");
+                        const status = await customPrompt("Status (e.g. Friend, Enemy)", "Neutral");
+                        const level = await customPrompt("Level (-10 to 10)", "0");
                         if (target && status && level) {
                           updateChar(char.name, { 
                             relationships: [...(char.relationships || []), { target, status, level: parseInt(level) }] 
@@ -390,8 +391,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       <div key={idx} className="group/rel flex items-center justify-between text-[9px]">
                         <span 
                           className="text-white/60 cursor-pointer hover:text-white"
-                          onClick={() => {
-                            const next = prompt(`Rename NPC ${rel.target}`, rel.target);
+                          onClick={async () => {
+                            const next = await customPrompt(`Rename NPC ${rel.target}`, rel.target);
                             if (next) {
                               const newRels = [...(char.relationships || [])];
                               newRels[idx] = { ...newRels[idx], target: next };
@@ -404,9 +405,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         <div className="flex items-center gap-2">
                           <span 
                             className={`italic cursor-pointer ${rel.level > 0 ? 'text-emerald-400' : rel.level < 0 ? 'text-red-400' : 'text-white/40'}`}
-                            onClick={() => {
-                              const nextStatus = prompt(`Update status for ${rel.target}`, rel.status);
-                              const nextLevel = prompt(`Update level for ${rel.target} (-10 to 10)`, rel.level.toString());
+                            onClick={async () => {
+                              const nextStatus = await customPrompt(`Update status for ${rel.target}`, rel.status);
+                              const nextLevel = await customPrompt(`Update level for ${rel.target} (-10 to 10)`, rel.level.toString());
                               if (nextStatus && nextLevel) {
                                 const newRels = [...(char.relationships || [])];
                                 newRels[idx] = { ...newRels[idx], status: nextStatus, level: parseInt(nextLevel) };
@@ -418,7 +419,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           </span>
                           <span className="text-white/20">({rel.level})</span>
                           <button 
-                            onClick={() => {
+                            onClick={async () => {
                               const newRels = [...(char.relationships || [])];
                               newRels.splice(idx, 1);
                               updateChar(char.name, { relationships: newRels });
@@ -454,7 +455,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                             {action.category}
                           </span>
                           <button 
-                            onClick={() => {
+                            onClick={async () => {
                               const newActions = [...(char.actions || [])];
                               newActions.splice(idx, 1);
                               updateChar(char.name, { actions: newActions });
@@ -466,8 +467,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         </div>
                         <h6 
                           className="text-xs font-bold text-white/80 cursor-pointer hover:text-white"
-                          onClick={() => {
-                            const next = prompt(`Rename action ${action.name}`, action.name);
+                          onClick={async () => {
+                            const next = await customPrompt(`Rename action ${action.name}`, action.name);
                             if (next) {
                               const newActions = [...(char.actions || [])];
                               newActions[idx] = { ...newActions[idx], name: next };
@@ -479,8 +480,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         </h6>
                         <p 
                           className="text-[10px] text-white/40 leading-tight cursor-pointer hover:text-white/60"
-                          onClick={() => {
-                            const next = prompt(`Update description for ${action.name}`, action.description);
+                          onClick={async () => {
+                            const next = await customPrompt(`Update description for ${action.name}`, action.description);
                             if (next) {
                               const newActions = [...(char.actions || [])];
                               newActions[idx] = { ...newActions[idx], description: next };
@@ -513,8 +514,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex justify-between items-center mb-1">
                     <span 
                       className="text-sm font-medium text-red-200 cursor-pointer hover:text-white"
-                      onClick={() => {
-                        const next = prompt(`Rename threat ${threat.name}`, threat.name);
+                      onClick={async () => {
+                        const next = await customPrompt(`Rename threat ${threat.name}`, threat.name);
                         if (next) {
                           const newThreats = [...(data.threats || [])];
                           newThreats[idx] = { ...newThreats[idx], name: next };
@@ -527,8 +528,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     <div className="flex items-center gap-2">
                       <span 
                         className="text-xs font-mono text-red-400 cursor-pointer hover:text-red-300"
-                        onClick={() => {
-                          const next = prompt(`Update HP for ${threat.name}`, threat.hp);
+                        onClick={async () => {
+                          const next = await customPrompt(`Update HP for ${threat.name}`, threat.hp);
                           if (next) {
                             const newThreats = [...(data.threats || [])];
                             newThreats[idx] = { ...newThreats[idx], hp: next };
@@ -539,7 +540,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         {threat.hp}
                       </span>
                       <button 
-                        onClick={() => {
+                        onClick={async () => {
                           const newThreats = [...(data.threats || [])];
                           newThreats.splice(idx, 1);
                           onUpdate?.({ ...data, threats: newThreats });
@@ -552,9 +553,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </div>
                   <p 
                     className="text-[10px] text-white/40 cursor-pointer hover:text-white/60"
-                    onClick={() => {
+                    onClick={async () => {
                       const currentFeatures = Array.isArray(threat.features) ? threat.features.join(', ') : threat.features;
-                      const next = prompt(`Update features for ${threat.name}`, currentFeatures);
+                      const next = await customPrompt(`Update features for ${threat.name}`, currentFeatures);
                       if (next) {
                         const newThreats = [...(data.threats || [])];
                         newThreats[idx] = { ...newThreats[idx], features: [next] };
@@ -567,8 +568,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 </div>
               ))}
               <button 
-                onClick={() => {
-                  const name = prompt("Threat Name");
+                onClick={async () => {
+                  const name = await customPrompt("Threat Name");
                   if (name) {
                     onUpdate?.({ ...data, threats: [...(data.threats || []), { name, hp: "10/10", features: ["New threat"] }] });
                   }
@@ -588,9 +589,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <Zap size={12} /> Clocks
               </h3>
               <button 
-                onClick={() => {
-                  const name = prompt("Clock Name");
-                  const total = prompt("Total Segments", "4");
+                onClick={async () => {
+                  const name = await customPrompt("Clock Name");
+                  const total = await customPrompt("Total Segments", "4");
                   if (name && total) {
                     onUpdate?.({ ...data, clocks: [...(data.clocks || []), { name, progress: 0, total: parseInt(total) }] });
                   }
@@ -606,8 +607,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex justify-between text-[10px] text-white/60">
                     <span 
                       className="cursor-pointer hover:text-white"
-                      onClick={() => {
-                        const next = prompt(`Rename clock ${clock.name}`, clock.name);
+                      onClick={async () => {
+                        const next = await customPrompt(`Rename clock ${clock.name}`, clock.name);
                         if (next) {
                           const newClocks = [...(data.clocks || [])];
                           newClocks[idx] = { ...newClocks[idx], name: next };
@@ -620,7 +621,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     <div className="flex items-center gap-2">
                       <span className="font-mono">{clock.progress}/{clock.total}</span>
                       <button 
-                        onClick={() => {
+                        onClick={async () => {
                           const newClocks = [...(data.clocks || [])];
                           newClocks.splice(idx, 1);
                           onUpdate?.({ ...data, clocks: newClocks });
@@ -631,7 +632,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       </button>
                     </div>
                   </div>
-                  <div className="flex gap-1 cursor-pointer" onClick={() => {
+                  <div className="flex gap-1 cursor-pointer" onClick={async () => {
                     const newClocks = [...(data.clocks || [])];
                     newClocks[idx] = { ...newClocks[idx], progress: (clock.progress + 1) % (clock.total + 1) };
                     onUpdate?.({ ...data, clocks: newClocks });
@@ -703,8 +704,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     <Target size={12} /> Threat Level
                   </h3>
                   <button 
-                    onClick={() => {
-                      const next = prompt("Update Threat Level (0, 4, 6, 8, 12)", data.threatLevel?.toString());
+                    onClick={async () => {
+                      const next = await customPrompt("Update Threat Level (0, 4, 6, 8, 12)", data.threatLevel?.toString());
                       if (next !== null) onUpdate?.({ ...data, threatLevel: parseInt(next) });
                     }}
                     className="text-[10px] text-white/20 hover:text-white transition-colors"
@@ -730,7 +731,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           {data.suggestedRoll && (
             <div className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2 relative group/suggest">
               <button 
-                onClick={() => onUpdate?.({ ...data, suggestedRoll: undefined })}
+                onClick={async () => onUpdate?.({ ...data, suggestedRoll: undefined })}
                 className="absolute top-2 right-2 opacity-0 group-hover/suggest:opacity-100 transition-opacity text-white/20 hover:text-white"
               >
                 <Trash2 size={12} />
@@ -751,8 +752,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <div className="flex justify-between items-center">
                 <h4 className="text-[10px] uppercase tracking-widest text-white/20 font-bold">Scene Aspects</h4>
                 <button 
-                  onClick={() => {
-                    const name = prompt("Aspect Name");
+                  onClick={async () => {
+                    const name = await customPrompt("Aspect Name");
                     if (name) {
                       onUpdate?.({ ...data, sceneAspects: [...(data.sceneAspects || []), name] });
                     }
@@ -770,8 +771,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   >
                     <span 
                       className="cursor-pointer hover:text-white"
-                      onClick={() => {
-                        const next = prompt(`Edit aspect`, typeof aspect === 'string' ? aspect : (aspect as any).name);
+                      onClick={async () => {
+                        const next = await customPrompt(`Edit aspect`, typeof aspect === 'string' ? aspect : (aspect as any).name);
                         if (next) {
                           const newAspects = [...(data.sceneAspects || [])];
                           newAspects[idx] = next;
@@ -782,7 +783,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       "{typeof aspect === 'string' ? aspect : (aspect as any).name}"
                     </span>
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         const newAspects = [...(data.sceneAspects || [])];
                         newAspects.splice(idx, 1);
                         onUpdate?.({ ...data, sceneAspects: newAspects });
@@ -808,8 +809,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <ScrollText size={12} /> Narrative Echoes
               </h3>
               <button 
-                onClick={() => {
-                  const next = prompt("Add Echo");
+                onClick={async () => {
+                  const next = await customPrompt("Add Echo");
                   if (next) onUpdate?.({ ...data, echoes: [...(data.echoes || []), next] });
                 }}
                 className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
@@ -823,8 +824,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="w-1 h-1 rounded-full bg-white/20 mt-1.5 shrink-0" />
                   <p 
                     className="text-[10px] text-white/60 leading-relaxed cursor-pointer hover:text-white"
-                    onClick={() => {
-                      const next = prompt("Edit Echo", echo);
+                    onClick={async () => {
+                      const next = await customPrompt("Edit Echo", echo);
                       if (next) {
                         const newEchoes = [...(data.echoes || [])];
                         newEchoes[idx] = next;
@@ -835,7 +836,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     {echo}
                   </p>
                   <button 
-                    onClick={() => {
+                    onClick={async () => {
                       const newEchoes = [...(data.echoes || [])];
                       newEchoes.splice(idx, 1);
                       onUpdate?.({ ...data, echoes: newEchoes });
@@ -856,8 +857,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <Wind size={12} /> Atmosphere
             </h3>
             <button 
-              onClick={() => {
-                const next = prompt("Update Atmosphere", data.atmosphere);
+              onClick={async () => {
+                const next = await customPrompt("Update Atmosphere", data.atmosphere);
                 if (next) onUpdate?.({ ...data, atmosphere: next });
               }}
               className="opacity-0 group-hover/atmo:opacity-100 transition-opacity p-1 hover:bg-white/5 rounded text-white/20 hover:text-white"
