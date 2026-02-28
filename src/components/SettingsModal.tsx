@@ -229,10 +229,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                   </div>
                 </div>
               ) : (
-                <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
-                  <p className="text-xs text-emerald-200/80 leading-relaxed">
-                    Gemini API is integrated and uses the platform's built-in key. It's free, fast, and supports massive context windows.
-                  </p>
+                <div className="space-y-4">
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                    <p className="text-xs text-emerald-200/80 leading-relaxed">
+                      Gemini API is integrated and uses the platform's built-in key by default. You can override it with your own key below.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Key size={12} /> Custom Gemini API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={localSettings.apiKey}
+                      onChange={(e) => setLocalSettings({ ...localSettings, apiKey: e.target.value })}
+                      placeholder="Leave empty to use platform key"
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Cpu size={12} /> Gemini Model
+                    </label>
+                    <select
+                      value={localSettings.modelName === 'local-model' ? 'gemini-3-flash-preview' : localSettings.modelName}
+                      onChange={(e) => setLocalSettings({ ...localSettings, modelName: e.target.value })}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm appearance-none"
+                    >
+                      <option value="gemini-3-flash-preview">Gemini 3 Flash (Fast, Default)</option>
+                      <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (Smart, Slower)</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                    </select>
+                  </div>
                 </div>
               )}
             </>

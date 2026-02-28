@@ -10,6 +10,11 @@ export interface Relationship {
   status: string;
 }
 
+export interface EquipmentSlot {
+  slot: string;
+  item: string;
+}
+
 export interface Character {
   name: string;
   hp: string;
@@ -19,18 +24,14 @@ export interface Character {
   goal: string;
   actions?: CharacterAction[];
   inventory?: string[];
+  equipment?: EquipmentSlot[];
   relationships?: Relationship[];
 }
 
 export interface Threat {
   name: string;
   hp: string;
-  features: string;
-}
-
-export interface SceneAspect {
-  name: string;
-  description: string;
+  features: string[];
 }
 
 export interface Clock {
@@ -42,7 +43,7 @@ export interface Clock {
 export interface DashboardData {
   characters: Character[];
   threats: Threat[];
-  sceneAspects: SceneAspect[];
+  sceneAspects: string[];
   clocks: Clock[];
   doomPool: number;
   echoes: string[];

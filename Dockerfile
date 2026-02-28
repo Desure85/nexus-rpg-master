@@ -29,6 +29,7 @@ EXPOSE 3000
 # Environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV DB_PATH=/app/data/game.db
 
 # Start the application using tsx (to run TypeScript server directly)
 CMD ["npx", "tsx", "server.ts"]

@@ -149,9 +149,13 @@ export const DEFAULT_MECHANICS: MechanicConfig[] = [
 export const SYSTEM_PROMPT = `
 # ROLE: Мастер Игры (DM) — Система "Fate & Dragons" (v.5.0 Core)
 
-## 1. ФИЛОСОФИЯ: ИНТЕРАКТИВНЫЙ РОМАН
-Ты — ведущий, вычислитель и соавтор. Твоя цель: создать мир, который **помнит** действия игроков. Баланс между жесткой механикой и глубоким нарративом.
-**ЗОЛОТОЕ ПРАВИЛО:** НИКОГДА не описывай действия, мысли или реакции персонажей за них. Останавливайся в момент выбора или сразу после оглашения последствий броска.
+## 1. ФИЛОСОФИЯ: БЕСПРИСТРАСТНЫЙ СУДЬЯ
+Ты — логичный, честный и беспристрастный мир. Твоя цель: реагировать на действия игроков максимально реалистично в рамках сеттинга. 
+**ЗОЛОТЫЕ ПРАВИЛА:**
+- **Никакой сюжетной брони (Plot Armor):** Не подыгрывай игрокам и не спасай их от последствий их собственных глупых решений.
+- **Никакой искусственной жестокости:** Не пытайся убить их специально. Если они действуют умно и бросок успешен — они побеждают.
+- **Кубик — это закон:** Если игрок провалил бросок, последствия должны быть реальными и ощутимыми.
+- НИКОГДА не описывай действия, мысли или реакции персонажей за них. Останавливайся в момент выбора или сразу после оглашения последствий.
 
 ## 2. ПРОТОКОЛ ОТВЕТА
 1. Narrative (ТОЛЬКО художественное описание текущей ситуации. ВАЖНО: НЕ ПИШИ заголовки вроде "### Нарратив" или "### Narrative". Просто начинай писать текст. НЕ ВЫВОДИ векторы действий в тексте, они должны быть только в JSON дашборда!).
@@ -163,43 +167,48 @@ export const SYSTEM_PROMPT = `
   3. НЕ продолжай сюжет активно, пока не ответишь на вопрос. Сосредоточься на уточнении лора.
   4. Если вопрос касается предмета в инвентаре — опиши его свойства. Если NPC — его внешность и статус.
 
-## 4. ЖЕСТОКОСТЬ И ПОСЛЕДСТВИЯ (ВАЖНО!)
-Игроки НЕ бессмертны. Они могут проиграть, сойти с ума или умереть. Мир жесток и реагирует на их ошибки.
-- Провал броска: Наноси урон (HP), повышай Стресс, лишай ресурсов, вводи новые Угрозы.
-- Искушение (Temptation): Если игрок выбирает действие категории "Искушение", он получает сиюминутную выгоду или легкий путь, но ВСЕГДА платит ужасную цену (потеря HP, огромный рост Doom Pool, предательство, травма). 
-  ВАЖНО: Ты должен ОПИСАТЬ эту цену и ПРЕДЛОЖИТЬ игроку выбор — согласен ли он заплатить её, или хочет отступить. Не делай выбор за него!
-- СМЕРТЬ И ПРОИГРЫШ: Если HP персонажа падает до 0 или Стресс достигает 10 — персонаж УМИРАЕТ или СХОДИТ С УМА. Это конец его пути. Опиши его гибель красочно и жестоко. В JSON дашборда поставь ему hp: "0", stress: 10, condition: "Мертв", и удали все его действия (actions: []).
+## 4. ЧЕСТНЫЕ ПОСЛЕДСТВИЯ
+Мир реагирует строго по логике:
+- **Провал броска:** Логичные, жесткие, но честные последствия. Наноси урон (HP), повышай Стресс, лишай ресурсов, вводи новые Угрозы. Враги действуют эффективно и безжалостно.
+- **Успех броска:** Игрок получает ровно то, что хотел, без скрытых подвохов.
+- **Искушение (Temptation):** Если игрок выбирает действие категории "Искушение", он получает сиюминутную выгоду, но ВСЕГДА платит логичную цену (рост Doom Pool, предательство, осложнение).
+- **СМЕРТЬ:** Если HP падает до 0 или Стресс достигает 10 — персонаж погибает или сходит с ума. Если игрок совершает фатальную ошибку (например, прыгает в лаву без защиты) — он умирает. Не спасай их искусственно, будь честным арбитром.
 `;
 
-const TECHNICAL_INSTRUCTIONS = `
+export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => `
 ## ТЕХНИЧЕСКИЙ ПРОТОКОЛ (КРИТИЧЕСКИ ВАЖНО!)
 Твой ответ ВСЕГДА должен состоять из двух частей: сначала художественный текст, а затем технические блоки JSON. БЕЗ JSON ИНТЕРФЕЙС ИГРЫ СЛОМАЕТСЯ!
 
+ВАЖНОЕ ПРАВИЛО: НИКОГДА не пиши никакой текст ПОСЛЕ блоков JSON. Твой ответ должен заканчиваться закрывающим тегом (например, </dashboard_json> или </lore_update>). Любой текст после JSON сломает парсер!
+
 1. Дашборд: Оберни в теги <dashboard_json>...</dashboard_json>.
-Формат:
+Формат (СТРОГИЙ JSON, никаких стрелочек, комментариев или неэкранированных кавычек внутри значений!):
 {
   "characters": [{
     "name": "...", 
     "hp": "X/Y", 
-    "stress": 0-10, 
-    "tokens": 0-3, 
+    "stress": 0, 
+    "tokens": 0, 
     "condition": "...", 
     "goal": "...", 
     "inventory": ["Предмет 1", "..."],
-    "relationships": [{"target": "NPC", "level": -10..10, "status": "..."}],
+    "equipment": [{"slot": "Голова", "item": "Шлем"}, {"slot": "Оружие", "item": "Меч"}, {"slot": "Кость духа", "item": "Пусто"}],
+    "relationships": [{"target": "NPC", "level": 0, "status": "..."}],
     "actions": [{"category": "Профильный|Рискованный|Синергия|Искушение", "name": "...", "description": "..."}]
   }],
-  "threats": [{"name": "...", "hp": "...", "features": "..."}],
-  "sceneAspects": [{"name": "...", "description": "..."}],
+  "threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}],
+  "sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"],
   "clocks": [{"name": "...", "progress": 0, "total": 4}],
-  "doomPool": 0-5,
-  "echoes": ["..."],
+  "doomPool": 0,
+  "echoes": ["Звон мечей вдали", "Шепот ветра"],
   "atmosphere": "...",
   "threatLevel": 0,
   "suggestedRoll": {"type": "classic|triple|shifted|taint", "reason": "..."}
 }
+ВАЖНО: Поля stress, tokens, doomPool, threatLevel, progress, total должны быть ЧИСЛАМИ (не строками, не формулами вроде "7->9"). Поля features, sceneAspects, echoes должны быть МАССИВАМИ СТРОК.
+ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".
 ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).
-ВАЖНО: Поле threatLevel (0, 4, 6, 8, 12) отражает текущую опасность сцены. Устанавливай его сам! Если врагов нет, ставь 0. Если есть сильный враг, ставь 8 или 12. Это значение будет автоматически вычитаться из бросков игроков.
+${mechanics.find(m => m.id === 'threat')?.enabled ? 'ВАЖНО: Поле threatLevel (0, 4, 6, 8, 12) отражает текущую опасность сцены. Устанавливай его сам! Если врагов нет, ставь 0. Если есть сильный враг, ставь 8 или 12. Это значение будет автоматически вычитаться из бросков игроков.' : ''}
 
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
@@ -268,7 +277,11 @@ export default function App() {
 
   useEffect(() => {
     currentSessionRef.current = currentSession;
-  }, [currentSession]);
+    if (ws && ws.readyState === WebSocket.OPEN && currentSession) {
+      console.log('Joining room:', currentSession.id);
+      ws.send(JSON.stringify({ type: 'join', sessionId: currentSession.id }));
+    }
+  }, [currentSession, ws]);
 
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -319,19 +332,9 @@ export default function App() {
   }, [ws, currentSession?.id]);
 
   useEffect(() => {
-    if (chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [currentSession?.history.length]);
-
-  useEffect(() => {
     fetchSessions();
     fetchSettings();
   }, []);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [currentSession?.history]);
 
   const fetchSessions = async () => {
     const res = await fetch('/api/sessions');
@@ -552,12 +555,12 @@ export default function App() {
       const basePrompt = isClarify ? CLARIFY_SYSTEM_PROMPT : settings.systemPrompt;
 
       // Combine game rules, technical requirements, lore, and current state
-      const fullSystemPrompt = `${basePrompt}${isClarify ? '' : mechanicsContext}\n\n${TECHNICAL_INSTRUCTIONS}\n${loreContext}${codexContext}${dashboardContext}`;
+      const fullSystemPrompt = `${basePrompt}${isClarify ? '' : mechanicsContext}\n\n${getTechnicalInstructions(settings.mechanics || DEFAULT_MECHANICS)}\n${loreContext}${codexContext}${dashboardContext}`;
 
       if (settings.provider === 'gemini') {
-        const apiKey = process.env.GEMINI_API_KEY;
+        const apiKey = settings.apiKey || process.env.GEMINI_API_KEY;
         if (!apiKey) {
-          throw new Error("Gemini API Key not found. Please ensure it is set in the Secrets panel.");
+          throw new Error("Gemini API Key not found. Please ensure it is set in the Settings or Secrets panel.");
         }
         const ai = new GoogleGenAI({ apiKey });
         logRequest = [
@@ -567,8 +570,13 @@ export default function App() {
             parts: [{ text: m.content }]
           }))
         ];
+        
+        const modelToUse = (settings.modelName && settings.modelName !== 'local-model') 
+          ? settings.modelName 
+          : "gemini-3-flash-preview";
+          
         const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
+          model: modelToUse,
           contents: logRequest
         });
         aiContent = response.text || '';

@@ -46,7 +46,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               if (name) {
                 onUpdate?.({ 
                   ...data, 
-                  characters: [...data.characters, { 
+                  characters: [...(data.characters || []), { 
                     name, 
                     hp: "10/10", 
                     stress: 0, 
@@ -54,6 +54,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     condition: "Healthy", 
                     goal: "Survive",
                     inventory: [],
+                    equipment: [],
                     relationships: [],
                     actions: []
                   }] 
@@ -300,6 +301,70 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 </div>
               )}
 
+              {isMechanicEnabled('inventory') && (
+                <div className="space-y-1 pt-2 border-t border-white/5">
+                  <div className="flex justify-between items-center">
+                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Equipment</h5>
+                    <button 
+                      onClick={() => {
+                        const slot = prompt("New slot name (e.g. Ring, Spirit Bone):");
+                        if (slot) {
+                          const newEq = [...(char.equipment || []), { slot, item: "Пусто" }];
+                          updateChar(char.name, { equipment: newEq });
+                        }
+                      }}
+                      className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
+                    >
+                      <Plus size={10} />
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {(char.equipment || []).map((eq, eqIdx) => (
+                      <div key={eqIdx} className="group/eq flex items-center justify-between bg-black/20 border border-white/5 rounded p-1.5">
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <span 
+                            className="text-[9px] text-white/40 uppercase font-bold cursor-pointer hover:text-white truncate min-w-[50px]"
+                            onClick={() => {
+                              const next = prompt(`Rename slot:`, eq.slot);
+                              if (next) {
+                                const newEq = [...(char.equipment || [])];
+                                newEq[eqIdx] = { ...eq, slot: next };
+                                updateChar(char.name, { equipment: newEq });
+                              }
+                            }}
+                          >
+                            {eq.slot}
+                          </span>
+                          <span 
+                            className="text-[10px] text-white/80 cursor-pointer hover:text-emerald-400 truncate"
+                            onClick={() => {
+                              const next = prompt(`Equip item in ${eq.slot}:`, eq.item);
+                              if (next !== null) {
+                                const newEq = [...(char.equipment || [])];
+                                newEq[eqIdx] = { ...eq, item: next || "Пусто" };
+                                updateChar(char.name, { equipment: newEq });
+                              }
+                            }}
+                          >
+                            {eq.item}
+                          </span>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            const newEq = [...(char.equipment || [])];
+                            newEq.splice(eqIdx, 1);
+                            updateChar(char.name, { equipment: newEq });
+                          }}
+                          className="opacity-0 group-hover/eq:opacity-100 p-1 text-white/20 hover:text-red-400 transition-all"
+                        >
+                          <Trash2 size={8} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {isMechanicEnabled('relationships') && (
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
@@ -451,7 +516,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       onClick={() => {
                         const next = prompt(`Rename threat ${threat.name}`, threat.name);
                         if (next) {
-                          const newThreats = [...data.threats];
+                          const newThreats = [...(data.threats || [])];
                           newThreats[idx] = { ...newThreats[idx], name: next };
                           onUpdate?.({ ...data, threats: newThreats });
                         }
@@ -465,7 +530,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         onClick={() => {
                           const next = prompt(`Update HP for ${threat.name}`, threat.hp);
                           if (next) {
-                            const newThreats = [...data.threats];
+                            const newThreats = [...(data.threats || [])];
                             newThreats[idx] = { ...newThreats[idx], hp: next };
                             onUpdate?.({ ...data, threats: newThreats });
                           }
@@ -475,7 +540,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       </span>
                       <button 
                         onClick={() => {
-                          const newThreats = [...data.threats];
+                          const newThreats = [...(data.threats || [])];
                           newThreats.splice(idx, 1);
                           onUpdate?.({ ...data, threats: newThreats });
                         }}
@@ -488,15 +553,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <p 
                     className="text-[10px] text-white/40 cursor-pointer hover:text-white/60"
                     onClick={() => {
-                      const next = prompt(`Update features for ${threat.name}`, threat.features);
+                      const currentFeatures = Array.isArray(threat.features) ? threat.features.join(', ') : threat.features;
+                      const next = prompt(`Update features for ${threat.name}`, currentFeatures);
                       if (next) {
-                        const newThreats = [...data.threats];
-                        newThreats[idx] = { ...newThreats[idx], features: next };
+                        const newThreats = [...(data.threats || [])];
+                        newThreats[idx] = { ...newThreats[idx], features: [next] };
                         onUpdate?.({ ...data, threats: newThreats });
                       }
                     }}
                   >
-                    {threat.features}
+                    {Array.isArray(threat.features) ? threat.features.join(', ') : threat.features}
                   </p>
                 </div>
               ))}
@@ -504,7 +570,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 onClick={() => {
                   const name = prompt("Threat Name");
                   if (name) {
-                    onUpdate?.({ ...data, threats: [...data.threats, { name, hp: "10/10", features: "New threat" }] });
+                    onUpdate?.({ ...data, threats: [...(data.threats || []), { name, hp: "10/10", features: ["New threat"] }] });
                   }
                 }}
                 className="w-full py-2 border border-dashed border-white/10 rounded-lg text-[10px] text-white/20 hover:text-white/40 hover:border-white/20 transition-all flex items-center justify-center gap-2"
@@ -526,7 +592,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   const name = prompt("Clock Name");
                   const total = prompt("Total Segments", "4");
                   if (name && total) {
-                    onUpdate?.({ ...data, clocks: [...data.clocks, { name, progress: 0, total: parseInt(total) }] });
+                    onUpdate?.({ ...data, clocks: [...(data.clocks || []), { name, progress: 0, total: parseInt(total) }] });
                   }
                 }}
                 className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
@@ -543,7 +609,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       onClick={() => {
                         const next = prompt(`Rename clock ${clock.name}`, clock.name);
                         if (next) {
-                          const newClocks = [...data.clocks];
+                          const newClocks = [...(data.clocks || [])];
                           newClocks[idx] = { ...newClocks[idx], name: next };
                           onUpdate?.({ ...data, clocks: newClocks });
                         }
@@ -555,7 +621,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       <span className="font-mono">{clock.progress}/{clock.total}</span>
                       <button 
                         onClick={() => {
-                          const newClocks = [...data.clocks];
+                          const newClocks = [...(data.clocks || [])];
                           newClocks.splice(idx, 1);
                           onUpdate?.({ ...data, clocks: newClocks });
                         }}
@@ -566,7 +632,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </div>
                   </div>
                   <div className="flex gap-1 cursor-pointer" onClick={() => {
-                    const newClocks = [...data.clocks];
+                    const newClocks = [...(data.clocks || [])];
                     newClocks[idx] = { ...newClocks[idx], progress: (clock.progress + 1) % (clock.total + 1) };
                     onUpdate?.({ ...data, clocks: newClocks });
                   }}>
@@ -688,7 +754,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   onClick={() => {
                     const name = prompt("Aspect Name");
                     if (name) {
-                      onUpdate?.({ ...data, sceneAspects: [...data.sceneAspects, { name, description: "" }] });
+                      onUpdate?.({ ...data, sceneAspects: [...(data.sceneAspects || []), name] });
                     }
                   }}
                   className="p-1 hover:bg-white/5 rounded text-white/10 hover:text-white transition-all"
@@ -699,25 +765,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <div className="flex flex-wrap gap-2">
                 {data.sceneAspects.map((aspect, idx) => (
                   <span 
-                    key={aspect.name} 
+                    key={idx} 
                     className="group/aspect px-2 py-1 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 italic flex items-center gap-2"
                   >
                     <span 
                       className="cursor-pointer hover:text-white"
                       onClick={() => {
-                        const next = prompt(`Edit aspect`, aspect.name);
+                        const next = prompt(`Edit aspect`, typeof aspect === 'string' ? aspect : (aspect as any).name);
                         if (next) {
-                          const newAspects = [...data.sceneAspects];
-                          newAspects[idx] = { ...newAspects[idx], name: next };
+                          const newAspects = [...(data.sceneAspects || [])];
+                          newAspects[idx] = next;
                           onUpdate?.({ ...data, sceneAspects: newAspects });
                         }
                       }}
                     >
-                      "{aspect.name}"
+                      "{typeof aspect === 'string' ? aspect : (aspect as any).name}"
                     </span>
                     <button 
                       onClick={() => {
-                        const newAspects = [...data.sceneAspects];
+                        const newAspects = [...(data.sceneAspects || [])];
                         newAspects.splice(idx, 1);
                         onUpdate?.({ ...data, sceneAspects: newAspects });
                       }}
@@ -744,7 +810,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <button 
                 onClick={() => {
                   const next = prompt("Add Echo");
-                  if (next) onUpdate?.({ ...data, echoes: [...data.echoes, next] });
+                  if (next) onUpdate?.({ ...data, echoes: [...(data.echoes || []), next] });
                 }}
                 className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
               >
@@ -760,7 +826,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     onClick={() => {
                       const next = prompt("Edit Echo", echo);
                       if (next) {
-                        const newEchoes = [...data.echoes];
+                        const newEchoes = [...(data.echoes || [])];
                         newEchoes[idx] = next;
                         onUpdate?.({ ...data, echoes: newEchoes });
                       }
@@ -770,7 +836,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </p>
                   <button 
                     onClick={() => {
-                      const newEchoes = [...data.echoes];
+                      const newEchoes = [...(data.echoes || [])];
                       newEchoes.splice(idx, 1);
                       onUpdate?.({ ...data, echoes: newEchoes });
                     }}

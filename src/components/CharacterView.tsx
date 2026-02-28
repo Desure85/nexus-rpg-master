@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { GameSession, Character, DashboardData, MechanicConfig } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
 import { Codex } from './Codex';
 
 export const CharacterView: React.FC = () => {
@@ -16,6 +16,7 @@ export const CharacterView: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [activeTab, setActiveTab] = useState<'character' | 'scene' | 'story' | 'lore' | 'codex'>('character');
   const [isBookView, setIsBookView] = useState(false);
+  const [fontSize, setFontSize] = useState(16);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   // Decode character name safely (handle both Base64 and legacy URI encoded)
@@ -69,28 +70,43 @@ export const CharacterView: React.FC = () => {
     fetchData();
     fetchSettings();
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${protocol}//${window.location.host}`);
-    
-    socket.onopen = () => {
-      console.log('CharacterView WebSocket Connected');
-      socket.send(JSON.stringify({ type: 'join', sessionId }));
+    let socket: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout;
+
+    const connect = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${protocol}//${window.location.host}`);
+      
+      socket.onopen = () => {
+        console.log('CharacterView WebSocket Connected');
+        socket.send(JSON.stringify({ type: 'join', sessionId }));
+      };
+
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'update') {
+          console.log('CharacterView received update');
+          fetchData();
+        }
+      };
+
+      socket.onclose = () => {
+        console.log('CharacterView WebSocket Disconnected. Reconnecting in 3s...');
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+
+      setWs(socket);
     };
 
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'update') {
-        console.log('CharacterView received update');
-        fetchData();
+    connect();
+
+    return () => {
+      if (socket) {
+        socket.onclose = null; // Prevent reconnect on unmount
+        socket.close();
       }
+      clearTimeout(reconnectTimeout);
     };
-
-    socket.onclose = () => {
-      console.log('CharacterView WebSocket Disconnected');
-    };
-
-    setWs(socket);
-    return () => socket.close();
   }, [sessionId, charName]);
 
   const handleManualRefresh = () => {
@@ -112,12 +128,6 @@ export const CharacterView: React.FC = () => {
       setWs(socket);
     }
   };
-
-  useEffect(() => {
-    if (activeTab === 'story' && chatEndRef.current) {
-      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [session?.history.length, activeTab]);
 
   const hasActed = React.useMemo(() => {
     if (!session || session.history.length === 0) return false;
@@ -213,9 +223,25 @@ export const CharacterView: React.FC = () => {
         >
           <Library size={14} /> Codex
         </button>
+        <div className="flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
+          <button 
+            onClick={() => setFontSize(Math.max(12, fontSize - 2))}
+            className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"
+            title="Decrease Font Size"
+          >
+            <Type size={12} />
+          </button>
+          <button 
+            onClick={() => setFontSize(Math.min(24, fontSize + 2))}
+            className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"
+            title="Increase Font Size"
+          >
+            <Type size={16} />
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 lg:p-8">
+      <div className="flex-1 overflow-y-auto p-4 lg:p-8" style={{ fontSize: `${fontSize}px` }}>
         <div className="max-w-2xl mx-auto space-y-8 pb-32">
           {activeTab === 'character' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
@@ -364,6 +390,25 @@ export const CharacterView: React.FC = () => {
                 </div>
               </section>
 
+              {/* Equipment */}
+              {isMechanicEnabled('inventory') && character.equipment && character.equipment.length > 0 && (
+                <section className="space-y-4">
+                  <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                    <Shield size={12} /> Equipment
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {character.equipment.map((eq, idx) => (
+                      <div key={idx} className="bg-black/40 border border-white/10 rounded-lg p-2.5 flex flex-col gap-1">
+                        <span className="text-[8px] uppercase tracking-widest text-white/40 font-bold">{eq.slot}</span>
+                        <span className={`text-xs ${eq.item === 'Пусто' ? 'text-white/20 italic' : 'text-emerald-400'}`}>
+                          {eq.item}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
 
             </motion.div>
           )}
@@ -432,15 +477,15 @@ export const CharacterView: React.FC = () => {
                 </div>
               )}
 
-              {isMechanicEnabled('scene_aspects') && dashboard.aspects && dashboard.aspects.length > 0 && (
+              {isMechanicEnabled('scene_aspects') && dashboard.sceneAspects && dashboard.sceneAspects.length > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
                     <Wind size={12} /> Scene Aspects
                   </h3>
                   <div className="flex flex-wrap gap-2">
-                    {dashboard.aspects.map((aspect, idx) => (
+                    {dashboard.sceneAspects.map((aspect, idx) => (
                       <span key={idx} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white/80">
-                        {aspect}
+                        {typeof aspect === 'string' ? aspect : (aspect as any).name}
                       </span>
                     ))}
                   </div>
@@ -512,44 +557,6 @@ export const CharacterView: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* Action Input Bar (Fixed at Bottom) */}
-      {activeTab === 'character' && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-black/80 backdrop-blur-xl border-t border-white/10">
-          <div className="max-w-2xl mx-auto">
-            {hasActed ? (
-              <div className="w-full bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 text-center text-emerald-400 text-sm font-medium animate-pulse">
-                Action declared. Waiting for the Master...
-              </div>
-            ) : (
-              <div className="relative">
-                <textarea 
-                  value={actionInput}
-                  onChange={(e) => setActionInput(e.target.value)}
-                  placeholder="Describe a custom action..."
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-4 pr-32 text-sm focus:outline-none focus:border-amber-400/50 transition-all min-h-[60px] max-h-[120px] resize-none"
-                  rows={1}
-                />
-                <div className="absolute right-2 bottom-2 flex gap-2">
-                  <button 
-                    onClick={() => sendAction()}
-                    disabled={!actionInput.trim() || isSending}
-                    className="px-4 py-2 bg-amber-400 text-black rounded-xl hover:bg-amber-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-xs font-bold uppercase tracking-widest flex items-center gap-2"
-                  >
-                    Roll & Send <Send size={14} />
-                  </button>
-                </div>
-              </div>
-            )}
-            {dashboard.suggestedRoll && !hasActed && (
-              <div className="mt-2 text-[10px] text-white/40 text-center uppercase tracking-widest">
-                Suggested Roll: <span className="text-amber-400 font-bold capitalize">{dashboard.suggestedRoll.type}</span>
-                <span className="block text-[8px] opacity-70 mt-1">"{dashboard.suggestedRoll.reason}"</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

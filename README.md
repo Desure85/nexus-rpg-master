@@ -71,9 +71,14 @@ A modern, AI-powered Tabletop RPG platform designed for solo and group play.
 
 2.  **Run the container**:
     ```bash
-    docker run -p 3000:3000 -v $(pwd)/game.db:/app/game.db nexus-rpg
+    # Linux / Mac
+    docker run -p 3000:3000 -v $(pwd)/data:/app/data nexus-rpg
+
+    # Windows (PowerShell)
+    docker run -p 3000:3000 -v ${PWD}/data:/app/data nexus-rpg
     ```
-    - The `-v` flag mounts the database file so your game data persists outside the container.
+    - The `-v` flag mounts a `data` directory from your host to `/app/data` in the container.
+    - **Note:** Docker will automatically create the `data` directory on your host if it doesn't exist. The `game.db` file will be created inside it.
 
 3.  **Accessing Local LLM (Ollama/LM Studio) from Docker**:
     - **Windows / Mac**: Use `host.docker.internal` instead of `localhost`.
