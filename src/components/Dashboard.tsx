@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2 } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 
 interface DashboardProps {
@@ -794,6 +794,85 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </button>
                   </span>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {isMechanicEnabled('loot') && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <h4 className="text-[10px] uppercase tracking-widest text-emerald-400/60 font-bold flex items-center gap-1.5">
+                  <Gem size={10} /> Scene Loot
+                </h4>
+                <button 
+                  onClick={async () => {
+                    const name = await customPrompt("Add Loot Item");
+                    if (name) {
+                      onUpdate?.({ ...data, sceneLoot: [...(data.sceneLoot || []), name] });
+                    }
+                  }}
+                  className="p-1 hover:bg-white/5 rounded text-white/10 hover:text-white transition-all"
+                >
+                  <Plus size={10} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(data.sceneLoot || []).map((item, idx) => (
+                  <span 
+                    key={idx} 
+                    className="group/loot px-2 py-1 bg-emerald-900/20 border border-emerald-500/20 rounded text-[10px] text-emerald-400 flex items-center gap-2"
+                  >
+                    <span 
+                      className="cursor-pointer hover:text-emerald-300"
+                      onClick={async () => {
+                        const next = await customPrompt(`Edit loot`, item);
+                        if (next) {
+                          const newLoot = [...(data.sceneLoot || [])];
+                          newLoot[idx] = next;
+                          onUpdate?.({ ...data, sceneLoot: newLoot });
+                        }
+                      }}
+                    >
+                      {item}
+                    </span>
+                    <button 
+                      onClick={async () => {
+                        const charNames = data.characters.map(c => c.name).join(', ');
+                        const charName = await customPrompt(`Who takes "${item}"?\nAvailable: ${charNames}`);
+                        if (charName) {
+                          const char = data.characters.find(c => c.name.toLowerCase() === charName.toLowerCase());
+                          if (char) {
+                            const newLoot = [...(data.sceneLoot || [])];
+                            newLoot.splice(idx, 1);
+                            const newChars = data.characters.map(c => 
+                              c.name === char.name ? { ...c, inventory: [...(c.inventory || []), item] } : c
+                            );
+                            onUpdate?.({ ...data, sceneLoot: newLoot, characters: newChars });
+                          } else {
+                            alert("Character not found.");
+                          }
+                        }
+                      }}
+                      className="opacity-0 group-hover/loot:opacity-100 transition-opacity text-emerald-500/50 hover:text-emerald-400"
+                      title="Take item"
+                    >
+                      <Download size={10} />
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        const newLoot = [...(data.sceneLoot || [])];
+                        newLoot.splice(idx, 1);
+                        onUpdate?.({ ...data, sceneLoot: newLoot });
+                      }}
+                      className="opacity-0 group-hover/loot:opacity-100 transition-opacity text-emerald-500/50 hover:text-red-400"
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+                {(!data.sceneLoot || data.sceneLoot.length === 0) && (
+                  <span className="text-[10px] text-white/20 italic">No loot...</span>
+                )}
               </div>
             </div>
           )}

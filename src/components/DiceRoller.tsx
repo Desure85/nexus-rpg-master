@@ -60,14 +60,14 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
       
       let threatStr = '';
       let threatRoll = 0;
-      if (threatLevel > 0) {
+      if (threatLevel > 0 && isMechanicEnabled('threat')) {
         threatRoll = Math.floor(Math.random() * threatLevel) + 1;
         threatStr = ` | Threat d${threatLevel} = -${threatRoll}`;
       }
 
       const currentStress = charObj ? charObj.stress : 0;
       let stressModStr = '';
-      if (type === 'triple' || type === 'shifted') {
+      if ((type === 'triple' || type === 'shifted') && isMechanicEnabled('stress')) {
         if (currentStress <= 1) {
           stressModStr = ' | Stress: +2 (Max used)';
         } else if (currentStress <= 4) {

@@ -144,6 +144,12 @@ export const DEFAULT_MECHANICS: MechanicConfig[] = [
     name: 'Sensory Details (Сенсорика)',
     enabled: true,
     description: 'Описывай запахи, температуру, тактильные ощущения и "гличи" реальности.'
+  },
+  {
+    id: 'loot',
+    name: 'Loot & Resources (Лут)',
+    enabled: true,
+    description: 'Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot.'
   }
 ];
 
@@ -176,41 +182,53 @@ export const SYSTEM_PROMPT = `
 - **СМЕРТЬ:** Если HP падает до 0 или Стресс достигает 10 — персонаж погибает или сходит с ума. Если игрок совершает фатальную ошибку (например, прыгает в лаву без защиты) — он умирает. Не спасай их искусственно, будь честным арбитром.
 `;
 
-export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => `
+export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
+  const isEnabled = (id: string) => mechanics.find(m => m.id === id)?.enabled ?? false;
+  
+  const disabledMechanics = mechanics.filter(m => !m.enabled).map(m => m.name);
+  const disabledWarning = disabledMechanics.length > 0 
+    ? `\n\n## ОТКЛЮЧЕННЫЕ МЕХАНИКИ\nСТРОГО ЗАПРЕЩЕНО использовать следующие механики: ${disabledMechanics.join(', ')}. Не упоминай их и не добавляй их параметры в JSON.` 
+    : '';
+
+  const charFields = [
+    `"name": "..."`,
+    isEnabled('hp') ? `"hp": "X/Y"` : null,
+    isEnabled('stress') ? `"stress": 0` : null,
+    isEnabled('tokens') ? `"tokens": 0` : null,
+    isEnabled('condition') ? `"condition": "..."` : null,
+    `"goal": "..."`,
+    isEnabled('inventory') ? `"inventory": ["Предмет 1", "..."]` : null,
+    isEnabled('equipment') ? `"equipment": [{"slot": "Голова", "item": "Шлем"}]` : null,
+    isEnabled('relationships') ? `"relationships": [{"target": "NPC", "level": 0, "status": "..."}]` : null,
+    isEnabled('actions') ? `"actions": [{"category": "Профильный|Рискованный|Синергия|Искушение", "name": "...", "description": "..."}]` : null
+  ].filter(Boolean).join(',\n    ');
+
+  const dashFields = [
+    `"characters": [{\n    ${charFields}\n  }]`,
+    isEnabled('threats_dash') ? `"threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}]` : null,
+    isEnabled('scene_aspects') ? `"sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"]` : null,
+    isEnabled('loot') ? `"sceneLoot": ["Лечебное зелье (Восстанавливает 5 HP)", "Ржавый меч"]` : null,
+    isEnabled('clocks') ? `"clocks": [{"name": "...", "progress": 0, "total": 4}]` : null,
+    isEnabled('doom_pool') ? `"doomPool": 0` : null,
+    isEnabled('echoes') ? `"echoes": ["Звон мечей вдали", "Шепот ветра"]` : null,
+    `"atmosphere": "..."`,
+    isEnabled('threat') ? `"threatLevel": 0` : null,
+    `"suggestedRoll": {"type": "classic|triple|shifted|taint", "reason": "..."}`
+  ].filter(Boolean).join(',\n  ');
+
+  return `
 ## ТЕХНИЧЕСКИЙ ПРОТОКОЛ (КРИТИЧЕСКИ ВАЖНО!)
 Твой ответ ВСЕГДА должен состоять из двух частей: сначала художественный текст, а затем технические блоки JSON. БЕЗ JSON ИНТЕРФЕЙС ИГРЫ СЛОМАЕТСЯ!
 
-ВАЖНОЕ ПРАВИЛО: НИКОГДА не пиши никакой текст ПОСЛЕ блоков JSON. Твой ответ должен заканчиваться закрывающим тегом (например, </dashboard_json> или </lore_update>). Любой текст после JSON сломает парсер!
+ВАЖНОЕ ПРАВИЛО: НИКОГДА не пиши никакой текст ПОСЛЕ блоков JSON. Твой ответ должен заканчиваться закрывающим тегом (например, </dashboard_json> или </lore_update>). Любой текст после JSON сломает парсер!${disabledWarning}
 
 1. Дашборд: Оберни в теги <dashboard_json>...</dashboard_json>.
 Формат (СТРОГИЙ JSON, никаких стрелочек, комментариев или неэкранированных кавычек внутри значений!):
 {
-  "characters": [{
-    "name": "...", 
-    "hp": "X/Y", 
-    "stress": 0, 
-    "tokens": 0, 
-    "condition": "...", 
-    "goal": "...", 
-    "inventory": ["Предмет 1", "..."],
-    "equipment": [{"slot": "Голова", "item": "Шлем"}, {"slot": "Оружие", "item": "Меч"}, {"slot": "Кость духа", "item": "Пусто"}],
-    "relationships": [{"target": "NPC", "level": 0, "status": "..."}],
-    "actions": [{"category": "Профильный|Рискованный|Синергия|Искушение", "name": "...", "description": "..."}]
-  }],
-  "threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}],
-  "sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"],
-  "clocks": [{"name": "...", "progress": 0, "total": 4}],
-  "doomPool": 0,
-  "echoes": ["Звон мечей вдали", "Шепот ветра"],
-  "atmosphere": "...",
-  "threatLevel": 0,
-  "suggestedRoll": {"type": "classic|triple|shifted|taint", "reason": "..."}
+  ${dashFields}
 }
-ВАЖНО: Поля stress, tokens, doomPool, threatLevel, progress, total должны быть ЧИСЛАМИ (не строками, не формулами вроде "7->9"). Поля features, sceneAspects, echoes должны быть МАССИВАМИ СТРОК.
-ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".
-ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).
-${mechanics.find(m => m.id === 'threat')?.enabled ? 'ВАЖНО: Поле threatLevel (0, 4, 6, 8, 12) отражает текущую опасность сцены. Устанавливай его сам! Если врагов нет, ставь 0. Если есть сильный враг, ставь 8 или 12. Это значение будет автоматически вычитаться из бросков игроков.' : ''}
-
+ВАЖНО: Поля stress, tokens, doomPool, threatLevel, progress, total (если они есть) должны быть ЧИСЛАМИ (не строками, не формулами вроде "7->9"). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
+${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('threat') ? 'ВАЖНО: Поле threatLevel (0, 4, 6, 8, 12) отражает текущую опасность сцены. Устанавливай его сам! Если врагов нет, ставь 0. Если есть сильный враг, ставь 8 или 12. Это значение будет автоматически вычитаться из бросков игроков.\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot.\n' : ''}
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
 ВАЖНО: Если в запросе есть тег [CLARIFY], твой приоритет №1 — обновить Кодекс. Зафиксируй там все детали, которые ты только что описал в тексте. Это твоя внешняя память.
@@ -220,6 +238,7 @@ ${mechanics.find(m => m.id === 'threat')?.enabled ? 'ВАЖНО: Поле threat
 3. Архив (Lore): ОБЯЗАТЕЛЬНО обновляй глобальный архив событий. Если произошло что-то важное, выведи теги <lore_update>...</lore_update> с ПОЛНЫМ обновленным кратким содержанием ВСЕГО сюжета (включая старые события). 
 ВАЖНО: Если ты отвечаешь на [CLARIFY], НЕ выводи <lore_update>, так как сюжет не продвинулся.
 `;
+};
 
 const INITIAL_DASHBOARD: DashboardData = {
   characters: [],
@@ -429,7 +448,7 @@ export default function App() {
     if (currentSession?.id === id) setCurrentSession(null);
   };
 
-  const parseDashboard = (text: string): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string } => {
+  const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string } => {
     let cleanText = text;
     let dashboard: DashboardData | undefined;
     let codexUpdates: CodexEntry[] | undefined;
@@ -437,7 +456,64 @@ export default function App() {
     const dashMatch = text.match(/<dashboard_json>([\s\S]*?)<\/dashboard_json>/);
     if (dashMatch) {
       try {
-        dashboard = JSON.parse(dashMatch[1]);
+        const parsed = JSON.parse(dashMatch[1]);
+        let mergedCharacters = [...(currentDashboard.characters || [])];
+        if (parsed.characters) {
+          parsed.characters.forEach((parsedChar: any) => {
+            const index = mergedCharacters.findIndex(c => c.name === parsedChar.name);
+            if (index >= 0) {
+              const currentChar = mergedCharacters[index];
+              // Merge equipment by slot name to prevent AI from dropping custom slots
+              let mergedEquipment = [...(currentChar.equipment || [])];
+              if (parsedChar.equipment && Array.isArray(parsedChar.equipment)) {
+                parsedChar.equipment.forEach((parsedEq: any) => {
+                  const eqIndex = mergedEquipment.findIndex(e => e.slot === parsedEq.slot);
+                  if (eqIndex >= 0) {
+                    mergedEquipment[eqIndex] = { ...mergedEquipment[eqIndex], ...parsedEq };
+                  } else {
+                    mergedEquipment.push(parsedEq);
+                  }
+                });
+              }
+
+              // Merge relationships by target name
+              let mergedRelationships = [...(currentChar.relationships || [])];
+              if (parsedChar.relationships && Array.isArray(parsedChar.relationships)) {
+                parsedChar.relationships.forEach((parsedRel: any) => {
+                  const relIndex = mergedRelationships.findIndex(r => r.target === parsedRel.target);
+                  if (relIndex >= 0) {
+                    mergedRelationships[relIndex] = { ...mergedRelationships[relIndex], ...parsedRel };
+                  } else {
+                    mergedRelationships.push(parsedRel);
+                  }
+                });
+              }
+
+              mergedCharacters[index] = {
+                ...currentChar,
+                ...parsedChar,
+                inventory: parsedChar.inventory || currentChar.inventory || [],
+                equipment: mergedEquipment,
+                relationships: mergedRelationships,
+                actions: parsedChar.actions || currentChar.actions || []
+              };
+            } else {
+              mergedCharacters.push(parsedChar);
+            }
+          });
+        }
+
+        // Merge with current dashboard to prevent dropping arrays if AI omits them
+        dashboard = {
+          ...currentDashboard,
+          ...parsed,
+          characters: mergedCharacters,
+          threats: parsed.threats || currentDashboard.threats || [],
+          sceneAspects: parsed.sceneAspects || currentDashboard.sceneAspects || [],
+          sceneLoot: parsed.sceneLoot || currentDashboard.sceneLoot || [],
+          clocks: parsed.clocks || currentDashboard.clocks || [],
+          echoes: parsed.echoes || currentDashboard.echoes || [],
+        };
         cleanText = cleanText.replace(/<dashboard_json>[\s\S]*?<\/dashboard_json>/, '').trim();
       } catch (e) { console.error("Dashboard parse error", e); }
     }
@@ -544,7 +620,30 @@ export default function App() {
       const contextWindow = updatedHistory.slice(-6);
       const loreContext = currentSession.lore ? `\n\n### ЭХО ПРОШЛОГО (Краткое содержание предыдущих событий):\n${currentSession.lore}\n` : '';
       const codexContext = currentSession.codex.length > 0 ? `\n\n### КОДЕКС (NPC, Локации, Предметы):\n${JSON.stringify(currentSession.codex, null, 2)}\n` : '';
-      const dashboardContext = `\n\n### ТЕКУЩЕЕ СОСТОЯНИЕ ИГРЫ (DASHBOARD):\n${JSON.stringify(currentDashboard, null, 2)}\nОБЯЗАТЕЛЬНО используй эти данные как основу для следующего JSON.`;
+      // Filter out disabled mechanics from currentDashboard so AI doesn't see them
+      const isEnabled = (id: string) => (settings.mechanics || DEFAULT_MECHANICS).find(m => m.id === id)?.enabled ?? false;
+      const filteredDashboard = { ...currentDashboard };
+      if (!isEnabled('threats_dash')) delete filteredDashboard.threats;
+      if (!isEnabled('scene_aspects')) delete filteredDashboard.sceneAspects;
+      if (!isEnabled('clocks')) delete filteredDashboard.clocks;
+      if (!isEnabled('doom_pool')) delete filteredDashboard.doomPool;
+      if (!isEnabled('echoes')) delete filteredDashboard.echoes;
+      if (!isEnabled('threat')) delete filteredDashboard.threatLevel;
+      
+      filteredDashboard.characters = filteredDashboard.characters.map(char => {
+        const filteredChar = { ...char };
+        if (!isEnabled('hp')) delete filteredChar.hp;
+        if (!isEnabled('stress')) delete filteredChar.stress;
+        if (!isEnabled('tokens')) delete filteredChar.tokens;
+        if (!isEnabled('condition')) delete filteredChar.condition;
+        if (!isEnabled('inventory')) delete filteredChar.inventory;
+        if (!isEnabled('equipment')) delete filteredChar.equipment;
+        if (!isEnabled('relationships')) delete filteredChar.relationships;
+        if (!isEnabled('actions')) delete filteredChar.actions;
+        return filteredChar;
+      });
+
+      const dashboardContext = `\n\n### ТЕКУЩЕЕ СОСТОЯНИЕ ИГРЫ (DASHBOARD):\n${JSON.stringify(filteredDashboard, null, 2)}\nОБЯЗАТЕЛЬНО используй эти данные как основу для следующего JSON.`;
       
       const activeMechanics = (settings.mechanics || DEFAULT_MECHANICS)
         .filter(m => m.enabled)
@@ -642,7 +741,7 @@ export default function App() {
         }).catch(err => console.error("Logging failed:", err));
       }
 
-      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate } = parseDashboard(aiContent);
+      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate } = parseDashboard(aiContent, currentDashboard);
 
       const aiMsg: Message = { 
         role: 'assistant', 

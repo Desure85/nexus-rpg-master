@@ -44,6 +44,7 @@ export interface DashboardData {
   characters: Character[];
   threats: Threat[];
   sceneAspects: string[];
+  sceneLoot?: string[];
   clocks: Clock[];
   doomPool: number;
   echoes: string[];
