@@ -7,8 +7,9 @@ import { DiceRoller } from './components/DiceRoller';
 import { Codex } from './components/Codex';
 import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
+import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
-import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle } from 'lucide-react';
+import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 
@@ -95,7 +96,7 @@ export const DEFAULT_MECHANICS: MechanicConfig[] = [
     id: 'doom_pool',
     name: 'Пул Рока (Doom Pool)',
     enabled: true,
-    description: 'Счетчик эскалации (от 0 до 5). Мастер использует его для усложнения сцены или ввода новых угроз.'
+    description: 'Счетчик эскалации (от 0 до 20). +1 за каждый провал или Искушение. При достижении 20 происходит КАТАСТРОФА (смерть NPC, потеря важного предмета, появление босса), и пул сбрасывается до 0.'
   },
   {
     id: 'echoes',
@@ -173,6 +174,7 @@ export const SYSTEM_PROMPT = `
   2. ОБЯЗАТЕЛЬНО обнови Кодекс (<codex_json>), добавив туда все новые детали.
   3. НЕ продолжай сюжет активно, пока не ответишь на вопрос. Сосредоточься на уточнении лора.
   4. Если вопрос касается предмета в инвентаре — опиши его свойства. Если NPC — его внешность и статус.
+- **[FINALE]**: Если сообщение начинается с этого тега, игрок хочет завершить ТЕКУЩУЮ СЮЖЕТНУЮ АРКУ. Твоя задача — плавно подвести сюжет к кульминации (босс, главное открытие, побег). Сведи все текущие линии к решающему моменту. После разрешения кульминации дай персонажам передышку (Safe Haven) и намек на новое приключение (hook), чтобы игру можно было продолжить.
 
 ## 4. ЧЕСТНЫЕ ПОСЛЕДСТВИЯ
 Мир реагирует строго по логике:
@@ -193,7 +195,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
   const charFields = [
     `"name": "..."`,
     isEnabled('hp') ? `"hp": "X/Y"` : null,
-    isEnabled('stress') ? `"stress": 0` : null,
+    isEnabled('stress') ? `"stress": "X/Y" (или число)` : null,
     isEnabled('tokens') ? `"tokens": 0` : null,
     isEnabled('condition') ? `"condition": "..."` : null,
     `"goal": "..."`,
@@ -227,8 +229,8 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 {
   ${dashFields}
 }
-ВАЖНО: Поля stress, tokens, doomPool, threatLevel, progress, total (если они есть) должны быть ЧИСЛАМИ (не строками, не формулами вроде "7->9"). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
-${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('threat') ? 'ВАЖНО: Поле threatLevel (0, 4, 6, 8, 12) отражает текущую опасность сцены. Устанавливай его сам! Если врагов нет, ставь 0. Если есть сильный враг, ставь 8 или 12. Это значение будет автоматически вычитаться из бросков игроков.\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot.\n' : ''}
+ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
+${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('doom_pool') ? 'ВАЖНО: Поле doomPool (0-20) отражает уровень эскалации. Увеличивай его на +1 за каждый провал игрока или выбор действия "Искушение". ЕСЛИ doomPool ДОСТИГАЕТ 20, ТЫ ОБЯЗАН СБРОСИТЬ ЕГО ДО 0 И ОПИСАТЬ КАТАСТРОФУ (внезапная смерть союзника, поломка оружия, появление босса, потеря важного предмета). Не копи doomPool вечно, используй его для драматичных поворотов!\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot. НЕ добавляй их сразу в инвентарь персонажа! Вместо этого сгенерируй для персонажа действие (Action) категории "Loot" с названием "Подобрать [Предмет]". Только когда игрок выберет это действие, ты переместишь предмет из sceneLoot в inventory.\n' : ''}
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
 ВАЖНО: Если в запросе есть тег [CLARIFY], твой приоритет №1 — обновить Кодекс. Зафиксируй там все детали, которые ты только что описал в тексте. Это твоя внешняя память.
@@ -267,6 +269,7 @@ const CLARIFY_SYSTEM_PROMPT = `
 export default function App() {
   const [sessions, setSessions] = useState<GameSession[]>([]);
   const [currentSession, setCurrentSession] = useState<GameSession | null>(null);
+  const [isSettingUp, setIsSettingUp] = useState(false);
   const [settings, setSettings] = useState<AppSettings>({
     provider: 'gemini',
     modelUrl: 'http://localhost:1234/v1',
@@ -284,6 +287,7 @@ export default function App() {
   const [mobileView, setMobileView] = useState<'narrative' | 'dashboard'>('narrative');
   const [rightPanelTab, setRightPanelTab] = useState<'dashboard' | 'lore' | 'codex'>('dashboard');
   const [isBookView, setIsBookView] = useState(false);
+  const [confirmFinale, setConfirmFinale] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [pendingRolls, setPendingRolls] = useState<Record<string, string>>({});
   const [input, setInput] = useState('');
@@ -408,33 +412,8 @@ export default function App() {
     setIsSettingsOpen(false);
   };
 
-  const handleNewSession = async () => {
-    const id = crypto.randomUUID();
-    const newSession: GameSession = {
-      id,
-      name: 'New Adventure',
-      genre: 'Dark Fantasy',
-      setting: 'Nexus Prime',
-      style: 'Grimdark',
-      snapshot: '',
-      history: [],
-      lore: '',
-      codex: [],
-      updated_at: new Date().toISOString()
-    };
-    setCurrentSession(newSession);
-    setSessions([newSession, ...sessions]);
-    
-    // Save to DB immediately so it appears in sidebar
-    await fetch('/api/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...newSession,
-        history: JSON.stringify([]),
-        codex: JSON.stringify([])
-      })
-    });
+  const handleNewSession = () => {
+    setIsSettingUp(true);
   };
 
   const handleSelectSession = (id: string) => {
@@ -581,16 +560,113 @@ export default function App() {
     saveSession(updatedSession);
   };
 
-  const sendMessage = async (content: string) => {
-    if (!currentSession) return;
+  const generateIdea = async (prompt: string): Promise<string> => {
+    if (settings.provider === 'gemini') {
+      const customKey = settings.apiKey?.trim();
+      if (customKey) {
+        console.log("generateIdea: Using custom Gemini API key ending in:", customKey.slice(-4));
+      } else {
+        console.log("generateIdea: Using platform default Gemini API key");
+      }
+      const apiKey = customKey || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("API Key required. Please check your settings.");
+      
+      const ai = new GoogleGenAI({ apiKey });
+      // Use gemini-3-flash-preview as the robust default
+      const modelToUse = (settings.modelName && settings.modelName !== 'local-model') 
+        ? settings.modelName 
+        : 'gemini-3-flash-preview';
+
+      try {
+        const response = await ai.models.generateContent({
+          model: modelToUse,
+          contents: prompt,
+          config: {
+            systemInstruction: "Ты креативный помощник для настольных ролевых игр. Отвечай кратко, емко и атмосферно. Не используй markdown форматирование, если не просят.",
+          }
+        });
+        return response.text || '';
+      } catch (error) {
+        console.error("Gemini Generation Error:", error);
+        throw error;
+      }
+    } else {
+      const baseUrl = settings.modelUrl.replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(settings.apiKey ? { 'Authorization': `Bearer ${settings.apiKey}` } : {})
+        },
+        body: JSON.stringify({
+          model: settings.modelName,
+          messages: [
+            { role: 'system', content: "Ты креативный помощник для НРИ. Отвечай кратко и атмосферно." },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.9
+        })
+      });
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || '';
+    }
+  };
+
+  const handleStartAdventure = async (setup: SetupData) => {
+    const newSession: GameSession = {
+      id: crypto.randomUUID(),
+      name: setup.setting.split(' ')[0] || 'New Adventure',
+      genre: 'Custom',
+      setting: setup.setting,
+      style: setup.style,
+      snapshot: '',
+      history: [],
+      lore: `Сеттинг: ${setup.setting}\nЗавязка: ${setup.plotHook}\nСтиль: ${setup.style}`,
+      codex: [],
+      updated_at: new Date().toISOString()
+    };
     
-    const lastMsg = currentSession.history[currentSession.history.length - 1];
+    setSessions([newSession, ...sessions]);
+    setCurrentSession(newSession);
+    setIsSettingUp(false);
+
+    let styleInstruction = "";
+    if (setup.style === 'narrative') {
+      styleInstruction = "ФОКУС: Нарратив и исследование. Бои должны быть редкими (10-15% времени), но значимыми. Уделяй внимание загадкам, социальному взаимодействию и атмосфере.";
+    } else if (setup.style === 'combat') {
+      styleInstruction = "ФОКУС: Тактические сражения. Бои частые и сложные (80% времени). Детально описывай действия врагов и используй механики угроз.";
+    } else {
+      styleInstruction = "ФОКУС: Сбалансированное приключение (50/50). Чередуй боевые сцены с исследованием и социальными энкаунтерами.";
+    }
+
+    const prompt = `[SYSTEM COMMAND: GAME START]
+Мы начинаем новую кампанию!
+Сеттинг: ${setup.setting}
+Завязка: ${setup.plotHook}
+${styleInstruction}
+
+Персонажи:
+${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина' : 'Мужчина'}): ${c.concept}`).join('\n')}
+
+Твоя задача:
+1. Опиши атмосферную стартовую сцену, в которой находятся персонажи. Задай настроение и опиши первую угрозу или интригу.
+2. Сгенерируй начальный <dashboard_json>, включив туда всех персонажей (заполни им базовые hp, stress, tokens, и добавь по 1-2 стартовых предмета в inventory/equipment исходя из их концепта).
+3. Сгенерируй <codex_json> с описанием стартовой локации.`;
+
+    await sendMessage(prompt, newSession);
+  };
+
+  const sendMessage = async (content: string, sessionOverride?: GameSession) => {
+    const targetSession = sessionOverride || currentSession;
+    if (!targetSession) return;
+    
+    const lastMsg = targetSession.history[targetSession.history.length - 1];
     const isLastMsgUser = lastMsg?.role === 'user';
     
     if (!content.trim() && Object.keys(pendingRolls).length === 0 && !isLastMsgUser) return;
 
-    let updatedHistory = [...currentSession.history];
-    const currentDashboard = currentSession.history.slice().reverse().find(m => m.dashboard)?.dashboard || INITIAL_DASHBOARD;
+    let updatedHistory = [...targetSession.history];
+    const currentDashboard = targetSession.history.slice().reverse().find(m => m.dashboard)?.dashboard || INITIAL_DASHBOARD;
     
     // If there is new content or pending rolls, we create a new user message
     if (content.trim() || Object.keys(pendingRolls).length > 0) {
@@ -603,9 +679,9 @@ export default function App() {
       }
 
       const userMsg: Message = { role: 'user', content: finalContent };
-      updatedHistory = [...currentSession.history, userMsg];
+      updatedHistory = [...targetSession.history, userMsg];
       
-      setCurrentSession({ ...currentSession, history: updatedHistory });
+      setCurrentSession({ ...targetSession, history: updatedHistory });
       setInput('');
       setPendingRolls({});
     }
@@ -618,13 +694,14 @@ export default function App() {
       
       // Token Optimization: Only send the last 6 messages + Lore + Current State as context
       const contextWindow = updatedHistory.slice(-6);
-      const loreContext = currentSession.lore ? `\n\n### ЭХО ПРОШЛОГО (Краткое содержание предыдущих событий):\n${currentSession.lore}\n` : '';
-      const codexContext = currentSession.codex.length > 0 ? `\n\n### КОДЕКС (NPC, Локации, Предметы):\n${JSON.stringify(currentSession.codex, null, 2)}\n` : '';
+      const loreContext = targetSession.lore ? `\n\n### ЭХО ПРОШЛОГО (Краткое содержание предыдущих событий):\n${targetSession.lore}\n` : '';
+      const codexContext = targetSession.codex.length > 0 ? `\n\n### КОДЕКС (NPC, Локации, Предметы):\n${JSON.stringify(targetSession.codex, null, 2)}\n` : '';
       // Filter out disabled mechanics from currentDashboard so AI doesn't see them
       const isEnabled = (id: string) => (settings.mechanics || DEFAULT_MECHANICS).find(m => m.id === id)?.enabled ?? false;
       const filteredDashboard = { ...currentDashboard };
       if (!isEnabled('threats_dash')) delete filteredDashboard.threats;
       if (!isEnabled('scene_aspects')) delete filteredDashboard.sceneAspects;
+      if (!isEnabled('loot')) delete filteredDashboard.sceneLoot;
       if (!isEnabled('clocks')) delete filteredDashboard.clocks;
       if (!isEnabled('doom_pool')) delete filteredDashboard.doomPool;
       if (!isEnabled('echoes')) delete filteredDashboard.echoes;
@@ -654,22 +731,73 @@ export default function App() {
       const isClarify = content.startsWith('[CLARIFY]');
       const basePrompt = isClarify ? CLARIFY_SYSTEM_PROMPT : settings.systemPrompt;
 
+      const getStyleInstruction = (style: string) => {
+        switch (style) {
+          case 'narrative': return `
+\n\n### СТИЛЬ ИГРЫ: NARRATIVE FOCUS
+- Приоритет: История, атмосфера, загадки. Бои редкие (10-15%).
+- ТЕМП: Медленный. ПОСЛЕ КАЖДОЙ ОПАСНОЙ СЦЕНЫ ОБЯЗАТЕЛЬНО ДАВАЙ ПЕРЕДЫШКУ (Safe Haven).
+- ЛИМИТЫ: Максимум 1 активная Угроза и 1 Часы одновременно.
+- МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы ТОЛЬКО если:
+  1. Текущих Угроз/Часов меньше лимита.
+  2. Игрок ПРОВАЛИЛ бросок.
+  3. Ты мысленно бросил 1d6 и выпало 6.
+  В остальных случаях - ТОЛЬКО развивай текущую ситуацию, не вводя новых врагов.`;
+
+          case 'combat': return `
+\n\n### СТИЛЬ ИГРЫ: COMBAT HEAVY
+- Приоритет: Тактика, выживание. Бои частые (80%).
+- ТЕМП: Высокий, адреналиновый.
+- ЛИМИТЫ: Максимум 3 активные Угрозы и 3 Часов одновременно.
+- МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы, если:
+  1. Текущих Угроз/Часов меньше лимита.
+  2. Ты мысленно бросил 1d6 и выпало 3+.`;
+
+          default: return `
+\n\n### СТИЛЬ ИГРЫ: BALANCED
+- Приоритет: Баланс сюжета и экшена (50/50).
+- ТЕМП: Ритмичный. Напряжение -> Разрядка. ПОСЛЕ БОЯ ОБЯЗАТЕЛЬНО ДАЙ ОТДОХНУТЬ.
+- ЛИМИТЫ: Максимум 2 активные Угрозы и 2 Часов одновременно.
+- МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы ТОЛЬКО если:
+  1. Текущих Угроз/Часов меньше лимита.
+  2. Ты мысленно бросил 1d6 и выпало 5+ (или 4+ если игрок провалил бросок).
+  НЕ добавляй угрозы просто так, если лимит не исчерпан.`;
+        }
+      };
+
+      const styleContext = targetSession.style ? getStyleInstruction(targetSession.style) : '';
+
       // Combine game rules, technical requirements, lore, and current state
-      const fullSystemPrompt = `${basePrompt}${isClarify ? '' : mechanicsContext}\n\n${getTechnicalInstructions(settings.mechanics || DEFAULT_MECHANICS)}\n${loreContext}${codexContext}${dashboardContext}`;
+      const fullSystemPrompt = `${basePrompt}${isClarify ? '' : mechanicsContext}${styleContext}\n\n${getTechnicalInstructions(settings.mechanics || DEFAULT_MECHANICS)}\n${loreContext}${codexContext}${dashboardContext}`;
 
       if (settings.provider === 'gemini') {
-        const apiKey = settings.apiKey || process.env.GEMINI_API_KEY;
+        const customKey = settings.apiKey?.trim();
+        if (customKey) {
+          console.log("sendMessage: Using custom Gemini API key ending in:", customKey.slice(-4));
+        } else {
+          console.log("sendMessage: Using platform default Gemini API key");
+        }
+        const apiKey = customKey || process.env.GEMINI_API_KEY;
         if (!apiKey) {
           throw new Error("Gemini API Key not found. Please ensure it is set in the Settings or Secrets panel.");
         }
         const ai = new GoogleGenAI({ apiKey });
-        logRequest = [
-          { role: 'user', parts: [{ text: fullSystemPrompt }] },
-          ...contextWindow.map(m => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.content }]
-          }))
-        ];
+        
+        // Convert history to Gemini format (user/model) and merge consecutive messages of the same role
+        const contents: { role: string, parts: { text: string }[] }[] = [];
+        for (const m of contextWindow) {
+          const role = m.role === 'user' ? 'user' : 'model';
+          if (contents.length > 0 && contents[contents.length - 1].role === role) {
+            contents[contents.length - 1].parts[0].text += '\n\n' + m.content;
+          } else {
+            contents.push({ role, parts: [{ text: m.content }] });
+          }
+        }
+        
+        logRequest = {
+          systemInstruction: fullSystemPrompt,
+          contents
+        };
         
         const modelToUse = (settings.modelName && settings.modelName !== 'local-model') 
           ? settings.modelName 
@@ -677,7 +805,10 @@ export default function App() {
           
         const response = await ai.models.generateContent({
           model: modelToUse,
-          contents: logRequest
+          contents,
+          config: {
+            systemInstruction: fullSystemPrompt
+          }
         });
         aiContent = response.text || '';
       } else {
@@ -734,7 +865,7 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sessionId: currentSession.id,
+            sessionId: targetSession.id,
             request: logRequest,
             response: aiContent
           })
@@ -750,7 +881,7 @@ export default function App() {
       };
 
       // Merge Codex Updates
-      let finalCodex = [...currentSession.codex];
+      let finalCodex = [...targetSession.codex];
       if (codexUpdates) {
         codexUpdates.forEach(update => {
           const index = finalCodex.findIndex(e => e.name === update.name);
@@ -764,9 +895,9 @@ export default function App() {
 
       const finalHistory = [...updatedHistory, aiMsg];
       const updatedSession = { 
-        ...currentSession, 
+        ...targetSession, 
         history: finalHistory,
-        lore: loreUpdate || currentSession.lore,
+        lore: loreUpdate || targetSession.lore,
         codex: finalCodex,
         updated_at: new Date().toISOString()
       };
@@ -781,7 +912,7 @@ export default function App() {
         role: 'assistant', 
         content: `Nexus Error: ${error instanceof Error ? error.message : "Could not connect to AI provider. Please check your settings."}` 
       };
-      setCurrentSession({ ...currentSession, history: [...updatedHistory, errorMsg] });
+      setCurrentSession({ ...targetSession, history: [...updatedHistory, errorMsg] });
     } finally {
       setIsLoading(false);
     }
@@ -848,7 +979,15 @@ export default function App() {
       </div>
 
       <main className="flex-1 flex flex-col relative min-w-0">
-        {currentSession ? (
+        {isSettingUp ? (
+          <div className="flex-1 flex items-center justify-center p-4 bg-[#0a0502] overflow-y-auto">
+            <SessionSetup 
+              onStart={handleStartAdventure}
+              onCancel={() => setIsSettingUp(false)}
+              onGenerate={generateIdea}
+            />
+          </div>
+        ) : currentSession ? (
           <div className="flex h-full flex-col lg:flex-row">
             {/* Mobile Header */}
             <div className="lg:hidden flex items-center justify-between p-4 border-b border-white/10 bg-black/40 backdrop-blur-md">
@@ -990,7 +1129,20 @@ export default function App() {
                           threatLevel={currentDashboard.threatLevel}
                           enabledMechanics={settings.mechanics}
                           onRollComplete={(charName, rollResult) => {
-                            setPendingRolls(prev => ({ ...prev, [charName]: rollResult }));
+                            setPendingRolls(prev => {
+                              const newRolls = { ...prev, [charName]: rollResult };
+                              
+                              // Auto-close if all ACTIVE characters have acted
+                              const activeChars = currentDashboard.characters.filter(c => {
+                                const isDead = c.hp === '0' || c.stress >= 10 || c.condition?.toLowerCase().includes('мертв');
+                                return !isDead;
+                              });
+
+                              if (activeChars.length > 0 && Object.keys(newRolls).length >= activeChars.length) {
+                                setTimeout(() => setIsDiceTrayOpen(false), 1500);
+                              }
+                              return newRolls;
+                            });
                           }}
                         />
                       </motion.div>
@@ -1038,6 +1190,22 @@ export default function App() {
                       className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 lg:px-6 py-3 lg:py-4 text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20 lg:h-24 text-sm lg:text-base pr-12"
                     />
                     <div className="absolute bottom-3 right-3 lg:bottom-4 lg:right-4 flex gap-2">
+                      <button
+                        onClick={() => {
+                          if (confirmFinale) {
+                            sendMessage(`[FINALE] Пора заканчивать текущую сюжетную арку. Веди сюжет к кульминации, развязке и дай нам передышку перед новыми приключениями.`);
+                            setConfirmFinale(false);
+                          } else {
+                            setConfirmFinale(true);
+                            setTimeout(() => setConfirmFinale(false), 3000);
+                          }
+                        }}
+                        title="Trigger Finale"
+                        disabled={isLoading}
+                        className={`p-2 rounded-xl transition-all disabled:opacity-30 ${confirmFinale ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/40 hover:text-amber-400'}`}
+                      >
+                        <Flag size={18} />
+                      </button>
                       <button
                         onClick={() => {
                           if (input.trim()) {

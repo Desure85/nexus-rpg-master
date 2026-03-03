@@ -18,7 +18,7 @@ export interface EquipmentSlot {
 export interface Character {
   name: string;
   hp: string;
-  stress: number;
+  stress: number | string;
   tokens: number;
   condition: string;
   goal: string;

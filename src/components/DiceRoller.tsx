@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Dices, RotateCcw, Zap, ShieldAlert, Binary, User, Activity, Plus, Star, Flame, Users, Ghost, CheckCircle2, Info } from 'lucide-react';
+import { Dices, RotateCcw, Zap, ShieldAlert, Binary, User, Activity, Plus, Star, Flame, Users, Ghost, CheckCircle2, Info, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Character, MechanicConfig } from '../types';
 
@@ -65,12 +65,38 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
         threatStr = ` | Threat d${threatLevel} = -${threatRoll}`;
       }
 
-      const currentStress = charObj ? charObj.stress : 0;
+      const getStressValues = (stress: number | string) => {
+        let current = 0;
+        let max = 10;
+        
+        if (typeof stress === 'string') {
+          const parts = stress.split('/');
+          if (parts.length === 2) {
+            current = parseInt(parts[0]) || 0;
+            max = parseInt(parts[1]) || 10;
+          } else {
+            current = parseInt(stress) || 0;
+          }
+        } else {
+          current = stress || 0;
+        }
+        return { current, max };
+      };
+
+      const { current: currentStress, max: maxStress } = charObj ? getStressValues(charObj.stress || 0) : { current: 0, max: 10 };
+      
       let stressModStr = '';
       if ((type === 'triple' || type === 'shifted') && isMechanicEnabled('stress')) {
-        if (currentStress <= 1) {
+        // Dynamic thresholds based on max stress
+        // Low (0-20%): Max used
+        // Mid (21-50%): Mid used
+        // High (51%+): Min used
+        
+        const ratio = currentStress / maxStress;
+        
+        if (ratio <= 0.2) {
           stressModStr = ' | Stress: +2 (Max used)';
-        } else if (currentStress <= 4) {
+        } else if (ratio <= 0.5) {
           stressModStr = ' | Stress: +1 (Mid used)';
         } else {
           stressModStr = ' | Stress: -2 (Min used, Catharsis)';
@@ -223,6 +249,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                       case 'Рискованный': return { color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/30', icon: <Flame size={12} /> };
                       case 'Синергия': return { color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-400/30', icon: <Users size={12} /> };
                       case 'Искушение': return { color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/30', icon: <Ghost size={12} /> };
+                      case 'Loot': return { color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400/30', icon: <Sparkles size={12} /> };
                       default: return { color: 'text-white/60', bg: 'bg-white/5', border: 'border-white/10', icon: <Info size={12} /> };
                     }
                   };

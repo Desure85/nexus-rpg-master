@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
 import { X, Save, Globe, Key, Cpu, Terminal, Type, Database, Copy, Check, RotateCcw, AlertTriangle } from 'lucide-react';
 import { SYSTEM_PROMPT } from '../App';
+import { GoogleGenAI } from "@google/genai";
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -263,6 +264,61 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                       <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                       <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                     </select>
+                  </div>
+
+                  <div className="pt-2">
+                    <button
+                      onClick={async () => {
+                        const btn = document.getElementById('test-gemini-btn');
+                        const status = document.getElementById('test-gemini-status');
+                        if (btn && status) {
+                          btn.setAttribute('disabled', 'true');
+                          btn.textContent = 'Testing...';
+                          status.textContent = '';
+                          status.className = 'text-xs mt-2';
+                          
+                          try {
+                            const customKey = localSettings.apiKey;
+                            const systemKey = process.env.GEMINI_API_KEY;
+                            
+                            let usedKeyType = '';
+                            let apiKey = '';
+
+                            if (customKey) {
+                              usedKeyType = 'Custom Key';
+                              apiKey = customKey;
+                            } else if (systemKey) {
+                              usedKeyType = 'System Default Key';
+                              apiKey = systemKey;
+                            } else {
+                              throw new Error("No API Key found (neither custom nor system default)");
+                            }
+                            
+                            const ai = new GoogleGenAI({ apiKey });
+                            const model = localSettings.modelName === 'local-model' ? 'gemini-3-flash-preview' : localSettings.modelName;
+                            
+                            await ai.models.generateContent({
+                              model: model,
+                              contents: "ping",
+                            });
+
+                            status.textContent = `Connection Successful! Used: ${usedKeyType}. Gemini responded.`;
+                            status.className = 'text-xs mt-2 text-emerald-400 font-bold';
+                          } catch (e) {
+                            status.textContent = `Connection Failed: ${e instanceof Error ? e.message : 'Unknown error'}`;
+                            status.className = 'text-xs mt-2 text-red-400 font-bold';
+                          } finally {
+                            btn.removeAttribute('disabled');
+                            btn.textContent = 'Test Connection';
+                          }
+                        }
+                      }}
+                      id="test-gemini-btn"
+                      className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold text-white transition-all"
+                    >
+                      Test Connection
+                    </button>
+                    <p id="test-gemini-status" className="text-xs mt-2"></p>
                   </div>
                 </div>
               )}
