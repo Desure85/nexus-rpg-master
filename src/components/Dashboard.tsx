@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
+import { LocationMap } from './LocationMap';
 
 interface DashboardProps {
   data: DashboardData;
   sessionId?: string;
   enabledMechanics?: MechanicConfig[];
   onUpdate?: (newData: DashboardData) => void;
+  onTravel?: (locationId: string) => void;
+  onExplore?: (locationId: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
+  const [locationView, setLocationView] = useState<'list' | 'map'>('list');
 
   const isMechanicEnabled = (id: string) => {
     if (!enabledMechanics) return true;
@@ -499,6 +503,197 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             </motion.div>
           ))}
         </div>
+      </section>
+
+      {/* Locations */}
+      <section>
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center gap-4">
+            <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+              <MapPin size={12} /> Known Locations
+            </h3>
+            <div className="flex gap-1 bg-white/5 p-0.5 rounded-lg border border-white/5">
+              <button 
+                onClick={() => setLocationView('list')} 
+                className={`p-1 rounded transition-colors ${locationView === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'}`}
+                title="List View"
+              >
+                <Menu size={12} />
+              </button>
+              <button 
+                onClick={() => setLocationView('map')} 
+                className={`p-1 rounded transition-colors ${locationView === 'map' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'}`}
+                title="Map View"
+              >
+                <MapPin size={12} />
+              </button>
+            </div>
+          </div>
+          <button 
+            onClick={async () => {
+              const name = await customPrompt("Location Name");
+              const description = await customPrompt("Short Description");
+              if (name) {
+                onUpdate?.({ 
+                  ...data, 
+                  locations: [...(data.locations || []), { 
+                    id: crypto.randomUUID(), 
+                    name, 
+                    description: description || "Unknown area",
+                    dangerLevel: 1,
+                    status: 'known',
+                    coordinates: { x: 50, y: 50 }
+                  }] 
+                });
+              }
+            }}
+            className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+        
+        {locationView === 'map' ? (
+          <LocationMap 
+            locations={data.locations || []} 
+            currentLocationId={data.currentLocationId}
+            onTravel={onTravel}
+            onExplore={onExplore}
+            onLocationUpdate={(updatedLocations) => {
+              onUpdate?.({ ...data, locations: updatedLocations });
+            }}
+          />
+        ) : (
+          <div className="grid grid-cols-1 gap-3">
+          {(data.locations || []).map((loc, idx) => {
+            const isCurrent = loc.id === data.currentLocationId;
+            const isLocked = loc.status === 'locked';
+            const isKnown = loc.status === 'known';
+            
+            return (
+              <div 
+                key={loc.id} 
+                className={`p-3 border rounded-lg group/loc relative transition-all ${
+                  isCurrent 
+                    ? 'bg-emerald-500/10 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' 
+                    : isLocked
+                      ? 'bg-red-500/5 border-red-500/20 opacity-80'
+                      : 'bg-white/5 border-white/10 hover:border-white/20'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-2">
+                  <div className="flex items-center gap-2">
+                    {isCurrent && (
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" title="Current Location" />
+                    )}
+                    {isLocked && <Lock size={12} className="text-red-400" />}
+                    {isKnown && !isCurrent && !isLocked && <Eye size={12} className="text-white/40" />}
+                    <h4 
+                      className={`font-bold text-sm cursor-pointer transition-colors ${
+                        isCurrent ? 'text-emerald-400' : isLocked ? 'text-red-400/80' : 'text-white hover:text-emerald-400'
+                      }`}
+                      onClick={async () => {
+                        const next = await customPrompt("Rename Location", loc.name);
+                        if (next) {
+                          const newLocs = [...(data.locations || [])];
+                          newLocs[idx] = { ...newLocs[idx], name: next };
+                          onUpdate?.({ ...data, locations: newLocs });
+                        }
+                      }}
+                    >
+                      {loc.name}
+                    </h4>
+                  </div>
+                <div className="flex items-center gap-2">
+                   {/* Danger Level Indicator */}
+                   <div 
+                     className="flex gap-0.5 cursor-pointer group/danger"
+                     title="Danger Level (1-5)"
+                     onClick={async () => {
+                       const next = await customPrompt("Danger Level (1-5)", (loc.dangerLevel || 1).toString());
+                       if (next) {
+                         const newLocs = [...(data.locations || [])];
+                         newLocs[idx] = { ...newLocs[idx], dangerLevel: Math.min(5, Math.max(1, parseInt(next))) };
+                         onUpdate?.({ ...data, locations: newLocs });
+                       }
+                     }}
+                   >
+                     {Array.from({ length: 5 }).map((_, i) => (
+                       <div 
+                         key={i} 
+                         className={`w-1.5 h-1.5 rounded-full transition-all ${
+                           i < (loc.dangerLevel || 1) 
+                             ? 'bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.5)]' 
+                             : 'bg-white/10 group-hover/danger:bg-white/20'
+                         }`}
+                       />
+                     ))}
+                   </div>
+                   <button 
+                      onClick={async () => {
+                        if (await customConfirm(`Delete location ${loc.name}?`)) {
+                          const newLocs = [...(data.locations || [])];
+                          newLocs.splice(idx, 1);
+                          onUpdate?.({ ...data, locations: newLocs });
+                        }
+                      }}
+                      className="opacity-0 group-hover/loc:opacity-100 text-white/20 hover:text-red-400 transition-opacity"
+                   >
+                     <Trash2 size={12} />
+                   </button>
+                </div>
+              </div>
+              <p 
+                className="text-xs text-white/60 mb-3 cursor-pointer hover:text-white"
+                onClick={async () => {
+                  const next = await customPrompt("Update Description", loc.description);
+                  if (next) {
+                    const newLocs = [...(data.locations || [])];
+                    newLocs[idx] = { ...newLocs[idx], description: next };
+                    onUpdate?.({ ...data, locations: newLocs });
+                  }
+                }}
+              >
+                {loc.description}
+              </p>
+              <div className="flex gap-2 mt-3">
+                {onTravel && !isCurrent && !isLocked && (
+                  <button
+                    onClick={() => onTravel(loc.id)}
+                    className="flex-1 py-2 bg-white/5 hover:bg-emerald-500/20 hover:text-emerald-400 border border-white/10 rounded-lg text-xs font-bold text-white/60 transition-all flex items-center justify-center gap-2 group/btn"
+                  >
+                    <Footprints size={14} className="group-hover/btn:translate-x-1 transition-transform" /> {isKnown ? 'Travel (Unknown)' : 'Travel'}
+                  </button>
+                )}
+                {isLocked && (
+                  <div className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-bold text-red-500/50 italic select-none border border-red-500/10 rounded-lg bg-red-500/5">
+                    <Lock size={12} /> Locked
+                  </div>
+                )}
+                {onExplore && isCurrent && (
+                  <button
+                    onClick={() => onExplore(loc.id)}
+                    className="flex-1 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 group/btn shadow-[0_0_10px_rgba(16,185,129,0.1)]"
+                  >
+                    <Target size={14} className="group-hover/btn:scale-110 transition-transform" /> Explore Area
+                  </button>
+                )}
+                {isCurrent && !onExplore && (
+                  <div className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-bold text-emerald-500/50 italic select-none">
+                    <MapPin size={14} /> You are here
+                  </div>
+                )}
+              </div>
+            </div>
+            );
+          })}
+          {(data.locations || []).length === 0 && (
+            <div className="text-center py-8 border border-dashed border-white/10 rounded-lg">
+              <p className="text-xs text-white/20">No locations discovered yet.</p>
+            </div>
+          )}
+        </div>
+        )}
       </section>
 
       {/* Threats & Clocks */}

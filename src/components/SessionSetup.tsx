@@ -23,6 +23,7 @@ const GAME_STYLES = [
   { id: 'narrative', name: 'Narrative Focus', desc: 'Больше сюжета, загадок и общения. Бои редкие и сюжетные (10-15%).' },
   { id: 'balanced', name: 'Balanced', desc: 'Классический баланс между экшеном и историей (50/50).' },
   { id: 'combat', name: 'Combat Heavy', desc: 'Фокус на тактике, сражениях и механике. (80% боев).' },
+  { id: 'fairytale', name: 'Сказка для детей', desc: 'Добрая, волшебная атмосфера. Без жестокости и мрака. Фокус на дружбе и чудесах.' },
 ];
 
 export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate }) => {

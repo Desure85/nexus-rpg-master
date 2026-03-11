@@ -102,6 +102,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                   >
                     Local Model
                   </button>
+                  <button
+                    onClick={() => setLocalSettings({ ...localSettings, provider: 'openrouter' })}
+                    className={`flex-1 py-3 rounded-xl border transition-all text-sm font-bold ${localSettings.provider === 'openrouter' ? 'bg-white text-black border-white' : 'bg-black/40 text-white/60 border-white/10 hover:border-white/30'}`}
+                  >
+                    OpenRouter
+                  </button>
                 </div>
               </div>
 
@@ -126,7 +132,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                 </div>
               </div>
 
-              {localSettings.provider === 'local' ? (
+              {localSettings.provider === 'openrouter' ? (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Key size={12} /> OpenRouter API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={localSettings.openRouterApiKey || ''}
+                      onChange={(e) => setLocalSettings({ ...localSettings, openRouterApiKey: e.target.value })}
+                      placeholder="sk-or-v1-..."
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Cpu size={12} /> Model Name
+                    </label>
+                    <input
+                      type="text"
+                      value={localSettings.openRouterModel || ''}
+                      onChange={(e) => setLocalSettings({ ...localSettings, openRouterModel: e.target.value })}
+                      placeholder="e.g. anthropic/claude-3.5-sonnet"
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm"
+                    />
+                    <p className="text-[10px] text-white/40 mt-1">
+                      Popular choices: <code className="bg-white/10 px-1 rounded">anthropic/claude-3.5-sonnet</code>, <code className="bg-white/10 px-1 rounded">meta-llama/llama-3.1-70b-instruct</code>, <code className="bg-white/10 px-1 rounded">openai/gpt-4o</code>
+                    </p>
+                  </div>
+                </div>
+              ) : localSettings.provider === 'local' ? (
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">

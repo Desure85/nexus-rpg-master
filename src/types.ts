@@ -40,11 +40,24 @@ export interface Clock {
   total: number;
 }
 
+export interface Location {
+  id: string;
+  name: string;
+  description: string;
+  travelTime?: string;
+  dangerLevel?: number; // 1-5
+  status?: 'visited' | 'known' | 'locked';
+  coordinates?: { x: number; y: number };
+  connections?: string[]; // IDs of connected locations
+}
+
 export interface DashboardData {
   characters: Character[];
   threats: Threat[];
   sceneAspects: string[];
   sceneLoot?: string[];
+  locations?: Location[];
+  currentLocationId?: string;
   clocks: Clock[];
   doomPool: number;
   echoes: string[];
@@ -91,10 +104,12 @@ export interface MechanicConfig {
 }
 
 export interface AppSettings {
-  provider: 'local' | 'gemini';
+  provider: 'local' | 'gemini' | 'openrouter';
   modelUrl: string;
   apiKey: string;
   modelName: string;
+  openRouterApiKey?: string;
+  openRouterModel?: string;
   systemPrompt: string;
   fontSize: number;
   fontFamily: 'sans' | 'serif' | 'mono';

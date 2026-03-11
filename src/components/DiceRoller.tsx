@@ -152,9 +152,9 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
   const currentChar = characters.find(c => c.name === selectedChar);
 
   return (
-    <div className="p-1 bg-[#151619] border border-white/10 rounded-2xl shadow-2xl overflow-hidden max-h-[70vh] lg:max-h-[80vh] flex flex-col">
+    <div className="p-1 bg-[#151619] border border-white/10 rounded-2xl shadow-2xl overflow-hidden max-h-[70vh] lg:max-h-[80vh] flex flex-col w-full max-w-lg mx-auto relative">
       <div className="bg-black/40 p-4 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
-        <div className="flex items-center justify-between border-b border-white/5 pb-3 sticky top-0 bg-black/40 z-20">
+        <div className="flex items-center justify-between border-b border-white/5 pb-3 sticky top-0 bg-[#151619]/95 backdrop-blur z-20 -mx-4 px-4 -mt-4 pt-4">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
             <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40 font-bold">
@@ -165,17 +165,19 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
             {lastRoll && (
               <button 
                 onClick={() => setLastRoll(null)}
-                className="p-1 hover:bg-white/5 rounded transition-colors text-white/20 hover:text-white/60"
+                className="p-1.5 hover:bg-white/5 rounded-lg transition-colors text-white/20 hover:text-white/60"
+                title="Reset Roll"
               >
-                <RotateCcw size={12} />
+                <RotateCcw size={14} />
               </button>
             )}
             {onClose && (
               <button 
                 onClick={onClose}
-                className="p-1 hover:bg-white/5 rounded transition-colors text-white/20 hover:text-white/60 lg:hidden"
+                className="p-1.5 hover:bg-white/5 rounded-lg transition-colors text-white/20 hover:text-white/60"
+                title="Close Dice Tray"
               >
-                <Plus size={14} className="rotate-45" />
+                <Plus size={16} className="rotate-45" />
               </button>
             )}
           </div>
@@ -183,7 +185,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
 
         {/* Character Selection */}
         <div className="space-y-2">
-          <label className="flex items-center gap-1 text-[8px] uppercase tracking-[0.2em] text-white/30 font-bold">
+          <label className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold pl-1">
             <User size={10} /> Select Operative
           </label>
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
@@ -201,24 +203,24 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                     setSelectedAction('');
                     setCustomActionInput('');
                   }}
-                  className={`flex-shrink-0 w-24 p-2 rounded-xl border transition-all relative group ${
+                  className={`flex-shrink-0 w-28 p-3 rounded-xl border transition-all relative group ${
                     isSelected 
-                      ? 'bg-emerald-500/20 border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.2)]' 
+                      ? 'bg-emerald-500/10 border-emerald-500/40 shadow-[0_0_15px_rgba(16,185,129,0.1)]' 
                       : isDisabled 
                         ? 'bg-white/5 border-white/5 opacity-40 grayscale cursor-not-allowed' 
-                        : 'bg-white/5 border-white/10 hover:border-white/30'
+                        : 'bg-white/5 border-white/10 hover:border-white/30 hover:bg-white/10'
                   }`}
                 >
-                  <div className="flex flex-col items-center gap-1 text-center">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isSelected ? 'bg-emerald-500 text-black' : 'bg-white/10 text-white/40'}`}>
-                      <User size={16} />
+                  <div className="flex flex-col items-center gap-2 text-center">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${isSelected ? 'bg-emerald-500 text-black shadow-lg shadow-emerald-500/20' : 'bg-white/10 text-white/40'}`}>
+                      <User size={18} />
                     </div>
-                    <span className={`text-[10px] font-bold truncate w-full ${isSelected ? 'text-emerald-400' : 'text-white/60'}`}>
+                    <span className={`text-[11px] font-bold truncate w-full ${isSelected ? 'text-emerald-400' : 'text-white/60'}`}>
                       {c.name}
                     </span>
                     {hasActed && (
-                      <div className="absolute top-1 right-1">
-                        <CheckCircle2 size={10} className="text-emerald-500" />
+                      <div className="absolute top-2 right-2 bg-black/50 rounded-full p-0.5">
+                        <CheckCircle2 size={12} className="text-emerald-500" />
                       </div>
                     )}
                   </div>
@@ -237,10 +239,10 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
               exit={{ opacity: 0, y: -10 }}
               className="space-y-2"
             >
-              <label className="flex items-center gap-1 text-[8px] uppercase tracking-[0.2em] text-white/30 font-bold">
+              <label className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold pl-1">
                 <Activity size={10} /> Vector Selection
               </label>
-              <div className="grid grid-cols-1 gap-2">
+              <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
                 {currentChar?.actions?.map(a => {
                   const isSelected = selectedAction === a.name;
                   const getCategoryStyle = (cat: string) => {

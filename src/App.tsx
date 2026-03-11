@@ -9,7 +9,7 @@ import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
-import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag } from 'lucide-react';
+import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 
@@ -210,6 +210,8 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('threats_dash') ? `"threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}]` : null,
     isEnabled('scene_aspects') ? `"sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"]` : null,
     isEnabled('loot') ? `"sceneLoot": ["Лечебное зелье (Восстанавливает 5 HP)", "Ржавый меч"]` : null,
+    `"locations": [{"id": "uuid", "name": "...", "description": "...", "dangerLevel": 1, "status": "visited|known|locked", "coordinates": {"x": 50, "y": 50}, "connections": ["other_loc_id"]}]`,
+    `"currentLocationId": "uuid"`,
     isEnabled('clocks') ? `"clocks": [{"name": "...", "progress": 0, "total": 4}]` : null,
     isEnabled('doom_pool') ? `"doomPool": 0` : null,
     isEnabled('echoes') ? `"echoes": ["Звон мечей вдали", "Шепот ветра"]` : null,
@@ -231,6 +233,16 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 }
 ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
 ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('doom_pool') ? 'ВАЖНО: Поле doomPool (0-20) отражает уровень эскалации. Увеличивай его на +1 за каждый провал игрока или выбор действия "Искушение". ЕСЛИ doomPool ДОСТИГАЕТ 20, ТЫ ОБЯЗАН СБРОСИТЬ ЕГО ДО 0 И ОПИСАТЬ КАТАСТРОФУ (внезапная смерть союзника, поломка оружия, появление босса, потеря важного предмета). Не копи doomPool вечно, используй его для драматичных поворотов!\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot. НЕ добавляй их сразу в инвентарь персонажа! Вместо этого сгенерируй для персонажа действие (Action) категории "Loot" с названием "Подобрать [Предмет]". Только когда игрок выберет это действие, ты переместишь предмет из sceneLoot в inventory.\n' : ''}
+ВАЖНО: Поле locations содержит список ИЗВЕСТНЫХ локаций. 
+- status="visited": Локация уже посещена и безопасна для перемещения.
+- status="known": О локации известно, но персонажи там не были. Перемещение возможно.
+- status="locked": Проход в локацию закрыт (нужен ключ, ремонт моста, зачистка врагов). Перемещение НЕВОЗМОЖНО, пока игроки не выполнят соответствующее действие.
+Если персонажи узнают о новом месте (особенно при действии EXPLORE), добавь его (сгенерируй уникальный id) со статусом "known".
+ПРИ ДОБАВЛЕНИИ НОВОЙ ЛОКАЦИИ:
+1. Укажи coordinates: {x, y} (0-100). Новая локация должна быть рядом с текущей (сдвиг на 10-20 единиц). Избегай наложений.
+2. Укажи connections: [id_текущей_локации]. Также добавь id новой локации в connections текущей локации. Это создаст связь на карте.
+Если они прибывают в локацию, обнови ее описание, установи status="visited" и ОБЯЗАТЕЛЬНО установи currentLocationId равным id этой локации.
+ОБЯЗАТЕЛЬНО соблюдай выбранный СТИЛЬ ИГРЫ при генерации dangerLevel (1-5). Не делай все локации сложными (4-5), если стиль не Combat Heavy! Чередуй уровни опасности.
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
 ВАЖНО: Если в запросе есть тег [CLARIFY], твой приоритет №1 — обновить Кодекс. Зафиксируй там все детали, которые ты только что описал в тексте. Это твоя внешняя память.
@@ -293,6 +305,7 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showLore, setShowLore] = useState(false);
+  const [travelEvent, setTravelEvent] = useState<{ type: 'encounter' | 'discovery' | 'safe', locationName: string } | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
   
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -482,6 +495,19 @@ export default function App() {
           });
         }
 
+        // Merge locations
+        let mergedLocations = [...(currentDashboard.locations || [])];
+        if (parsed.locations) {
+          parsed.locations.forEach((parsedLoc: any) => {
+            const index = mergedLocations.findIndex(l => l.id === parsedLoc.id || l.name === parsedLoc.name);
+            if (index >= 0) {
+              mergedLocations[index] = { ...mergedLocations[index], ...parsedLoc };
+            } else {
+              mergedLocations.push(parsedLoc);
+            }
+          });
+        }
+
         // Merge with current dashboard to prevent dropping arrays if AI omits them
         dashboard = {
           ...currentDashboard,
@@ -490,6 +516,8 @@ export default function App() {
           threats: parsed.threats || currentDashboard.threats || [],
           sceneAspects: parsed.sceneAspects || currentDashboard.sceneAspects || [],
           sceneLoot: parsed.sceneLoot || currentDashboard.sceneLoot || [],
+          locations: mergedLocations,
+          currentLocationId: parsed.currentLocationId || currentDashboard.currentLocationId,
           clocks: parsed.clocks || currentDashboard.clocks || [],
           echoes: parsed.echoes || currentDashboard.echoes || [],
         };
@@ -590,6 +618,27 @@ export default function App() {
         console.error("Gemini Generation Error:", error);
         throw error;
       }
+    } else if (settings.provider === 'openrouter') {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${settings.openRouterApiKey || ''}`,
+          'HTTP-Referer': window.location.origin,
+          'X-Title': 'Nexus Prime RPG'
+        },
+        body: JSON.stringify({
+          model: settings.openRouterModel || 'anthropic/claude-3.5-sonnet',
+          messages: [
+            { role: 'system', content: "Ты креативный помощник для НРИ. Отвечай кратко и атмосферно." },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.9
+        })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(`OpenRouter Error: ${data.error?.message || response.statusText}`);
+      return data.choices?.[0]?.message?.content || '';
     } else {
       const baseUrl = settings.modelUrl.replace(/\/$/, '');
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -738,6 +787,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 - Приоритет: История, атмосфера, загадки. Бои редкие (10-15%).
 - ТЕМП: Медленный. ПОСЛЕ КАЖДОЙ ОПАСНОЙ СЦЕНЫ ОБЯЗАТЕЛЬНО ДАВАЙ ПЕРЕДЫШКУ (Safe Haven).
 - ЛИМИТЫ: Максимум 1 активная Угроза и 1 Часы одновременно.
+- ЛОКАЦИИ: Уровень опасности (dangerLevel) ПРЕИМУЩЕСТВЕННО 1-2. Редко 3 (только кульминация).
 - МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы ТОЛЬКО если:
   1. Текущих Угроз/Часов меньше лимита.
   2. Игрок ПРОВАЛИЛ бросок.
@@ -749,15 +799,26 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 - Приоритет: Тактика, выживание. Бои частые (80%).
 - ТЕМП: Высокий, адреналиновый.
 - ЛИМИТЫ: Максимум 3 активные Угрозы и 3 Часов одновременно.
+- ЛОКАЦИИ: Уровень опасности (dangerLevel) высокий (3-5). Безопасные зоны редки.
 - МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы, если:
   1. Текущих Угроз/Часов меньше лимита.
   2. Ты мысленно бросил 1d6 и выпало 3+.`;
+
+          case 'fairytale': return `
+\n\n### СТИЛЬ ИГРЫ: СКАЗКА ДЛЯ ДЕТЕЙ (FAIRY TALE)
+- Приоритет: Добрая, волшебная атмосфера. Фокус на дружбе, чудесах, загадках и помощи другим.
+- ТЕМП: Спокойный, увлекательный. НИКАКОЙ ЖЕСТОКОСТИ, крови, мрака или психологического хоррора.
+- ВРАГИ И УГРОЗЫ: Враги должны быть комичными, заблудшими или просто вредными (например, тролль, который не пускает на мост, пока ему не отгадают загадку, или воришка-гоблин). Конфликты решаются хитростью, добротой или волшебством, а не убийствами.
+- ЛИМИТЫ: Максимум 1 простая Угроза или Часы одновременно (например, "Успеть до заката").
+- ЛОКАЦИИ: Уровень опасности (dangerLevel) 1. Локации яркие, сказочные (Пряничный домик, Говорящий лес).
+- МЕХАНИКА ЭСКАЛАЦИИ: Добавляй новые препятствия только как веселые испытания или головоломки.`;
 
           default: return `
 \n\n### СТИЛЬ ИГРЫ: BALANCED
 - Приоритет: Баланс сюжета и экшена (50/50).
 - ТЕМП: Ритмичный. Напряжение -> Разрядка. ПОСЛЕ БОЯ ОБЯЗАТЕЛЬНО ДАЙ ОТДОХНУТЬ.
 - ЛИМИТЫ: Максимум 2 активные Угрозы и 2 Часов одновременно.
+- ЛОКАЦИИ: Уровень опасности (dangerLevel) должен ЧЕРЕДОВАТЬСЯ: 1-2 (Безопасно/Исследование) -> 3-4 (Опасно/Бой). Не делай подряд две локации уровня 4-5!
 - МЕХАНИКА ЭСКАЛАЦИИ (ВАЖНО): Ты можешь добавить новую Угрозу или Часы ТОЛЬКО если:
   1. Текущих Угроз/Часов меньше лимита.
   2. Ты мысленно бросил 1d6 и выпало 5+ (или 4+ если игрок провалил бросок).
@@ -811,6 +872,39 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
           }
         });
         aiContent = response.text || '';
+      } else if (settings.provider === 'openrouter') {
+        const messages = [
+          { role: 'system', content: fullSystemPrompt },
+          ...contextWindow.map(m => ({ role: m.role, content: m.content }))
+        ];
+        logRequest = messages;
+
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${settings.openRouterApiKey || ''}`,
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'Nexus Prime RPG'
+          },
+          body: JSON.stringify({
+            model: settings.openRouterModel || 'anthropic/claude-3.5-sonnet',
+            messages,
+            temperature: 0.7,
+          })
+        });
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(`OpenRouter Error: ${data.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        aiContent = data.choices?.[0]?.message?.content;
+        
+        if (!aiContent) {
+          throw new Error("OpenRouter returned empty response or invalid format.");
+        }
       } else {
         const messages = [
           { role: 'system', content: fullSystemPrompt },
@@ -1292,6 +1386,61 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     sessionId={currentSession.id}
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
+                    onTravel={(locId) => {
+                      const loc = currentDashboard.locations?.find(l => l.id === locId);
+                      if (loc) {
+                        const roll = Math.random();
+                        let type: 'encounter' | 'discovery' | 'safe' = 'safe';
+                        let prompt = "";
+                        
+                        if (roll < 0.3) {
+                          type = 'encounter';
+                          prompt = `[TRAVEL ENCOUNTER] The party attempts to travel to ${loc.name}, but they are interrupted on the road! 
+1. Generate a random encounter, obstacle, or event fitting the current setting and genre.
+2. DO NOT let them arrive at ${loc.name} yet. They must deal with this first.
+3. Ask how they respond to the situation.`;
+                        } else if (roll < 0.6) {
+                          type = 'discovery';
+                          prompt = `[TRAVEL DISCOVERY] While traveling to ${loc.name}, the party discovers something hidden off the beaten path!
+1. Describe the journey and the discovery of a NEW location or landmark.
+2. Add this new location to the 'locations' JSON array with:
+   - status='known'
+   - dangerLevel (1-5, based on Game Style)
+   - coordinates (x,y near current)
+   - connections (link to current and/or ${loc.id})
+3. Describe their arrival at ${loc.name}.`;
+                        } else {
+                          type = 'safe';
+                          prompt = `[TRAVEL ACTION] The party travels safely to ${loc.name}. 
+1. Describe the scenery and atmosphere of the journey based on the setting.
+2. Describe their arrival at ${loc.name} and what they see first.`;
+                        }
+
+                        setTravelEvent({ type, locationName: loc.name });
+                        
+                        const sessionToUse = currentSession;
+                        setTimeout(() => {
+                          setTravelEvent(null);
+                          sendMessage(prompt, sessionToUse);
+                        }, 2500);
+                      }
+                    }}
+                    onExplore={(locId) => {
+                      const loc = currentDashboard.locations?.find(l => l.id === locId);
+                      if (loc) {
+                        sendMessage(`[EXPLORE ACTION] The party explores ${loc.name}. 
+1. Describe what they find.
+2. REVEAL 1-2 NEW LOCATIONS. Add them to 'locations' JSON with:
+   - id: UUID
+   - name: "..."
+   - description: "..."
+   - dangerLevel: (1-5, MUST match Game Style!)
+   - status: 'known'
+   - coordinates: {x: ..., y: ...} (offset from current)
+   - connections: ["${loc.id}"]
+3. Ensure dangerLevel is set correctly!`);
+                      }
+                    }}
                   />
                 )}
               </div>
@@ -1347,6 +1496,54 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
+      
+      <AnimatePresence>
+        {travelEvent && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.8, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="flex flex-col items-center gap-6"
+            >
+              <div className="text-white/40 uppercase tracking-widest text-sm font-bold">
+                Traveling to {travelEvent.locationName}
+              </div>
+              
+              <div className="relative w-32 h-32 flex items-center justify-center">
+                {/* Spinning dashed circle */}
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-0 rounded-full border-2 border-dashed border-white/20"
+                />
+                
+                {/* Icon based on event type */}
+                {travelEvent.type === 'encounter' && <Skull size={48} className="text-red-500 animate-pulse" />}
+                {travelEvent.type === 'discovery' && <Eye size={48} className="text-emerald-500 animate-pulse" />}
+                {travelEvent.type === 'safe' && <Footprints size={48} className="text-white/60" />}
+              </div>
+              
+              <div className="text-2xl font-serif text-white text-center">
+                {travelEvent.type === 'encounter' && "Interception!"}
+                {travelEvent.type === 'discovery' && "New Discovery"}
+                {travelEvent.type === 'safe' && "Safe Passage"}
+              </div>
+              
+              <div className="text-white/60 text-sm max-w-xs text-center">
+                {travelEvent.type === 'encounter' && "Something blocks your path. Prepare yourself."}
+                {travelEvent.type === 'discovery' && "You notice something off the beaten path..."}
+                {travelEvent.type === 'safe' && "The journey is uneventful. For now."}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <PromptModal />
     </div>
     } />
