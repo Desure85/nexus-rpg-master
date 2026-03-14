@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
+import { EquipmentVisualizer } from './EquipmentVisualizer';
 
 interface DashboardProps {
   data: DashboardData;
@@ -254,6 +255,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </div>
                 )}
               </div>
+
+              <EquipmentVisualizer 
+                equipment={char.equipment} 
+                onUpdate={(slot, item) => {
+                  const newEquip = [...(char.equipment || [])];
+                  const idx = newEquip.findIndex(s => s.slot === slot);
+                  if (idx !== -1) {
+                    newEquip[idx] = { ...newEquip[idx], item };
+                  } else {
+                    newEquip.push({ slot: slot as any, item });
+                  }
+                  updateChar(char.name, { equipment: newEquip });
+                }}
+              />
               
               {isMechanicEnabled('condition') && char.condition && (
                 <div 

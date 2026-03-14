@@ -10,9 +10,16 @@ export interface Relationship {
   status: string;
 }
 
+export interface Item {
+  name: string;
+  description?: string;
+  bonus?: string;
+  rarity?: 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+}
+
 export interface EquipmentSlot {
-  slot: string;
-  item: string;
+  slot: 'head' | 'body' | 'main-hand' | 'off-hand' | 'accessory';
+  item: Item | string | null;
 }
 
 export interface Character {

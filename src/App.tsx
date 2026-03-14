@@ -200,7 +200,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('condition') ? `"condition": "..."` : null,
     `"goal": "..."`,
     isEnabled('inventory') ? `"inventory": ["Предмет 1", "..."]` : null,
-    isEnabled('equipment') ? `"equipment": [{"slot": "Голова", "item": "Шлем"}]` : null,
+    isEnabled('equipment') ? `"equipment": [{"slot": "head|body|main-hand|off-hand|accessory", "item": {"name": "...", "description": "...", "bonus": "+1 Armor|Fire Resistance|...", "rarity": "common|uncommon|rare|epic|legendary"}}]` : null,
     isEnabled('relationships') ? `"relationships": [{"target": "NPC", "level": 0, "status": "..."}]` : null,
     isEnabled('actions') ? `"actions": [{"category": "Профильный|Рискованный|Синергия|Искушение", "name": "...", "description": "..."}]` : null
   ].filter(Boolean).join(',\n    ');
@@ -223,6 +223,11 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
   return `
 ## ТЕХНИЧЕСКИЙ ПРОТОКОЛ (КРИТИЧЕСКИ ВАЖНО!)
 Твой ответ ВСЕГДА должен состоять из двух частей: сначала художественный текст, а затем технические блоки JSON. БЕЗ JSON ИНТЕРФЕЙС ИГРЫ СЛОМАЕТСЯ!
+
+### ПРАВИЛА СНАРЯЖЕНИЯ (EQUIPMENT):
+- Каждый предмет в слоте (head, body, main-hand, off-hand, accessory) должен иметь поле **bonus**.
+- Бонус должен быть конкретным (например, "+1 к защите", "Иммунитет к огню", "Урон +2").
+- Ты ОБЯЗАН учитывать эти бонусы при описании результатов действий персонажа. Если у игрока есть "Щит (+1 к защите)", он должен реже получать урон или получать его в меньшем объеме.
 
 ВАЖНОЕ ПРАВИЛО: НИКОГДА не пиши никакой текст ПОСЛЕ блоков JSON. Твой ответ должен заканчиваться закрывающим тегом (например, </dashboard_json> или </lore_update>). Любой текст после JSON сломает парсер!${disabledWarning}
 
@@ -1018,12 +1023,59 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 
   const exportBook = () => {
     if (!currentSession) return;
-    const narrative = currentSession.history
-      .filter(m => m.role === 'assistant')
-      .map(m => m.content)
-      .join('\n\n---\n\n');
     
-    const blob = new Blob([`# ${currentSession.name}\n\n${narrative}`], { type: 'text/markdown' });
+    const dashboard = currentSession.history.slice().reverse().find(m => m.dashboard)?.dashboard || INITIAL_DASHBOARD;
+    
+    let content = `# ${currentSession.name}\n\n`;
+    content += `**Genre:** ${currentSession.genre}\n`;
+    content += `**Setting:** ${currentSession.setting}\n`;
+    content += `**Style:** ${currentSession.style}\n\n`;
+    
+    content += `## 🌍 LORE & WORLD\n${currentSession.lore || 'No lore recorded yet.'}\n\n`;
+    
+    if (currentSession.codex.length > 0) {
+      content += `## 📖 CODEX\n\n`;
+      const types = ['npc', 'location', 'item', 'lore'];
+      types.forEach(type => {
+        const entries = currentSession.codex.filter(e => e.type === type);
+        if (entries.length > 0) {
+          const icons: Record<string, string> = { npc: '👥', location: '📍', item: '⚔️', lore: '📜' };
+          content += `### ${icons[type] || ''} ${type.toUpperCase()}S\n`;
+          entries.forEach(e => {
+            content += `**${e.name}**\n${e.description}\n*Status: ${e.status || 'Unknown'}*\n\n`;
+          });
+        }
+      });
+    }
+    
+    content += `## 🛡️ PARTY STATUS\n\n`;
+    dashboard.characters.forEach(c => {
+      content += `### 👤 ${c.name}\n`;
+      content += `- ❤️ **HP:** ${c.hp}\n`;
+      content += `- 🧠 **Stress:** ${c.stress}/10\n`;
+      content += `- 🪙 **Tokens:** ${c.tokens}\n`;
+      content += `- 🩹 **Condition:** ${c.condition}\n`;
+      if (c.equipment && c.equipment.length > 0) {
+        content += `- 🎒 **Equipment:**\n`;
+        c.equipment.forEach(e => {
+          const itemName = typeof e.item === 'object' ? e.item?.name : e.item;
+          const bonus = typeof e.item === 'object' ? e.item?.bonus : null;
+          if (itemName) content += `  - *${e.slot}:* ${itemName}${bonus ? ` (${bonus})` : ''}\n`;
+        });
+      }
+      content += `\n---\n\n`;
+    });
+    
+    content += `## 📜 THE CHRONICLE\n\n`;
+    currentSession.history.forEach(m => {
+      if (m.role === 'assistant') {
+        content += `${m.content}\n\n---\n\n`;
+      } else if (m.role === 'user') {
+        content += `> **Player:** ${m.content}\n\n`;
+      }
+    });
+    
+    const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1119,6 +1171,14 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     className={`flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold transition-all ${isBookView ? 'text-emerald-400' : 'text-white/40 hover:text-white'}`}
                   >
                     <Library size={12} /> {isBookView ? 'Book Mode Active' : 'Switch to Book Mode'}
+                  </button>
+                  <div className="h-4 w-px bg-white/10" />
+                  <button 
+                    onClick={exportBook}
+                    className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-all"
+                    title="Export Adventure as Markdown"
+                  >
+                    <Download size={12} /> Export
                   </button>
                   <div className="h-4 w-px bg-white/10" />
                   <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
