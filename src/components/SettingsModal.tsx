@@ -503,12 +503,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                       onChange={(e) => setLocalSettings({ ...localSettings, modelName: e.target.value })}
                       className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm appearance-none"
                     >
-                      <option value="glm-5.2">glm-5.2 (чистый нарратив, рекоменд.)</option>
-                      <option value="deepseek-v4-flash">deepseek-v4-flash (быстро)</option>
-                      <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-                      <option value="kimi-k2.6">kimi-k2.6</option>
-                      <option value="qwen3.7-plus">qwen3.7-plus</option>
-                      <option value="minimax-m3">minimax-m3</option>
+                    <option value="deepseek-v4-flash">deepseek-v4-flash ($0.14 — дёшево, рекоменд.)</option>
+                    <option value="deepseek-v4-pro">deepseek-v4-pro ($1.74)</option>
+                    <option value="mimo-v2.5">mimo-v2.5 (Xiaomi, дёшево)</option>
+                    <option value="mimo-v2-omni">mimo-v2-omni (Xiaomi)</option>
+                    <option value="minimax-m2.5">minimax-m2.5 ($0.30)</option>
+                    <option value="minimax-m2.7">minimax-m2.7 ($0.30)</option>
+                    <option value="minimax-m3">minimax-m3 ($0.30)</option>
+                    <option value="kimi-k2.5">kimi-k2.5 ($0.60)</option>
+                    <option value="kimi-k2.6">kimi-k2.6 ($0.95)</option>
+                    <option value="qwen3.5-plus">qwen3.5-plus ($0.20)</option>
+                    <option value="qwen3.6-plus">qwen3.6-plus ($0.50)</option>
+                    <option value="glm-5.2">glm-5.2 ($1.40 — дорого)</option>
                     </select>
                   </div>
                 </div>
