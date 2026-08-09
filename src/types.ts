@@ -47,6 +47,13 @@ export interface Clock {
   total: number;
 }
 
+export interface DecisionNode {
+  id: string;
+  choice: string;
+  status: 'active' | 'resolved';
+  consequence?: string;
+}
+
 export interface Location {
   id: string;
   name: string;
@@ -69,6 +76,7 @@ export interface DashboardData {
   doomPool: number;
   echoes: string[];
   atmosphere: string;
+  decisionTree?: DecisionNode[];
   threatLevel?: number;
   suggestedRoll?: {
     type: 'classic' | 'triple' | 'shifted' | 'taint';
@@ -99,6 +107,7 @@ export interface GameSession {
   snapshot: string;
   history: Message[];
   lore: string;
+  archive: string;
   codex: CodexEntry[];
   updated_at: string;
 }
