@@ -15,13 +15,34 @@ interface DashboardProps {
   onTravel?: (locationId: string) => void;
   onExplore?: (locationId: string) => void;
   onSearch?: (kind: 'location' | 'body', targetName?: string) => void;
+  onEconomy?: (action: 'rest' | 'buy', charName: string, item?: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
   const [qrCopied, setQrCopied] = useState(false);
+  const [shopOpen, setShopOpen] = useState(false);
+  const [shopChar, setShopChar] = useState('');
+  const [shopItems, setShopItems] = useState<{ name: string; cost: number; desc: string }[]>([]);
+
+  const openShop = async () => {
+    setShopChar((data.characters || [])[0]?.name || '');
+    try {
+      const res = await fetch('/api/shop');
+      setShopItems(await res.json());
+    } catch (e) { console.error("Shop fetch error", e); }
+    setShopOpen(true);
+  };
+
+  const curLoc = data.locations?.find(l => l.id === data.currentLocationId);
+  const hasMarket = curLoc?.services?.includes('market') ?? false;
+  const hasTavern = curLoc?.services?.includes('tavern') ?? false;
+  const nearestTown = data.locations?.find(l =>
+    (l.services?.includes('market') || l.services?.includes('tavern')) &&
+    (l.status === 'visited' || l.status === 'known') && l.id !== data.currentLocationId
+  );
 
   const showQr = async (charName: string) => {
     if (!sessionId) return;
@@ -273,6 +294,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </button>
                   </div>
                 )}
+                <div className="flex items-center gap-1.5 ml-auto">
+                  <span
+                    className="text-[10px] font-mono text-amber-300/80 cursor-pointer hover:text-amber-200"
+                    title="Золото (клик — задать вручную)"
+                    onClick={async () => {
+                      const next = await customPrompt(`Set gold for ${char.name}`, String(char.gold ?? 0));
+                      if (next !== null) updateChar(char.name, { gold: Math.max(0, parseInt(next) || 0) });
+                    }}
+                  >
+                    🪙 {char.gold ?? 0}
+                  </span>
+                  {onEconomy && hasTavern && (char.gold ?? 0) >= 10 && (
+                    <button
+                      onClick={() => onEconomy('rest', char.name)}
+                      className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                      title="Таверна: 10 золота → HP макс, стресс -2 (только в поселении)"
+                    >
+                      Таверна
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div className="grid grid-cols-2 gap-4">
@@ -1171,6 +1213,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         </button>
       )}
 
+      {/* Economy — только в поселении */}
+      {onEconomy && (
+        hasMarket ? (
+          <button
+            onClick={openShop}
+            className="w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-xl text-[10px] uppercase tracking-widest font-bold text-emerald-400 transition-all flex items-center justify-center gap-2"
+          >
+            <Gem size={12} /> Магазин ({curLoc?.name})
+          </button>
+        ) : (
+          <div className="space-y-1.5">
+            <p className="text-[9px] text-white/30 italic text-center">
+              Магазин и таверна — только в поселении.
+            </p>
+            {nearestTown && onTravel && (
+              <button
+                onClick={() => onTravel(nearestTown.id)}
+                className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] uppercase tracking-widest font-bold text-white/60 transition-all"
+              >
+                ← Вернуться в {nearestTown.name}
+              </button>
+            )}
+          </div>
+        )
+      )}
+
       {/* Decision Tree (Древо Решений) */}
       {(data.decisionTree && data.decisionTree.length > 0) && (
         <section className="space-y-4">
@@ -1329,6 +1397,58 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           </p>
         </div>
       </section>
+
+      {shopOpen && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShopOpen(false)}>
+          <div className="bg-[#14100d] border border-white/10 rounded-2xl p-6 max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Gem size={14} className="text-emerald-400" /> Магазин — {curLoc?.name}
+              </h3>
+              <button onClick={() => setShopOpen(false)} className="text-white/40 hover:text-white"><X size={16} /></button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] uppercase tracking-widest text-white/40 font-bold">Покупает:</span>
+              <select
+                value={shopChar}
+                onChange={(e) => setShopChar(e.target.value)}
+                className="flex-1 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-white/30"
+              >
+                {(data.characters || []).map((c: any) => (
+                  <option key={c.name} value={c.name}>
+                    {c.name} (🪙 {c.gold ?? 0})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar pr-1">
+              {shopItems.map((it) => {
+                const ch = (data.characters || []).find((c: any) => c.name === shopChar);
+                const canAfford = (ch?.gold ?? 0) >= it.cost;
+                return (
+                  <div key={it.name} className="flex items-center justify-between gap-3 p-3 bg-white/5 border border-white/10 rounded-xl">
+                    <div className="min-w-0">
+                      <p className="text-xs text-white/80 font-medium">{it.name}</p>
+                      <p className="text-[9px] text-white/30">{it.desc}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] font-mono text-amber-300/80">🪙 {it.cost}</span>
+                      <button
+                        onClick={() => onEconomy?.('buy', shopChar, it.name)}
+                        disabled={!canAfford}
+                        className="px-2.5 py-1.5 bg-emerald-500/15 text-emerald-400 rounded-lg text-[9px] font-bold uppercase tracking-widest hover:bg-emerald-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        Купить
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[9px] text-white/25 italic text-center">Товар попадёт в инвентарь персонажа.</p>
+          </div>
+        </div>
+      )}
 
       {qrData && (
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setQrData(null)}>
