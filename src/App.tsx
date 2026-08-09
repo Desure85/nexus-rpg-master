@@ -9,7 +9,7 @@ import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
-import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText } from 'lucide-react';
+import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 
@@ -335,13 +335,13 @@ export default function App() {
     fontSize: 16,
     fontFamily: 'sans',
     loggingEnabled: false,
+    idlePlayerAction: 'random',
     mechanics: DEFAULT_MECHANICS
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDiceTrayOpen, setIsDiceTrayOpen] = useState(false);
   const [mobileView, setMobileView] = useState<'narrative' | 'dashboard'>('narrative');
-  const [rightPanelTab, setRightPanelTab] = useState<'dashboard' | 'lore' | 'codex'>('dashboard');
   const [isBookView, setIsBookView] = useState(false);
   const [confirmFinale, setConfirmFinale] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -352,6 +352,11 @@ export default function App() {
   const [showLore, setShowLore] = useState(false);
   const [travelEvent, setTravelEvent] = useState<{ type: 'encounter' | 'discovery' | 'safe', locationName: string } | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
+  const [pendingClaims, setPendingClaims] = useState<any[]>([]);
+  const [pendingActions, setPendingActions] = useState<any[]>([]);
+  const [gmActionInputs, setGmActionInputs] = useState<Record<string, string>>({});
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<'dashboard' | 'lore' | 'codex' | 'players'>('dashboard');
   
   const chatEndRef = useRef<HTMLDivElement>(null);
   const currentSessionRef = useRef<GameSession | null>(null);
@@ -379,6 +384,10 @@ export default function App() {
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       const session = currentSessionRef.current;
+      
+      if (data.type === 'claims_changed' || data.type === 'actions_changed') {
+        fetchPanels();
+      }
       
       if (data.type === 'update' && session && data.sessionId === session.id) {
         console.log('Received update for session:', session.id);
@@ -455,6 +464,7 @@ export default function App() {
         fontSize: data.fontSize ? parseInt(data.fontSize) : 16,
         fontFamily: data.fontFamily || 'sans',
         loggingEnabled: data.loggingEnabled === 'true',
+        idlePlayerAction: data.idlePlayerAction || 'random',
         mechanics: loadedMechanics
       });
     }
@@ -618,6 +628,66 @@ export default function App() {
       setIsSaving(false);
     }
   };
+
+  const fetchPanels = async () => {
+    if (!currentSession) return;
+    try {
+      const [c, a] = await Promise.all([
+        fetch(`/api/sessions/${currentSession.id}/claims`).then(r => r.json()),
+        fetch(`/api/sessions/${currentSession.id}/pending`).then(r => r.json())
+      ]);
+      setPendingClaims(Array.isArray(c) ? c : []);
+      setPendingActions(Array.isArray(a) ? a : []);
+    } catch (e) { console.error("Panels fetch error", e); }
+  };
+
+  const approveClaim = async (id: string) => {
+    await fetch(`/api/claims/${id}/approve`, { method: 'POST' });
+    fetchPanels();
+  };
+  const rejectClaim = async (id: string) => {
+    await fetch(`/api/claims/${id}/reject`, { method: 'POST' });
+    fetchPanels();
+  };
+  const removeAction = async (id: string) => {
+    await fetch(`/api/actions/${id}`, { method: 'DELETE' });
+    fetchPanels();
+  };
+  const submitGmAction = async (charName: string) => {
+    if (!currentSession || !gmActionInputs[charName]?.trim()) return;
+    try {
+      await fetch(`/api/sessions/${currentSession.id}/gm-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ charName, action: gmActionInputs[charName].trim() })
+      });
+      setGmActionInputs(prev => ({ ...prev, [charName]: '' }));
+      fetchPanels();
+    } catch (e) { console.error("GM action error", e); }
+  };
+  const confirmRound = async () => {
+    if (!currentSession || pendingActions.length === 0 || isConfirming) return;
+    setIsConfirming(true);
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/commit`, { method: 'POST' });
+      const data = await res.json();
+      const idleRule = settings.idlePlayerAction === 'skip'
+        ? 'Персонажи, чьи игроки не прислали действие, в этом ходу не действуют (просто упомяни их присутствие).'
+        : settings.idlePlayerAction === 'gm'
+          ? 'ГМ играет за персонажей без действий игроков — их ходы уже добавлены в [PLAYER ACTION].'
+          : 'Персонажи, чьи игроки не прислали действие, действуют случайно/реактивно по обстоятельствам — коротко опиши их поведение.';
+      sendMessage(`[ROUND] Игроки прислали действия (сообщения [PLAYER ACTION] выше). Обработай ВСЕ действия сразу и дай сцену-ответ каждому. ${idleRule}`);
+    } catch (e) {
+      console.error("Commit error", e);
+      alert(`Не удалось подтвердить ход: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentSession) fetchPanels();
+  }, [currentSession?.id]);
 
   const handleUpdateDashboard = (newData: DashboardData) => {
     if (!currentSession) return;
@@ -1584,9 +1654,108 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                 >
                   <History size={12} /> Lore
                 </button>
+                <button 
+                  onClick={() => setRightPanelTab('players')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all ${rightPanelTab === 'players' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
+                >
+                  <Users size={12} /> Players
+                  {(pendingClaims.some((c: any) => c.status === 'pending') || pendingActions.length > 0) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  )}
+                </button>
               </div>
               <div className="flex-1 overflow-hidden h-full">
-                {rightPanelTab === 'lore' ? (
+                {rightPanelTab === 'players' ? (
+                  <div className="p-4 space-y-4 overflow-y-auto h-full">
+                    <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Users size={12} /> Заявки игроков
+                    </h3>
+                    {pendingClaims.filter((c: any) => c.status === 'pending').length === 0 ? (
+                      <p className="text-xs text-white/30 italic">Нет ожидающих заявок.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {pendingClaims.filter((c: any) => c.status === 'pending').map((c: any) => (
+                          <div key={c.id} className="p-3 bg-white/5 border border-amber-500/20 rounded-xl">
+                            <p className="text-sm text-white font-medium">
+                              Игрок «<span className="text-amber-400">{c.player_name}</span>» хочет <span className="text-emerald-400">{c.char_name}</span>
+                            </p>
+                            <div className="flex gap-2 mt-2">
+                              <button onClick={() => approveClaim(c.id)} className="flex-1 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-emerald-500/30 transition-all">Принять</button>
+                              <button onClick={() => rejectClaim(c.id)} className="flex-1 py-1.5 bg-red-500/20 text-red-400 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-red-500/30 transition-all">Отклонить</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2 pt-4 border-t border-white/10">
+                      <MessageSquarePlus size={12} /> Действия игроков
+                    </h3>
+                    {pendingActions.length === 0 ? (
+                      <p className="text-xs text-white/30 italic">Нет действий. Игроки ещё думают.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {pendingActions.map((a: any) => (
+                          <div key={a.id} className="p-3 bg-white/5 border border-white/10 rounded-xl group">
+                            <p className="text-[9px] uppercase tracking-widest text-amber-400/70 font-bold">
+                              {a.char_name}{a.player_name ? ` · ${a.player_name}` : ''}
+                            </p>
+                            <p className="text-xs text-white/80 mt-1 leading-relaxed">{a.action_text}</p>
+                            <button onClick={() => removeAction(a.id)} className="mt-2 text-[9px] uppercase tracking-widest font-bold text-red-400/60 hover:text-red-400 transition-all">Удалить</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {settings.idlePlayerAction === 'gm' && (() => {
+                      const acted = new Set(pendingActions.map((a: any) => a.char_name));
+                      const idle = pendingClaims.filter((c: any) => c.status === 'approved' && !acted.has(c.char_name));
+                      if (idle.length === 0) return null;
+                      return (
+                        <div className="pt-4 border-t border-white/10 space-y-2">
+                          <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                            <Users size={12} /> Играет ГМ (не прислали)
+                          </h3>
+                          {idle.map((c: any) => (
+                            <div key={c.id} className="space-y-1">
+                              <p className="text-[9px] uppercase tracking-widest text-white/50 font-bold">{c.char_name}</p>
+                              <div className="flex gap-1">
+                                <input
+                                  value={gmActionInputs[c.char_name] || ''}
+                                  onChange={(e) => setGmActionInputs(prev => ({ ...prev, [c.char_name]: e.target.value }))}
+                                  placeholder={`Ход за ${c.char_name}...`}
+                                  className="flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all"
+                                />
+                                <button
+                                  onClick={() => submitGmAction(c.char_name)}
+                                  disabled={!gmActionInputs[c.char_name]?.trim()}
+                                  className="px-2.5 py-1.5 bg-white/10 text-white rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-white/20 disabled:opacity-40 transition-all"
+                                >
+                                  OK
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    <button
+                      onClick={confirmRound}
+                      disabled={isConfirming || isLoading || pendingActions.length === 0}
+                      className="w-full py-3 bg-amber-400 text-black rounded-xl font-bold hover:bg-amber-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-xs uppercase tracking-widest"
+                    >
+                      {isConfirming ? 'Отправляем...' : `Подтвердить ход (${pendingActions.length})`}
+                    </button>
+                    <p className="text-[9px] text-white/30 italic text-center">
+                      {settings.idlePlayerAction === 'skip'
+                        ? 'Не успевшие — не действуют в этом ходу'
+                        : settings.idlePlayerAction === 'gm'
+                          ? 'Не успевшие — играет ГМ (соло-плей)'
+                          : 'Не успевшие — действуют случайно'}
+                    </p>
+                  </div>
+                ) : rightPanelTab === 'lore' ? (
                   <div className="p-6 space-y-4 overflow-y-auto h-full">
                     <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
                       <History size={12} /> Story Archive
