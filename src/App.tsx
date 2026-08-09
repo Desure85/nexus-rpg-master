@@ -233,6 +233,8 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('stress') ? `"stress": "X/Y" (или число)` : null,
     isEnabled('tokens') ? `"tokens": 0` : null,
     `"gold": 0`,
+    `"xp": 0`,
+    `"abilities": [{"name": "Уникальная способность", "desc": "Описание", "effect": "Механика"}]`,
     isEnabled('condition') ? `"condition": "..."` : null,
     `"goal": "..."`,
     isEnabled('inventory') ? `"inventory": ["Предмет 1", "..."]` : null,
@@ -275,6 +277,9 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 }
 ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total, gold (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
 ВАЖНО: Поле gold — числовой кошелёк персонажа. Золото из лута добавляй СЮДА (числом), а не в inventory. У каждого персонажа свой кошелёк.
+ПРОГРЕССИЯ: Поле xp — опыт (золото = XP: получил золото — добавь столько же XP). Уровень = floor(sqrt(xp/50))+1 (уровень 1: 0 XP, 2: 50, 3: 200, 4: 450). При повышении уровня увеличь max HP персонажа на +2.
+АВТОСКЕЙЛ: Угрозы должны соответствовать уровню партии: HP врага ≈ 8 + уровень×3 + dangerLevel×2, особенностей ≈ 1 + уровень/2. Не делай врагов ни «мясом», ни «имбой».
+УНИКАЛЬНЫЕ СПОСОБНОСТИ (ПРОГРЕССИЯ): при повышении уровня персонажа ТЫ ОБЯЗАН придумать НОВУЮ уникальную способность (НЕ из фиксированного списка!): имя + описание + механика. Способность должна отражать ПУТЬ героя — как он воевал, на что полагался, что узнал (смотри историю, эхо, кодекс). У разных героев — разные способности, повторы запрещены. Добавляй в abilities персонажа (список копится, старые не удаляй).
 ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('doom_pool') ? 'ВАЖНО: Поле doomPool (0-20) отражает уровень эскалации. Увеличивай его на +1 за каждый провал игрока или выбор действия "Искушение". ЕСЛИ doomPool ДОСТИГАЕТ 20, ТЫ ОБЯЗАН СБРОСИТЬ ЕГО ДО 0 И ОПИСАТЬ КАТАСТРОФУ (внезапная смерть союзника, поломка оружия, появление босса, потеря важного предмета). Не копи doomPool вечно, используй его для драматичных поворотов!\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot. НЕ добавляй их сразу в инвентарь персонажа! Вместо этого сгенерируй для персонажа действие (Action) категории "Loot" с названием "Подобрать [Предмет]". Только когда игрок выберет это действие, ты переместишь предмет из sceneLoot в inventory.\n' : ''}
 ВАЖНО: Поле locations содержит список ИЗВЕСТНЫХ локаций. 
 - status="visited": Локация уже посещена и безопасна для перемещения.
@@ -306,6 +311,8 @@ ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит эк
 4. Final Draft (только для [SAVE_CHAPTER]): Если в сообщении игрока был тег [SAVE_CHAPTER], выведи <final_draft>...</final_draft> — литературное описание главы (300-600 слов), синтез диалогов и бросков в стиле сессии. НИЧЕГО не пиши после закрывающего тега.
 `;
 };
+
+const levelFromXp = (xp: number) => Math.floor(Math.sqrt(Math.max(0, xp || 0) / 50)) + 1;
 
 const INITIAL_DASHBOARD: DashboardData = {
   characters: [],
@@ -747,6 +754,22 @@ export default function App() {
     if (currentSession) fetchPanels();
   }, [currentSession?.id]);
 
+  // Idle: пассивный доход, пока игрока не было (только для кампаний)
+  useEffect(() => {
+    if (!currentSession || currentSession.mode === 'short') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${currentSession.id}/idle`, { method: 'POST' });
+        const data = await res.json();
+        if (!cancelled && data?.idleGold > 0 && data.tag) {
+          sendMessage(`[IDLE] ${data.tag} — опиши коротко и атмосферно (2-3 предложения), что произошло в городе, пока героев не было.`);
+        }
+      } catch (e) { console.error("Idle error", e); }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSession?.id]);
+
   const handleUpdateDashboard = (newData: DashboardData) => {
     if (!currentSession) return;
     const newHistory = [...currentSession.history];
@@ -865,6 +888,7 @@ export default function App() {
       genre: 'Custom',
       setting: setup.setting,
       style: setup.style,
+      mode: setup.mode || 'short',
       snapshot: '',
       history: [],
       lore: `Сеттинг: ${setup.setting}\nЗавязка: ${setup.plotHook}\nСтиль: ${setup.style}`,
@@ -926,7 +950,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       }
 
       // Real escalation check (server-side d6, заменяет «мысленный бросок» LLM)
-      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH|ECONOMY)/.test(content.trim());
+      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH|ECONOMY|IDLE|LEVEL)/.test(content.trim());
       if (!isMeta) {
         try {
           const ec = await fetch(`/api/sessions/${targetSession.id}/encounter-check`, {
@@ -1254,6 +1278,20 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       
       // Save to DB
       await saveSession(updatedSession);
+
+      // Detect level-ups → DM придумывает уникальные способности
+      const leveled: string[] = [];
+      const prevChars = currentDashboard.characters || [];
+      const newChars = (aiDashboard?.characters || []);
+      for (const nc of newChars) {
+        const prev = prevChars.find((c: any) => c.name === nc.name);
+        if (prev && levelFromXp(Number(nc.xp || 0)) > levelFromXp(Number(prev.xp || 0))) {
+          leveled.push(`${nc.name} → уровень ${levelFromXp(Number(nc.xp || 0))}`);
+        }
+      }
+      if (leveled.length > 0) {
+        sendMessage(`[LEVEL UP] ${leveled.join(', ')}. Для КАЖДОГО придумай УНИКАЛЬНУЮ способность (имя + описание + механика), отражающую его путь. Добавь в abilities в dashboard_json.`);
+      }
     } catch (error) {
       console.error("AI Error:", error);
       const errorMsg: Message = { 
