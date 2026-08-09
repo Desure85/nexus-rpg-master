@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode, Search } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
 import { EquipmentVisualizer } from './EquipmentVisualizer';
@@ -14,9 +14,10 @@ interface DashboardProps {
   onUpdate?: (newData: DashboardData) => void;
   onTravel?: (locationId: string) => void;
   onExplore?: (locationId: string) => void;
+  onSearch?: (kind: 'location' | 'body', targetName?: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -832,6 +833,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   >
                     {Array.isArray(threat.features) ? threat.features.join(', ') : threat.features}
                   </p>
+                  {onSearch && String(threat.hp).startsWith('0') && (
+                    <button
+                      onClick={() => onSearch('body', threat.name)}
+                      className="mt-2 text-[9px] uppercase tracking-widest font-bold text-amber-400/70 hover:text-amber-300 transition-all"
+                    >
+                      Обыскать тело
+                    </button>
+                  )}
                 </div>
               ))}
               <button 
@@ -1144,6 +1153,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             </div>
           )}
         </section>
+      )}
+
+      {/* Search location */}
+      {onSearch && (
+        <button
+          onClick={() => onSearch('location')}
+          className="w-full py-2.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl text-[10px] uppercase tracking-widest font-bold text-amber-400 transition-all flex items-center justify-center gap-2"
+        >
+          <Search size={12} /> Обыскать локацию
+        </button>
       )}
 
       {/* Decision Tree (Древо Решений) */}
