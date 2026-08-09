@@ -20,6 +20,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
+  const [qrCopied, setQrCopied] = useState(false);
 
   const showQr = async (charName: string) => {
     if (!sessionId) return;
@@ -27,6 +28,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
     const url = `${window.location.origin}/character/${sessionId}/${encodedName}`;
     const img = await QRCode.toDataURL(url, { width: 260, margin: 1 });
     setQrData({ char: charName, url, img });
+    setQrCopied(false);
+  };
+
+  const copyQrLink = async () => {
+    if (!qrData) return;
+    const ok = () => { setQrCopied(true); setTimeout(() => setQrCopied(false), 2000); };
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(qrData.url);
+      } else {
+        throw new Error("clipboard API недоступен");
+      }
+      ok();
+    } catch (e) {
+      // fallback для браузеров без разрешения на Clipboard API
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = qrData.url;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        ok();
+      } catch (e2) {
+        console.error("Copy failed", e2);
+        alert("Ссылка: " + qrData.url);
+      }
+    }
+  };
+
+  const shareQrLink = async () => {
+    if (!qrData) return;
+    const shareData = { title: `Fate & Dragons — играть за ${qrData.char}`, text: `Присоединяйся: ты играешь за ${qrData.char}`, url: qrData.url };
+    if (navigator.share) {
+      try { await navigator.share(shareData); return; } catch (e) { /* отменено/недоступно */ }
+    }
+    copyQrLink();
   };
 
   const isMechanicEnabled = (id: string) => {
@@ -1270,13 +1310,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           <div className="bg-[#14100d] border border-white/10 rounded-2xl p-6 max-w-xs w-full text-center space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-white">Подключить игрока: {qrData.char}</h3>
             <img src={qrData.img} alt="QR" className="mx-auto rounded-xl bg-white p-2" />
-            <p className="text-[10px] text-white/40 break-all">{qrData.url}</p>
-            <button
-              onClick={() => { navigator.clipboard.writeText(qrData.url); }}
-              className="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest text-white transition-all"
-            >
-              Копировать ссылку
-            </button>
+            <p className="text-[10px] text-white/40">На телефоне — отсканируй QR. На компьютере — скопируй ссылку:</p>
+            <input
+              readOnly
+              value={qrData.url}
+              onFocus={(e) => e.target.select()}
+              className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-[10px] text-white/70 font-mono focus:outline-none focus:border-amber-400/50 transition-all"
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={copyQrLink}
+                className={`flex-1 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all ${qrCopied ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white text-black hover:bg-white/90'}`}
+              >
+                {qrCopied ? 'Скопировано ✓' : 'Скопировать'}
+              </button>
+              {typeof navigator !== 'undefined' && navigator.share && (
+                <button
+                  onClick={shareQrLink}
+                  className="flex-1 py-2.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest text-white transition-all"
+                >
+                  Поделиться
+                </button>
+              )}
+            </div>
             <button onClick={() => setQrData(null)} className="w-full py-2 text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white transition-all">
               Закрыть
             </button>
