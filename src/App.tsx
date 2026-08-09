@@ -9,7 +9,7 @@ import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
-import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users } from 'lucide-react';
+import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users, Award } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 
@@ -211,7 +211,8 @@ export const SYSTEM_PROMPT = `
   2. ОБЯЗАТЕЛЬНО обнови Кодекс (<codex_json>), добавив туда все новые детали.
   3. НЕ продолжай сюжет активно, пока не ответишь на вопрос. Сосредоточься на уточнении лора.
   4. Если вопрос касается предмета в инвентаре — опиши его свойства. Если NPC — его внешность и статус.
-- **[FINALE]**: Если сообщение начинается с этого тега, игрок хочет завершить ТЕКУЩУЮ СЮЖЕТНУЮ АРКУ. Твоя задача — плавно подвести сюжет к кульминации (босс, главное открытие, побег). Сведи все текущие линии к решающему моменту. После разрешения кульминации дай персонажам передышку (Safe Haven) и намек на новое приключение (hook), чтобы игру можно было продолжить.
+- **[FINALE]**: Вечерний финал. ЛОГИЧЕСКИ подведи сюжет к завершению за 2-4 хода (~10-30 мин реального времени). Сюжет может быть далеко от конца — сжимай естественно: сведи открытые линии к ключевым сценам-мостам, ускорь темп к кульминации (решающий бой/выбор/открытие), затем развяжи конфликты и дай передышку-эпилог. Финал должен ощущаться ЗАВЕРШЁННЫМ для этой партии, без обрубленных нитей (незакрытое — как намёк на будущее, не дыра). Заверши <session_summary> (итоги партии).
+- **[SESSION SUMMARY]**: Подведи итоги партии. Выведи <session_summary>...</session_summary>: краткий пересказ приключения + итоги (чего добились герои, награды, XP, судьбы NPC, что запомнилось). Тёплый эпилог в стиле сессии.
 - **[SAVE_CHAPTER]**: Игрок нажал "NEXUS SAVE". Твоя задача:
   1. В <lore_update> выведи КРИСТАЛЛИЗОВАННЫЙ Story Archive (до 800 слов): NPC (кто, чего хочет), локации, неразрешённые конфликты, ключевые улики. Сжатая художественная экспозиция, от третьего лица, в стиле сессии.
   2. В теге <final_draft> выведи Final Draft — полное литературное описание главы (синтез диалогов и бросков, 300-600 слов).
@@ -320,6 +321,8 @@ ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит эк
 ВАЖНО: Если ты отвечаешь на [CLARIFY], НЕ выводи <lore_update>, так как сюжет не продвинулся.
 
 4. Final Draft (только для [SAVE_CHAPTER]): Если в сообщении игрока был тег [SAVE_CHAPTER], выведи <final_draft>...</final_draft> — литературное описание главы (300-600 слов), синтез диалогов и бросков в стиле сессии. НИЧЕГО не пиши после закрывающего тега.
+
+5. Session Summary (только для [SESSION SUMMARY]): Если в сообщении был тег [SESSION SUMMARY], выведи <session_summary>...</session_summary> — итоги партии (пересказ + награды + судьбы героев). НИЧЕГО не пиши после закрывающего тега.
 `;
 };
 
@@ -384,6 +387,7 @@ export default function App() {
   const [pendingActions, setPendingActions] = useState<any[]>([]);
   const [gmActionInputs, setGmActionInputs] = useState<Record<string, string>>({});
   const [isConfirming, setIsConfirming] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState<string | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'dashboard' | 'lore' | 'codex' | 'players'>('dashboard');
   
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -523,7 +527,7 @@ export default function App() {
     if (currentSession?.id === id) setCurrentSession(null);
   };
 
-  const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string, finalDraft?: string } => {
+  const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string, finalDraft?: string, sessionSummary?: string } => {
     let cleanText = text;
     let dashboard: DashboardData | undefined;
     let codexUpdates: CodexEntry[] | undefined;
@@ -627,11 +631,16 @@ export default function App() {
       cleanText = cleanText.replace(/<final_draft>[\s\S]*?<\/final_draft>/i, '').trim();
     }
 
+    const sessionSummaryMatch = text.match(/<session_summary>([\s\S]*?)<\/session_summary>/i);
+    if (sessionSummaryMatch) {
+      cleanText = cleanText.replace(/<session_summary>[\s\S]*?<\/session_summary>/i, '').trim();
+    }
+
     // Clean up unwanted headers that the model might still output
     cleanText = cleanText.replace(/^###\s*(Narrative|Нарратив)\s*\n?/i, '').trim();
     cleanText = cleanText.replace(/###\s*(Actions & Rolls|Векторы действий|Действия)[\s\S]*?(?=(<|$))/i, '').trim();
 
-    return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined, finalDraft: finalDraftMatch ? finalDraftMatch[1].trim() : undefined };
+    return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined, finalDraft: finalDraftMatch ? finalDraftMatch[1].trim() : undefined, sessionSummary: sessionSummaryMatch ? sessionSummaryMatch[1].trim() : undefined };
   };
 
   const saveSession = async (session: GameSession = currentSession!) => {
@@ -961,7 +970,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       }
 
       // Real escalation check (server-side d6, заменяет «мысленный бросок» LLM)
-      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH|ECONOMY|IDLE|LEVEL)/.test(content.trim());
+      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|SESSION|ROUND|TRAVEL|EXPLORE|SEARCH|ECONOMY|IDLE|LEVEL)/.test(content.trim());
       if (!isMeta) {
         try {
           const ec = await fetch(`/api/sessions/${targetSession.id}/encounter-check`, {
@@ -1254,7 +1263,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         }).catch(err => console.error("Logging failed:", err));
       }
 
-      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft } = parseDashboard(aiContent, currentDashboard);
+      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft, sessionSummary } = parseDashboard(aiContent, currentDashboard);
 
       const aiMsg: Message = { 
         role: 'assistant', 
@@ -1276,6 +1285,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       }
 
       const finalHistory = [...updatedHistory, aiMsg];
+      if (sessionSummary) setSessionSummary(sessionSummary);
       const updatedSession = { 
         ...targetSession, 
         history: finalHistory,
@@ -1687,18 +1697,26 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                       <button
                         onClick={() => {
                           if (confirmFinale) {
-                            sendMessage(`[FINALE] Пора заканчивать текущую сюжетную арку. Веди сюжет к кульминации, развязке и дай нам передышку перед новыми приключениями.`);
+                            sendMessage(`[FINALE] Вечерний финал. ЛОГИЧЕСКИ подведи сюжет к завершению за 2-4 хода (~10-30 мин). Если сюжет далеко от конца — сжимай естественно: сведи открытые линии ключевыми сценами-мостами, ускорь к кульминации (решающий бой/выбор/открытие), развяжи конфликты, дай эпилог-передышку. Финал должен ощущаться ЗАВЕРШЁННЫМ для этой партии. Заверши <session_summary> (итоги партии).`);
                             setConfirmFinale(false);
                           } else {
                             setConfirmFinale(true);
                             setTimeout(() => setConfirmFinale(false), 3000);
                           }
                         }}
-                        title="Trigger Finale"
+                        title="Вечерний финал (логическое завершение за 2-4 хода)"
                         disabled={isLoading}
                         className={`p-2 rounded-xl transition-all disabled:opacity-30 ${confirmFinale ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/40 hover:text-amber-400'}`}
                       >
                         <Flag size={18} />
+                      </button>
+                      <button
+                        onClick={() => sendMessage(`[SESSION SUMMARY] Подведи итоги партии: <session_summary> — краткий пересказ приключения и итоги (чего добились герои, награды, XP, судьбы NPC, что запомнилось). Тёплый эпилог в стиле сессии.`)}
+                        title="Итоги партии"
+                        disabled={isLoading}
+                        className="p-2 bg-white/5 text-white/40 hover:text-emerald-400 rounded-xl transition-all disabled:opacity-30"
+                      >
+                        <Award size={18} />
                       </button>
                       <button
                         onClick={() => {
@@ -2063,6 +2081,30 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       </AnimatePresence>
 
       <PromptModal />
+
+      {sessionSummary && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm" onClick={() => setSessionSummary(null)}>
+          <div className="bg-[#14100d] border border-amber-500/20 rounded-2xl p-6 lg:p-8 max-w-2xl w-full max-h-[85vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-display font-bold text-amber-400 flex items-center gap-2">
+                <Award size={20} /> Итоги партии
+              </h2>
+              <button onClick={() => setSessionSummary(null)} className="text-white/40 hover:text-white"><CloseIcon size={20} /></button>
+            </div>
+            <div className="text-sm text-white/80 font-serif leading-relaxed whitespace-pre-wrap">
+              {sessionSummary}
+            </div>
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={() => setSessionSummary(null)}
+                className="px-6 py-2.5 bg-amber-400 text-black rounded-xl font-bold hover:bg-amber-300 transition-all text-xs uppercase tracking-widest"
+              >
+                Отлично сыграно
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     } />
     </Routes>
