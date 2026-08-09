@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
 import { EquipmentVisualizer } from './EquipmentVisualizer';
@@ -1086,6 +1086,93 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               </div>
             </div>
           )}
+        </section>
+      )}
+
+      {/* Decision Tree (Древо Решений) */}
+      {(data.decisionTree && data.decisionTree.length > 0) && (
+        <section className="space-y-4">
+          <div className="p-4 bg-white/5 border border-amber-500/10 rounded-xl space-y-3">
+            <div className="flex justify-between items-center">
+              <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold flex items-center gap-2">
+                <GitBranch size={12} /> Древо Решений
+              </h3>
+              <button 
+                onClick={async () => {
+                  const next = await customPrompt("Новый выбор (что решил игрок?)");
+                  if (next) onUpdate?.({
+                    ...data,
+                    decisionTree: [...(data.decisionTree || []), { id: crypto.randomUUID(), choice: next, status: 'active', consequence: '' }]
+                  });
+                }}
+                className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
+              >
+                <Plus size={10} />
+              </button>
+            </div>
+            <div className="space-y-2">
+              {data.decisionTree.map((node, idx) => (
+                <div key={node.id} className="flex gap-3 group/decision">
+                  <div className="w-1 h-1 rounded-full bg-amber-500/50 mt-1.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p 
+                      className="text-[10px] text-white/70 leading-relaxed cursor-pointer hover:text-white"
+                      onClick={async () => {
+                        const next = await customPrompt("Изменить выбор", node.choice);
+                        if (next) {
+                          const newTree = [...(data.decisionTree || [])];
+                          newTree[idx] = { ...newTree[idx], choice: next };
+                          onUpdate?.({ ...data, decisionTree: newTree });
+                        }
+                      }}
+                    >
+                      {node.choice}
+                    </p>
+                    {node.consequence && (
+                      <p className="text-[9px] text-white/30 italic mt-0.5">{node.consequence}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => {
+                      const newTree = [...(data.decisionTree || [])];
+                      newTree[idx] = { ...newTree[idx], status: node.status === 'active' ? 'resolved' : 'active' };
+                      onUpdate?.({ ...data, decisionTree: newTree });
+                    }}
+                    className={`text-[8px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded self-start mt-0.5 transition-all ${
+                      node.status === 'active'
+                        ? 'bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25'
+                        : 'bg-white/10 text-white/40 hover:bg-white/15'
+                    }`}
+                    title="Переключить статус"
+                  >
+                    {node.status === 'active' ? 'Active' : 'Resolved'}
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      const next = await customPrompt("Последствие выбора (что оно изменит?)", node.consequence || '');
+                      const newTree = [...(data.decisionTree || [])];
+                      newTree[idx] = { ...newTree[idx], consequence: next };
+                      onUpdate?.({ ...data, decisionTree: newTree });
+                    }}
+                    className="opacity-0 group-hover/decision:opacity-100 transition-opacity text-white/20 hover:text-white"
+                    title="Добавить последствие"
+                  >
+                    <Edit2 size={10} />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const newTree = [...(data.decisionTree || [])];
+                      newTree.splice(idx, 1);
+                      onUpdate?.({ ...data, decisionTree: newTree });
+                    }}
+                    className="opacity-0 group-hover/decision:opacity-100 transition-opacity text-white/10 hover:text-red-400"
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         </section>
       )}
 
