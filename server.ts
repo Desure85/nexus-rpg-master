@@ -563,17 +563,49 @@ async function startServer() {
     const ch = chars.find((c: any) => c.name === charName);
     if (!ch) return res.status(404).json({ error: `character ${charName} not found` });
 
+    // Сервисы текущей локации — сервер проверяет сам, аутентичность месту
+    const curLoc = (dash.locations || []).find((l: any) => l.id === dash.currentLocationId);
+    const services: string[] = curLoc?.services || [];
+    const need = action === "buy" ? "market" : action === "inn" ? "inn" : action === "heal" ? "healer" : "tavern";
+    if (!services.includes(need)) {
+      return res.status(400).json({ error: "no service", tag: `[ECONOMY: здесь нет нужной услуги (${need}) — это ${curLoc?.name || "место"} без сервиса]` });
+    }
+
     const gold = Number(ch.gold || 0);
+    const { cur, max } = parseHpNum(ch.hp);
+
     if (action === "rest") {
       if (gold < REST_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${REST_COST})]` });
-      const { cur, max } = parseHpNum(ch.hp);
       ch.gold = gold - REST_COST;
       ch.hp = `${max}/${max}`;
       ch.stress = Math.max(0, (Number(ch.stress) || 0) - 2);
       history[dashIdx].dashboard = dash;
       db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
       broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнула в таверне — HP восстановлено до ${max}, стресс -2, списано ${REST_COST} золота]`, gold: ch.gold });
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${max}, стресс -2, списано ${REST_COST} золота]`, gold: ch.gold });
+    }
+    if (action === "inn") {
+      const INN_COST = 20;
+      if (gold < INN_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${INN_COST})]` });
+      ch.gold = gold - INN_COST;
+      ch.hp = `${max}/${max}`;
+      ch.stress = 0;
+      history[dashIdx].dashboard = dash;
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${max}, стресс до 0, списано ${INN_COST} золота]`, gold: ch.gold });
+    }
+    if (action === "heal") {
+      const HEAL_COST = 12;
+      const HEAL_AMOUNT = 5;
+      if (gold < HEAL_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${HEAL_COST})]` });
+      if (cur >= max) return res.status(400).json({ error: "already full", tag: `[ECONOMY: ${charName} и так здоров(а)]` });
+      ch.gold = gold - HEAL_COST;
+      ch.hp = `${Math.min(max, cur + HEAL_AMOUNT)}/${max}`;
+      history[dashIdx].dashboard = dash;
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`, gold: ch.gold });
     }
     if (action === "buy") {
       const good = SHOP.find(s => s.name === item);
