@@ -1286,11 +1286,12 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 
       const finalHistory = [...updatedHistory, aiMsg];
       if (sessionSummary) setSessionSummary(sessionSummary);
+      const archiveAdd = (finalDraft ? finalDraft : '') + (finalDraft && sessionSummary ? '\n\n---\n\n' : '') + (sessionSummary ? `# Итоги партии\n\n${sessionSummary}` : '');
       const updatedSession = { 
         ...targetSession, 
         history: finalHistory,
         lore: loreUpdate || targetSession.lore,
-        archive: finalDraft ? `${targetSession.archive ? targetSession.archive + '\n\n---\n\n' : ''}${finalDraft}` : targetSession.archive,
+        archive: archiveAdd ? `${targetSession.archive ? targetSession.archive + '\n\n---\n\n' : ''}${archiveAdd}` : targetSession.archive,
         codex: finalCodex,
         updated_at: new Date().toISOString()
       };
@@ -1327,6 +1328,109 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 
   const handleRoll = (result: string) => {
     setInput(prev => prev ? `${prev}\n${result}` : result);
+  };
+
+  const downloadEveningStory = () => {
+    if (!currentSession) return;
+    const d = currentDashboard;
+    const date = new Date().toLocaleDateString('ru-RU');
+    const parts: string[] = [];
+    parts.push(`# ${currentSession.name}`);
+    parts.push('');
+    parts.push(`*Сеттинг:* ${currentSession.setting || '—'}`);
+    parts.push(`*Стиль:* ${currentSession.style || '—'}`);
+    parts.push(`*Формат:* ${currentSession.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Партия на вечер'}`);
+    parts.push(`*Дата:* ${date}`);
+    parts.push('');
+    if (sessionSummary) {
+      parts.push(`## Итоги вечера`);
+      parts.push('');
+      parts.push(sessionSummary);
+      parts.push('');
+    }
+    if (currentSession.archive) {
+      parts.push(`## Хроника`);
+      parts.push('');
+      parts.push(currentSession.archive);
+      parts.push('');
+    }
+    if (currentSession.lore) {
+      parts.push(`## Архив мира`);
+      parts.push('');
+      parts.push(currentSession.lore);
+      parts.push('');
+    }
+    if (d.characters && d.characters.length > 0) {
+      parts.push(`## Персонажи к концу вечера`);
+      parts.push('');
+      for (const c of d.characters) {
+        parts.push(`### ${c.name}`);
+        parts.push(`- Уровень: ${levelFromXp(Number((c as any).xp || 0))} (${(c as any).xp || 0} XP)`);
+        parts.push(`- HP: ${c.hp} · Стресс: ${c.stress} · Золото: ${(c as any).gold ?? 0}`);
+        if ((c as any).abilities?.length) parts.push(`- Способности: ${(c as any).abilities.map((a: any) => a.name).join(', ')}`);
+        parts.push('');
+      }
+    }
+    const blob = new Blob([parts.join('\n')], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentSession.name.replace(/\s+/g, '_')}_История_вечера.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadEveningStoryPDF = () => {
+    if (!currentSession) return;
+    const d = currentDashboard;
+    const date = new Date().toLocaleDateString('ru-RU');
+    const esc = (s: string) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const md = (s: string) => esc(s).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br/>');
+    const sections: string[] = [];
+    const section = (title: string, body: string) => sections.push(`<h2>${title}</h2><div class="body">${md(body)}</div>`);
+    if (sessionSummary) section('Итоги вечера', sessionSummary);
+    if (currentSession.archive) section('Хроника', currentSession.archive);
+    if (currentSession.lore) section('Архив мира', currentSession.lore);
+    if (d.characters && d.characters.length > 0) {
+      const chars = d.characters.map((c: any) => `
+        <div class="char">
+          <h3>${esc(c.name)}</h3>
+          <p class="char-line">Уровень ${levelFromXp(Number(c.xp || 0))} (${c.xp || 0} XP) · HP ${c.hp} · Стресс ${c.stress} · Золото ${c.gold ?? 0}</p>
+          ${c.abilities?.length ? `<p class="char-line"><em>Способности:</em> ${c.abilities.map((a: any) => a.name).join(', ')}</p>` : ''}
+        </div>`).join('');
+      sections.push(`<h2>Персонажи к концу вечера</h2>${chars}`);
+    }
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(currentSession.name)} — история вечера</title>
+<style>
+  body { font-family: Georgia, 'Times New Roman', serif; max-width: 760px; margin: 48px auto; padding: 0 32px; color: #2a2118; background: #faf6ec; line-height: 1.65; }
+  h1 { font-size: 2.1em; color: #4a2c0a; border-bottom: 2px solid #b8860b; padding-bottom: 10px; margin-bottom: 6px; }
+  .meta { color: #7a6a50; font-style: italic; margin-top: 0; }
+  h2 { color: #8b6914; margin-top: 34px; border-bottom: 1px solid #d8c9a8; padding-bottom: 5px; font-size: 1.3em; }
+  h3 { color: #5a3a10; margin-bottom: 4px; }
+  .body { text-align: justify; }
+  .body strong { color: #4a2c0a; }
+  .char { margin: 14px 0; }
+  .char-line { margin: 3px 0; color: #5a4a33; font-size: 0.95em; }
+  @media print { body { background: #fff; } }
+</style></head><body>
+  <h1>${esc(currentSession.name)}</h1>
+  <p class="meta">${esc(currentSession.setting || '')} · ${esc(currentSession.style || '')} · ${currentSession.mode === 'campaign' ? 'Кампания' : 'Партия на вечер'} · ${date}</p>
+  ${sections.join('\n')}
+</body></html>`;
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    iframe.onload = () => {
+      const win = iframe.contentWindow;
+      if (win) { win.focus(); win.print(); }
+      setTimeout(() => document.body.removeChild(iframe), 60000);
+    };
+    iframe.srcdoc = html;
   };
 
   const exportBook = () => {
@@ -2094,7 +2198,21 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
             <div className="text-sm text-white/80 font-serif leading-relaxed whitespace-pre-wrap">
               {sessionSummary}
             </div>
-            <div className="mt-6 flex justify-center">
+            <div className="mt-6 flex gap-2 justify-center flex-wrap">
+              <button
+                onClick={downloadEveningStory}
+                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl font-bold transition-all text-xs uppercase tracking-widest text-white"
+                title="Скачать историю вечера в Markdown"
+              >
+                Историю (MD)
+              </button>
+              <button
+                onClick={downloadEveningStoryPDF}
+                className="px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded-xl font-bold transition-all text-xs uppercase tracking-widest text-white"
+                title="Открыть красивую историю и сохранить как PDF"
+              >
+                Историю (PDF)
+              </button>
               <button
                 onClick={() => setSessionSummary(null)}
                 className="px-6 py-2.5 bg-amber-400 text-black rounded-xl font-bold hover:bg-amber-300 transition-all text-xs uppercase tracking-widest"
