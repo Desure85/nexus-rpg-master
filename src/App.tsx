@@ -653,6 +653,34 @@ export default function App() {
     await fetch(`/api/actions/${id}`, { method: 'DELETE' });
     fetchPanels();
   };
+  const handleSearchLocation = async () => {
+    if (!currentSession) return;
+    const loc = currentDashboard.locations?.find((l: any) => l.id === currentDashboard.currentLocationId);
+    const danger = loc?.dangerLevel || 1;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'location', dangerLevel: danger })
+      });
+      const data = await res.json();
+      sendMessage(`[SEARCH] ${data.tag || ''}\nПерсонажи обыскивают локацию (${loc?.name || 'текущую'}). Опиши, что они нашли, и добавь найденное в sceneLoot или в inventory персонажей.`);
+    } catch (e) { console.error("Search error", e); }
+  };
+
+  const handleSearchBody = async (threatName: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'body', targetName: threatName, dangerLevel: 1 })
+      });
+      const data = await res.json();
+      sendMessage(`[SEARCH BODY] ${data.tag || ''}\nПерсонажи обыскивают тело ${threatName}. Опиши, что нашли, добавь в sceneLoot или inventory.`);
+    } catch (e) { console.error("Search body error", e); }
+  };
+
   const submitGmAction = async (charName: string) => {
     if (!currentSession || !gmActionInputs[charName]?.trim()) return;
     try {
@@ -865,6 +893,19 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       if (Object.keys(pendingRolls).length > 0) {
         const rolls = Object.values(pendingRolls);
         finalContent += (finalContent ? '\n\n' : '') + `### GM Rolls:\n${rolls.join('\n')}`;
+      }
+
+      // Real escalation check (server-side d6, заменяет «мысленный бросок» LLM)
+      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH)/.test(content.trim());
+      if (!isMeta) {
+        try {
+          const ec = await fetch(`/api/sessions/${targetSession.id}/encounter-check`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ style: targetSession.style || 'balanced', playerFailed: false })
+          }).then(r => r.json());
+          if (ec.tag) finalContent = (finalContent ? finalContent + '\n\n' : '') + ec.tag;
+        } catch (e) { console.error("Encounter check error", e); }
       }
 
       const userMsg: Message = { role: 'user', content: finalContent };
@@ -1782,6 +1823,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     sessionId={currentSession.id}
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
+                    onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {
