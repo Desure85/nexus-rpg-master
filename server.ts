@@ -128,6 +128,10 @@ db.exec(`
     returns_at DATETIME NOT NULL,
     claimed INTEGER DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS engine_state (
+    session_id TEXT PRIMARY KEY,
+    characters TEXT NOT NULL
+  );
 `);
 
 async function startServer() {
@@ -600,9 +604,6 @@ async function startServer() {
     const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
     if (dashIdx < 0) return res.status(400).json({ error: "dashboard not found" });
     const dash = history[dashIdx].dashboard;
-    const chars = dash.characters || [];
-    const ch = chars.find((c: any) => c.name === charName);
-    if (!ch) return res.status(404).json({ error: `character ${charName} not found` });
 
     // Сервисы текущей локации — сервер проверяет сам, аутентичность месту
     const curLoc = (dash.locations || []).find((l: any) => l.id === dash.currentLocationId);
@@ -612,54 +613,124 @@ async function startServer() {
       return res.status(400).json({ error: "no service", tag: `[ECONOMY: здесь нет нужной услуги (${need}) — это ${curLoc?.name || "место"} без сервиса]` });
     }
 
-    const gold = Number(ch.gold || 0);
-    const { cur, max } = parseHpNum(ch.hp);
+    // Числа — из движкового состояния (State Authority)
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const dashChar = (dash.characters || []).find((c: any) => c.name === charName);
 
-    if (action === "rest") {
-      if (gold < REST_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${REST_COST})]` });
-      ch.gold = gold - REST_COST;
-      ch.hp = `${max}/${max}`;
-      ch.stress = Math.max(0, (Number(ch.stress) || 0) - 2);
-      history[dashIdx].dashboard = dash;
+    const finalize = () => {
+      saveEngineState(req.params.id, chars);
+      const merged = mergeStateIntoDashboard(dash, chars);
+      history[dashIdx].dashboard = merged;
       db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
       broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${max}, стресс -2, списано ${REST_COST} золота]`, gold: ch.gold });
+    };
+
+    if (action === "rest") {
+      if (st.gold < REST_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${REST_COST})]` });
+      st.gold -= REST_COST;
+      st.hp_cur = st.hp_max;
+      st.stress = Math.max(0, st.stress - 2);
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`, gold: st.gold });
     }
     if (action === "inn") {
       const INN_COST = 20;
-      if (gold < INN_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${INN_COST})]` });
-      ch.gold = gold - INN_COST;
-      ch.hp = `${max}/${max}`;
-      ch.stress = 0;
-      history[dashIdx].dashboard = dash;
-      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
-      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${max}, стресс до 0, списано ${INN_COST} золота]`, gold: ch.gold });
+      if (st.gold < INN_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${INN_COST})]` });
+      st.gold -= INN_COST;
+      st.hp_cur = st.hp_max;
+      st.stress = 0;
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${st.hp_max}, стресс до 0, списано ${INN_COST} золота]`, gold: st.gold });
     }
     if (action === "heal") {
       const HEAL_COST = 12;
       const HEAL_AMOUNT = 5;
-      if (gold < HEAL_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${HEAL_COST})]` });
-      if (cur >= max) return res.status(400).json({ error: "already full", tag: `[ECONOMY: ${charName} и так здоров(а)]` });
-      ch.gold = gold - HEAL_COST;
-      ch.hp = `${Math.min(max, cur + HEAL_AMOUNT)}/${max}`;
-      history[dashIdx].dashboard = dash;
-      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
-      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`, gold: ch.gold });
+      if (st.gold < HEAL_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${HEAL_COST})]` });
+      if (st.hp_cur >= st.hp_max) return res.status(400).json({ error: "already full", tag: `[ECONOMY: ${charName} и так здоров(а)]` });
+      st.gold -= HEAL_COST;
+      st.hp_cur = Math.min(st.hp_max, st.hp_cur + HEAL_AMOUNT);
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`, gold: st.gold });
     }
     if (action === "buy") {
       const good = SHOP.find(s => s.name === item);
       if (!good) return res.status(400).json({ error: "unknown item" });
-      if (gold < good.cost) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${good.cost})]` });
-      ch.gold = gold - good.cost;
-      ch.inventory = [...(ch.inventory || []), good.name];
-      history[dashIdx].dashboard = dash;
-      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
-      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: ch.gold });
+      if (st.gold < good.cost) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${good.cost})]` });
+      st.gold -= good.cost;
+      if (dashChar) dashChar.inventory = [...(dashChar.inventory || []), good.name];
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: st.gold });
     }
     res.status(400).json({ error: "unknown action" });
+  });
+
+  // --- Engine State (State Authority: движок владеет числами) ---
+  const ensureEngineState = (sessionId: string): any => {
+    const row = db.prepare("SELECT * FROM engine_state WHERE session_id = ?").get(sessionId);
+    if (row) return JSON.parse(row.characters);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+    if (sess) {
+      const history = JSON.parse(sess.history || "[]");
+      const dash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
+      const chars: any = {};
+      for (const c of (dash?.characters || [])) {
+        const { cur, max } = parseHpNum(c.hp);
+        chars[c.name] = { hp_cur: cur, hp_max: max, stress: Number(c.stress) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0 };
+      }
+      if (Object.keys(chars).length) {
+        db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
+        return chars;
+      }
+    }
+    return {};
+  };
+  const saveEngineState = (sessionId: string, chars: any) => {
+    db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
+  };
+  const stateToTag = (chars: any) =>
+    Object.entries(chars).map(([name, c]: any) => `${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
+  const mergeStateIntoDashboard = (dash: any, chars: any) => {
+    if (!dash || !Array.isArray(dash.characters)) return dash;
+    dash.characters = dash.characters.map((c: any) => {
+      const s = chars[c.name];
+      if (!s) return c;
+      return { ...c, hp: `${s.hp_cur}/${s.hp_max}`, stress: s.stress, gold: s.gold, xp: s.xp, tokens: s.tokens };
+    });
+    return dash;
+  };
+  const applyStateChanges = (chars: any, changes: any[]) => {
+    const applied: any[] = [];
+    for (const ch of changes || []) {
+      const { field, name, delta } = ch;
+      const c = chars[name];
+      if (!c || typeof delta !== "number" || isNaN(delta)) continue;
+      if (field === "hp") {
+        const before = c.hp_cur;
+        c.hp_cur = Math.max(0, Math.min(c.hp_max, c.hp_cur + delta));
+        applied.push({ field, name, delta, from: before, to: c.hp_cur });
+      } else if (["stress", "gold", "xp", "tokens"].includes(field)) {
+        const before = c[field];
+        c[field] = Math.max(0, c[field] + delta);
+        applied.push({ field, name, delta, from: before, to: c[field] });
+      }
+    }
+    return applied;
+  };
+
+  app.get("/api/sessions/:id/state", (req, res) => {
+    const chars = ensureEngineState(req.params.id);
+    res.json({ characters: chars, tag: `[STATE: ${stateToTag(chars)}]` });
+  });
+
+  app.post("/api/sessions/:id/state/apply", (req, res) => {
+    const { changes = [], dashboard } = req.body || {};
+    const chars = ensureEngineState(req.params.id);
+    const applied = applyStateChanges(chars, changes);
+    saveEngineState(req.params.id, chars);
+    const merged = dashboard ? mergeStateIntoDashboard(dashboard, chars) : null;
+    res.json({ characters: chars, applied, dashboard: merged, tag: `[STATE: ${stateToTag(chars)}]` });
   });
 
   // --- Idle: пассивный доход, пока игрока нет ---
@@ -681,13 +752,18 @@ async function startServer() {
     const doomUp = hours >= 6 ? 1 : 0;
     let changed = false;
 
-    if (dash && (dash.characters || []).length > 0 && idleGold > 0) {
-      const per = Math.floor(idleGold / dash.characters.length);
-      dash.characters.forEach((c: any) => {
-        c.gold = (Number(c.gold) || 0) + per;
-        c.xp = (Number(c.xp) || 0) + per;
-      });
-      history[dashIdx].dashboard = dash;
+    const chars = ensureEngineState(req.params.id);
+    if (Object.keys(chars).length > 0 && idleGold > 0) {
+      const per = Math.floor(idleGold / Object.keys(chars).length);
+      for (const name of Object.keys(chars)) {
+        chars[name].gold += per;
+        chars[name].xp += per;
+      }
+      saveEngineState(req.params.id, chars);
+      if (dash) {
+        const merged = mergeStateIntoDashboard(dash, chars);
+        history[dashIdx].dashboard = merged;
+      }
       changed = true;
     }
     if (dash && doomUp) {
