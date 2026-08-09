@@ -697,7 +697,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           system: "Ты креативный помощник для настольных ролевых игр. Отвечай кратко, емко и атмосферно.",
-          prompt
+          prompt,
+          model: settings.modelName
         })
       });
       if (!response.ok) {
@@ -980,7 +981,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ system: fullSystemPrompt, prompt: promptText })
+          body: JSON.stringify({ system: fullSystemPrompt, prompt: promptText, model: settings.modelName })
         });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
