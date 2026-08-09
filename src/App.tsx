@@ -232,6 +232,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('hp') ? `"hp": "X/Y"` : null,
     isEnabled('stress') ? `"stress": "X/Y" (или число)` : null,
     isEnabled('tokens') ? `"tokens": 0` : null,
+    `"gold": 0`,
     isEnabled('condition') ? `"condition": "..."` : null,
     `"goal": "..."`,
     isEnabled('inventory') ? `"inventory": ["Предмет 1", "..."]` : null,
@@ -245,7 +246,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('threats_dash') ? `"threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}]` : null,
     isEnabled('scene_aspects') ? `"sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"]` : null,
     isEnabled('loot') ? `"sceneLoot": ["Лечебное зелье (Восстанавливает 5 HP)", "Ржавый меч"]` : null,
-    `"locations": [{"id": "uuid", "name": "...", "description": "...", "dangerLevel": 1, "status": "visited|known|locked", "coordinates": {"x": 50, "y": 50}, "connections": ["other_loc_id"]}]`,
+    `"locations": [{"id": "uuid", "name": "...", "description": "...", "dangerLevel": 1, "status": "visited|known|locked", "services": ["market", "tavern"], "coordinates": {"x": 50, "y": 50}, "connections": ["other_loc_id"]}]`,
     `"currentLocationId": "uuid"`,
     isEnabled('clocks') ? `"clocks": [{"name": "...", "progress": 0, "total": 4}]` : null,
     isEnabled('doom_pool') ? `"doomPool": 0` : null,
@@ -272,7 +273,8 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 {
   ${dashFields}
 }
-ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
+ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total, gold (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
+ВАЖНО: Поле gold — числовой кошелёк персонажа. Золото из лута добавляй СЮДА (числом), а не в inventory. У каждого персонажа свой кошелёк.
 ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит экипированные предметы. Слоты динамические. По умолчанию используй стандартные (Голова, Тело, Оружие, Аксессуар), но смело добавляй новые специфичные слоты, если того требует сеттинг (например, "Кость духа", "Киберимплант", "Артефакт"). Если слот пуст, пиши "Пусто".\n' : ''}${isEnabled('actions') ? 'ВАЖНО: Для каждого персонажа генерируй от 1 до 3 действий (выбирай количество случайно). Категории действий выбирай абсолютно случайно. Разрешается и поощряется дублирование категорий (например, могут выпасть три действия категории "Искушение", если ситуация располагает к этому).\n' : ''}${isEnabled('doom_pool') ? 'ВАЖНО: Поле doomPool (0-20) отражает уровень эскалации. Увеличивай его на +1 за каждый провал игрока или выбор действия "Искушение". ЕСЛИ doomPool ДОСТИГАЕТ 20, ТЫ ОБЯЗАН СБРОСИТЬ ЕГО ДО 0 И ОПИСАТЬ КАТАСТРОФУ (внезапная смерть союзника, поломка оружия, появление босса, потеря важного предмета). Не копи doomPool вечно, используй его для драматичных поворотов!\n' : ''}${isEnabled('loot') ? 'ВАЖНО: Поле sceneLoot используется для добычи. Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot. НЕ добавляй их сразу в инвентарь персонажа! Вместо этого сгенерируй для персонажа действие (Action) категории "Loot" с названием "Подобрать [Предмет]". Только когда игрок выберет это действие, ты переместишь предмет из sceneLoot в inventory.\n' : ''}
 ВАЖНО: Поле locations содержит список ИЗВЕСТНЫХ локаций. 
 - status="visited": Локация уже посещена и безопасна для перемещения.
@@ -284,6 +286,7 @@ ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит эк
 2. Укажи connections: [id_текущей_локации]. Также добавь id новой локации в connections текущей локации. Это создаст связь на карте.
 Если они прибывают в локацию, обнови ее описание, установи status="visited" и ОБЯЗАТЕЛЬНО установи currentLocationId равным id этой локации.
 ОБЯЗАТЕЛЬНО соблюдай выбранный СТИЛЬ ИГРЫ при генерации dangerLevel (1-5). Не делай все локации сложными (4-5), если стиль не Combat Heavy! Чередуй уровни опасности.
+ОБЯЗАТЕЛЬНО помечай ПОСЕЛЕНИЯ (город, деревня, рынок, придорожный трактир) полем services: ["market", "tavern"]. Дикая местность, лес, руины, пещеры — БЕЗ services (или services: []). Магазин и таверна доступны ТОЛЬКО в локации с соответствующим сервисом — торговля аутентична месту.
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
 ВАЖНО: Если в запросе есть тег [CLARIFY], твой приоритет №1 — обновить Кодекс. Зафиксируй там все детали, которые ты только что описал в тексте. Это твоя внешняя память.
@@ -681,6 +684,26 @@ export default function App() {
     } catch (e) { console.error("Search body error", e); }
   };
 
+  const handleEconomy = async (action: string, charName: string, item?: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/economy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, charName, item })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert((data.tag || data.error || 'Ошибка').replace(/^\[ECONOMY: |\]$/g, ''));
+        return;
+      }
+      sendMessage(`[ECONOMY] ${data.tag || ''} — опиши это коротко и атмосферно (1-2 предложения).`);
+    } catch (e) {
+      console.error("Economy error", e);
+      alert('Не удалось выполнить действие экономики');
+    }
+  };
+
   const submitGmAction = async (charName: string) => {
     if (!currentSession || !gmActionInputs[charName]?.trim()) return;
     try {
@@ -896,7 +919,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       }
 
       // Real escalation check (server-side d6, заменяет «мысленный бросок» LLM)
-      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH)/.test(content.trim());
+      const isMeta = /^\[(CLARIFY|SAVE_CHAPTER|FINALE|ROUND|TRAVEL|EXPLORE|SEARCH|ECONOMY)/.test(content.trim());
       if (!isMeta) {
         try {
           const ec = await fetch(`/api/sessions/${targetSession.id}/encounter-check`, {
@@ -1824,6 +1847,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
+                    onEconomy={(action, charName, item) => handleEconomy(action, charName, item)}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {

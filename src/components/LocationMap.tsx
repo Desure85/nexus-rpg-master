@@ -330,6 +330,17 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
                       {loc.dangerLevel}
                     </div>
                   )}
+
+                  {/* Services (settlement) badge — где магазин/таверна */}
+                  {!isLocked && (loc.services?.includes('market') || loc.services?.includes('tavern')) && (
+                    <div
+                      className="absolute -bottom-1 -left-1 rounded-full border border-[#0a0a0a] bg-emerald-600 flex items-center justify-center pointer-events-none"
+                      style={{ width: `${14 / zoom}px`, height: `${14 / zoom}px`, fontSize: `${8 / zoom}px` }}
+                      title={loc.services?.includes('market') ? 'Магазин и таверна' : 'Таверна'}
+                    >
+                      {loc.services?.includes('market') ? '🪙' : '🍺'}
+                    </div>
+                  )}
                 </div>
 
                 {/* Label */}
@@ -353,6 +364,11 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
                       <div className="text-[10px] font-bold text-white/40 uppercase tracking-wider mb-1 px-1 border-b border-white/10 pb-1">
                         {loc.name}
                       </div>
+                      {loc.services?.length ? (
+                        <div className="text-[9px] text-emerald-300/80 px-1 mb-1">
+                          {loc.services.map(s => s === 'market' ? '🪙 Магазин' : s === 'tavern' ? '🍺 Таверна' : s).join(' · ')}
+                        </div>
+                      ) : null}
                       
                       {isCurrent && onExplore && (
                         <button

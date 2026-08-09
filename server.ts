@@ -531,6 +531,64 @@ async function startServer() {
     res.json({ roll, found, tier, loot: items, tag });
   });
 
+  // --- Economy: таверна + магазин (сервер владеет золотом) ---
+  const SHOP: { name: string; cost: number; desc: string }[] = [
+    { name: "Зелье лечения (восстанавливает 5 HP)", cost: 15, desc: "Расходник" },
+    { name: "Зелье стабильности (снимает 2 Стресса)", cost: 12, desc: "Расходник" },
+    { name: "Кинжал гнева (+1 урон)", cost: 25, desc: "Оружие" },
+    { name: "Связка верёвки (10 м)", cost: 8, desc: "Инструмент" },
+    { name: "Потертая карта окрестностей", cost: 10, desc: "Открывает маршрут" },
+    { name: "Фляга крепкого вина", cost: 5, desc: "Торговый предмет" },
+  ];
+  const REST_COST = 10;
+
+  const parseHpNum = (hp: string) => {
+    const m = String(hp || "").match(/(\d+)\s*\/\s*(\d+)/);
+    return m ? { cur: parseInt(m[1]), max: parseInt(m[2]) } : { cur: 0, max: 0 };
+  };
+
+  app.get("/api/shop", (req, res) => {
+    res.json(SHOP);
+  });
+
+  app.post("/api/sessions/:id/economy", (req, res) => {
+    const { action, charName, item } = req.body || {};
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    if (dashIdx < 0) return res.status(400).json({ error: "dashboard not found" });
+    const dash = history[dashIdx].dashboard;
+    const chars = dash.characters || [];
+    const ch = chars.find((c: any) => c.name === charName);
+    if (!ch) return res.status(404).json({ error: `character ${charName} not found` });
+
+    const gold = Number(ch.gold || 0);
+    if (action === "rest") {
+      if (gold < REST_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${REST_COST})]` });
+      const { cur, max } = parseHpNum(ch.hp);
+      ch.gold = gold - REST_COST;
+      ch.hp = `${max}/${max}`;
+      ch.stress = Math.max(0, (Number(ch.stress) || 0) - 2);
+      history[dashIdx].dashboard = dash;
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнула в таверне — HP восстановлено до ${max}, стресс -2, списано ${REST_COST} золота]`, gold: ch.gold });
+    }
+    if (action === "buy") {
+      const good = SHOP.find(s => s.name === item);
+      if (!good) return res.status(400).json({ error: "unknown item" });
+      if (gold < good.cost) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${gold}/${good.cost})]` });
+      ch.gold = gold - good.cost;
+      ch.inventory = [...(ch.inventory || []), good.name];
+      history[dashIdx].dashboard = dash;
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: ch.gold });
+    }
+    res.status(400).json({ error: "unknown action" });
+  });
+
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
   app.get("/api/sessions/:id/export", (req, res) => {
     const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);

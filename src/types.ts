@@ -27,6 +27,7 @@ export interface Character {
   hp: string;
   stress: number | string;
   tokens: number;
+  gold?: number;
   condition: string;
   goal: string;
   actions?: CharacterAction[];
@@ -61,6 +62,7 @@ export interface Location {
   travelTime?: string;
   dangerLevel?: number; // 1-5
   status?: 'visited' | 'known' | 'locked';
+  services?: string[]; // market / tavern / inn
   coordinates?: { x: number; y: number };
   connections?: string[]; // IDs of connected locations
 }
