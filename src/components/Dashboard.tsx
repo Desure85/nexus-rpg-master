@@ -307,6 +307,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   >
                     🪙 {char.gold ?? 0}
                   </span>
+                  <span
+                    className="text-[10px] font-mono text-sky-300/70 cursor-pointer hover:text-sky-200"
+                    title={`XP (клик — задать вручную). Уровень = floor(sqrt(xp/50))+1`}
+                    onClick={async () => {
+                      const next = await customPrompt(`Set xp for ${char.name}`, String(char.xp ?? 0));
+                      if (next !== null) {
+                        const xp = Math.max(0, parseInt(next) || 0);
+                        updateChar(char.name, { xp });
+                      }
+                    }}
+                  >
+                    Ур. {Math.floor(Math.sqrt(Math.max(0, (char.xp || 0)) / 50)) + 1} · {char.xp ?? 0} XP
+                  </span>
                   {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
                     <div className="flex gap-1">
                       {hasTavern && (char.gold ?? 0) >= 10 && (
@@ -576,6 +589,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     )) : (
                       <span className="text-[9px] text-white/10 italic">No connections</span>
                     )}
+                  </div>
+                </div>
+              )}
+              {char.abilities && char.abilities.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-white/5">
+                  <h5 className="text-[8px] uppercase tracking-widest text-sky-300/60 font-bold">Способности (уникальные)</h5>
+                  <div className="flex flex-wrap gap-1.5">
+                    {char.abilities.map((ab: any, idx: number) => (
+                      <span
+                        key={idx}
+                        className="px-2 py-1 bg-sky-500/10 border border-sky-500/20 rounded-full text-[9px] text-sky-300/80 cursor-help"
+                        title={`${ab.desc || ''}${ab.effect ? '\n' + ab.effect : ''}`}
+                      >
+                        ✦ {ab.name}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}
