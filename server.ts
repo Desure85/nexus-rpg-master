@@ -72,6 +72,14 @@ try {
   db.exec("ALTER TABLE sessions ADD COLUMN decision_tree TEXT");
 }
 
+// Migration: Ensure mode column exists (short | campaign)
+try {
+  db.prepare("SELECT mode FROM sessions LIMIT 1").get();
+} catch (e) {
+  console.log("Adding mode column to sessions table...");
+  db.exec("ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT 'short'");
+}
+
 // Multiplayer: claims (закрепление персонажа за игроком) + pending_actions (очередь ходов)
 db.exec(`
   CREATE TABLE IF NOT EXISTS claims (
@@ -102,6 +110,23 @@ db.exec(`
     target TEXT NOT NULL,
     count INTEGER DEFAULT 0,
     PRIMARY KEY (session_id, target)
+  );
+  CREATE TABLE IF NOT EXISTS idle (
+    session_id TEXT PRIMARY KEY,
+    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS expeditions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    char_name TEXT NOT NULL,
+    hireling TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    cost INTEGER NOT NULL,
+    reward_gold INTEGER NOT NULL,
+    reward_item TEXT,
+    sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    returns_at DATETIME NOT NULL,
+    claimed INTEGER DEFAULT 0
   );
 `);
 
@@ -167,10 +192,10 @@ async function startServer() {
   });
 
   app.post("/api/sessions", (req, res) => {
-    const { id, name, genre, setting, style, snapshot, history, lore, codex, archive, decision_tree } = req.body;
+    const { id, name, genre, setting, style, snapshot, history, lore, codex, archive, decision_tree, mode } = req.body;
     const stmt = db.prepare(`
-      INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, decision_tree)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, decision_tree, mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name=excluded.name,
         snapshot=excluded.snapshot,
@@ -179,9 +204,10 @@ async function startServer() {
         codex=excluded.codex,
         archive=excluded.archive,
         decision_tree=excluded.decision_tree,
+        mode=excluded.mode,
         updated_at=CURRENT_TIMESTAMP
     `);
-    stmt.run(id, name, genre, setting, style, snapshot, history, lore, codex, archive ?? null, decision_tree ?? null);
+    stmt.run(id, name, genre, setting, style, snapshot, history, lore, codex, archive ?? null, decision_tree ?? null, mode || 'short');
     
     // Broadcast update to all clients in the session room
     broadcastToRoom(id, { type: "update", sessionId: id });
@@ -425,6 +451,19 @@ async function startServer() {
   });
 
   // --- Pacing: реальная проверка эскалации (заменяет «мысленный d6») ---
+  // Прогрессия: XP → уровень (level = floor(sqrt(xp/50))+1; золото = XP)
+  const levelFromXp = (xp: number) => Math.floor(Math.sqrt(Math.max(0, xp) / 50)) + 1;
+  const partyLevel = (dash: any) => {
+    const chars = dash?.characters || [];
+    if (chars.length === 0) return 1;
+    const total = chars.reduce((s: number, c: any) => s + levelFromXp(Number(c.xp || 0)), 0);
+    return Math.max(1, Math.round(total / chars.length));
+  };
+  const threatBudget = (level: number, danger: number) => ({
+    hp: 8 + level * 3 + danger * 2,
+    features: 1 + Math.floor(level / 2),
+  });
+
   const PACING_STYLES: Record<string, { limit: number; safeDelay: number; threshold: number; failedBonus: number }> = {
     narrative: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
     fairytale: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
@@ -479,14 +518,16 @@ async function startServer() {
         .run(round, round, round + cfg.safeDelay, req.params.id);
     }
     const typeLabel = worldType === "positive" ? "благосклонность судьбы" : worldType === "neutral" ? "нейтральное знамение" : "опасность";
+    const pl = partyLevel(lastDash);
+    const budget = threatBudget(pl, Number(lastDash?.locations?.find((l: any) => l.id === lastDash?.currentLocationId)?.dangerLevel || 1));
     const tag = result === "world"
       ? `[WORLD EVENT: ${worldType} (${typeLabel})] Пул Рока разрядился — произойдёт НЕОЖИДАННОЕ событие ${worldType === "positive" ? "в пользу героев (союзник, находка, удача)" : worldType === "neutral" ? "— знамение, встреча, деталь мира" : "— угроза, засада, ухудшение"}. Опиши его живо и ОБНУЛИ doomPool до 0 в следующем dashboard_json.`
       : result === "encounter"
-        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие]`
+        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие. Партия уровня ${pl}: враг должен иметь HP ~${budget.hp}, особенностей ${budget.features} (автоскейл)]`
         : result === "silence"
           ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
           : "";
-    res.json({ roll, result, reason, worldType: result === "world" ? worldType : undefined, tag });
+    res.json({ roll, result, reason, worldType: result === "world" ? worldType : undefined, partyLevel: pl, threatBudget: result === "encounter" ? budget : undefined, tag });
   });
 
   // --- Loot: детерминированный поиск (локация / тело) ---
@@ -619,6 +660,49 @@ async function startServer() {
       return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: ch.gold });
     }
     res.status(400).json({ error: "unknown action" });
+  });
+
+  // --- Idle: пассивный доход, пока игрока нет ---
+  app.post("/api/sessions/:id/idle", (req, res) => {
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    const dash = dashIdx >= 0 ? history[dashIdx].dashboard : null;
+    const pl = partyLevel(dash);
+
+    const now = Date.now();
+    const rec = db.prepare("SELECT * FROM idle WHERE session_id = ?").get(req.params.id);
+    const last = rec ? new Date(rec.last_seen).getTime() : now;
+    const hours = Math.min(12, Math.max(0, (now - last) / 3600000));
+    db.prepare("INSERT INTO idle (session_id, last_seen) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(session_id) DO UPDATE SET last_seen = CURRENT_TIMESTAMP").run(req.params.id);
+
+    const idleGold = Math.floor((2 + pl * 2) * hours);
+    const doomUp = hours >= 6 ? 1 : 0;
+    let changed = false;
+
+    if (dash && (dash.characters || []).length > 0 && idleGold > 0) {
+      const per = Math.floor(idleGold / dash.characters.length);
+      dash.characters.forEach((c: any) => {
+        c.gold = (Number(c.gold) || 0) + per;
+        c.xp = (Number(c.xp) || 0) + per;
+      });
+      history[dashIdx].dashboard = dash;
+      changed = true;
+    }
+    if (dash && doomUp) {
+      dash.doomPool = Math.min(20, (Number(dash.doomPool) || 0) + doomUp);
+      if (dashIdx >= 0) { history[dashIdx].dashboard = dash; }
+      changed = true;
+    }
+    if (changed) {
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    }
+    const tag = idleGold > 0
+      ? `[IDLE: пока тебя не было (${hours.toFixed(1)} ч), город принёс +${idleGold} золота и XP${doomUp ? ", Пул Рока +1" : ""}]`
+      : doomUp ? `[IDLE: пока тебя не было, Пул Рока +1 — мир не ждал]` : "";
+    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag });
   });
 
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
