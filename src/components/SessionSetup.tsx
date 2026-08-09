@@ -6,6 +6,7 @@ export interface SetupData {
   setting: string;
   plotHook: string;
   style: string;
+  mode: 'short' | 'campaign';
   characters: { id: string; name: string; concept: string; gender: string }[];
 }
 
@@ -30,6 +31,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
   const [setting, setSetting] = useState('');
   const [plotHook, setPlotHook] = useState('');
   const [style, setStyle] = useState('balanced');
+  const [mode, setMode] = useState<'short' | 'campaign'>('short');
   const [characters, setCharacters] = useState<{ id: string; name: string; concept: string; gender: string }[]>([
     { id: Date.now().toString() + Math.random().toString(), name: '', concept: '', gender: 'М' }
   ]);
@@ -124,7 +126,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
       alert("Добавьте хотя бы одного персонажа с именем и концептом!");
       return;
     }
-    onStart({ setting, plotHook, style, characters: validChars });
+    onStart({ setting, plotHook, style, mode, characters: validChars });
   };
 
   return (
@@ -222,6 +224,35 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
                 </div>
               </button>
             ))}
+          </div>
+        </section>
+
+        {/* Session Format Section */}
+        <section className="space-y-3">
+          <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Формат партии</label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button
+              onClick={() => setMode('short')}
+              className={`p-4 rounded-xl border text-left transition-all ${mode === 'short' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
+            >
+              <div className={`text-sm font-bold mb-1 ${mode === 'short' ? 'text-emerald-400' : 'text-white'}`}>
+                ⚡ Партия на вечер
+              </div>
+              <div className="text-[10px] text-white/60 leading-tight">
+                1 сессия, глава укладывается в 2-3 часа. Без идл-механик, базы и долгосрочной прокачки.
+              </div>
+            </button>
+            <button
+              onClick={() => setMode('campaign')}
+              className={`p-4 rounded-xl border text-left transition-all ${mode === 'campaign' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
+            >
+              <div className={`text-sm font-bold mb-1 ${mode === 'campaign' ? 'text-emerald-400' : 'text-white'}`}>
+                🗺️ Кампания
+              </div>
+              <div className="text-[10px] text-white/60 leading-tight">
+                Несколько сессий. Идл-доход, логово, экспедиции наёмников, долгая прогрессия.
+              </div>
+            </button>
           </div>
         </section>
 
