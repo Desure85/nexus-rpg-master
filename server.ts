@@ -72,6 +72,27 @@ try {
   db.exec("ALTER TABLE sessions ADD COLUMN decision_tree TEXT");
 }
 
+// Multiplayer: claims (закрепление персонажа за игроком) + pending_actions (очередь ходов)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS claims (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    char_name TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS pending_actions (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    char_name TEXT NOT NULL,
+    player_name TEXT,
+    action_text TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+`);
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -171,7 +192,7 @@ async function startServer() {
   });
 
   app.post("/api/settings", (req, res) => {
-    const { provider, modelUrl, apiKey, modelName, systemPrompt, fontSize, fontFamily, loggingEnabled, mechanics } = req.body;
+    const { provider, modelUrl, apiKey, modelName, systemPrompt, fontSize, fontFamily, loggingEnabled, mechanics, idlePlayerAction } = req.body;
     const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
     upsert.run("provider", provider);
     upsert.run("modelUrl", modelUrl);
@@ -183,6 +204,9 @@ async function startServer() {
     upsert.run("loggingEnabled", loggingEnabled ? "true" : "false");
     if (mechanics) {
       upsert.run("mechanics", JSON.stringify(mechanics));
+    }
+    if (idlePlayerAction) {
+      upsert.run("idlePlayerAction", idlePlayerAction);
     }
     res.json({ status: "ok" });
   });
@@ -299,6 +323,93 @@ async function startServer() {
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : "opencode proxy error" });
     }
+  });
+
+  // --- Multiplayer: claims + pending actions ---
+  app.post("/api/sessions/:id/claim", (req, res) => {
+    const { charName, playerName, deviceId } = req.body || {};
+    if (!charName || !playerName || !deviceId) return res.status(400).json({ error: "charName/playerName/deviceId required" });
+    const existing = db.prepare("SELECT * FROM claims WHERE session_id = ? AND char_name = ? ORDER BY created_at DESC LIMIT 1").get(req.params.id, charName);
+    if (existing && existing.status === "approved" && existing.device_id !== deviceId) {
+      return res.status(409).json({ error: "claimed_by_other", claim: existing });
+    }
+    if (existing && (existing.status === "approved" || existing.status === "pending") && existing.device_id === deviceId) {
+      return res.json({ status: existing.status, claim: existing });
+    }
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO claims (id, session_id, char_name, player_name, device_id, status) VALUES (?,?,?,?,?, 'pending')")
+      .run(id, req.params.id, charName, playerName, deviceId);
+    broadcastToRoom(req.params.id, { type: "claims_changed", sessionId: req.params.id });
+    res.json({ status: "pending", claim: { id, charName, playerName, status: "pending" } });
+  });
+
+  app.get("/api/sessions/:id/claims", (req, res) => {
+    res.json(db.prepare("SELECT * FROM claims WHERE session_id = ? ORDER BY created_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/claims/:id/approve", (req, res) => {
+    const c = db.prepare("SELECT * FROM claims WHERE id = ?").get(req.params.id);
+    if (!c) return res.status(404).json({ error: "claim not found" });
+    db.prepare("UPDATE claims SET status = 'approved' WHERE id = ?").run(req.params.id);
+    broadcastToRoom(c.session_id, { type: "claims_changed", sessionId: c.session_id });
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/claims/:id/reject", (req, res) => {
+    const c = db.prepare("SELECT * FROM claims WHERE id = ?").get(req.params.id);
+    if (!c) return res.status(404).json({ error: "claim not found" });
+    db.prepare("UPDATE claims SET status = 'rejected' WHERE id = ?").run(req.params.id);
+    broadcastToRoom(c.session_id, { type: "claims_changed", sessionId: c.session_id });
+    res.json({ status: "ok" });
+  });
+
+  app.get("/api/sessions/:id/pending", (req, res) => {
+    res.json(db.prepare("SELECT * FROM pending_actions WHERE session_id = ? ORDER BY created_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/actions", (req, res) => {
+    const { charName, deviceId, action } = req.body || {};
+    if (!charName || !deviceId || !action) return res.status(400).json({ error: "charName/deviceId/action required" });
+    const claim = db.prepare("SELECT * FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved'").get(req.params.id, charName);
+    if (!claim || claim.device_id !== deviceId) return res.status(403).json({ error: "character not claimed by this device" });
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text) VALUES (?,?,?,?,?)")
+      .run(id, req.params.id, charName, claim.player_name, action);
+    broadcastToRoom(req.params.id, { type: "actions_changed", sessionId: req.params.id });
+    res.json({ status: "ok", id });
+  });
+
+  app.delete("/api/actions/:id", (req, res) => {
+    db.prepare("DELETE FROM pending_actions WHERE id = ?").run(req.params.id);
+    res.json({ status: "ok" });
+  });
+
+  // GM-action: ГМ играет за персонажа (соло-режим, обходит claim по устройству)
+  app.post("/api/sessions/:id/gm-action", (req, res) => {
+    const { charName, action } = req.body || {};
+    if (!charName || !action) return res.status(400).json({ error: "charName/action required" });
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text) VALUES (?,?,?,?,?)")
+      .run(id, req.params.id, charName, "ГМ", action);
+    broadcastToRoom(req.params.id, { type: "actions_changed", sessionId: req.params.id });
+    res.json({ status: "ok", id });
+  });
+
+  app.post("/api/sessions/:id/commit", (req, res) => {
+    const sessionId = req.params.id;
+    const pending = db.prepare("SELECT * FROM pending_actions WHERE session_id = ? ORDER BY created_at ASC").all(sessionId);
+    if (pending.length === 0) return res.json({ status: "ok", committed: 0 });
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId);
+    const history = JSON.parse(row.history || "[]");
+    const newMsgs = pending.map(p => ({
+      role: "user",
+      content: `[PLAYER ACTION: ${p.char_name}${p.player_name ? ` (${p.player_name})` : ""}] ${p.action_text}`
+    }));
+    db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify([...history, ...newMsgs]), sessionId);
+    db.prepare("DELETE FROM pending_actions WHERE session_id = ?").run(sessionId);
+    broadcastToRoom(sessionId, { type: "update", sessionId });
+    broadcastToRoom(sessionId, { type: "actions_changed", sessionId });
+    res.json({ status: "ok", committed: newMsgs.length });
   });
 
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
