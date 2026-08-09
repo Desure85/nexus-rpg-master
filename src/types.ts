@@ -37,6 +37,7 @@ export interface Character {
   gold?: number;
   xp?: number;
   abilities?: Ability[];
+  status?: string; // active | base (на базе — отдыхает, не в сцене)
   condition: string;
   goal: string;
   actions?: CharacterAction[];

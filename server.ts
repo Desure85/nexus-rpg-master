@@ -677,7 +677,7 @@ async function startServer() {
       const chars: any = {};
       for (const c of (dash?.characters || [])) {
         const { cur, max } = parseHpNum(c.hp);
-        chars[c.name] = { hp_cur: cur, hp_max: max, stress: Number(c.stress) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0 };
+        chars[c.name] = { hp_cur: cur, hp_max: max, stress: Number(c.stress) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0, status: "active" };
       }
       if (Object.keys(chars).length) {
         db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
@@ -690,13 +690,13 @@ async function startServer() {
     db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
   };
   const stateToTag = (chars: any) =>
-    Object.entries(chars).map(([name, c]: any) => `${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
+    Object.entries(chars).map(([name, c]: any) => `${c.status === "base" ? "🏠" : "⚔️"} ${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
   const mergeStateIntoDashboard = (dash: any, chars: any) => {
     if (!dash || !Array.isArray(dash.characters)) return dash;
     dash.characters = dash.characters.map((c: any) => {
       const s = chars[c.name];
       if (!s) return c;
-      return { ...c, hp: `${s.hp_cur}/${s.hp_max}`, stress: s.stress, gold: s.gold, xp: s.xp, tokens: s.tokens };
+      return { ...c, hp: `${s.hp_cur}/${s.hp_max}`, stress: s.stress, gold: s.gold, xp: s.xp, tokens: s.tokens, status: s.status || "active" };
     });
     return dash;
   };
@@ -731,6 +731,32 @@ async function startServer() {
     saveEngineState(req.params.id, chars);
     const merged = dashboard ? mergeStateIntoDashboard(dashboard, chars) : null;
     res.json({ characters: chars, applied, dashboard: merged, tag: `[STATE: ${stateToTag(chars)}]` });
+  });
+
+  // --- Roster: персонажи на базе (active/base) ---
+  app.post("/api/sessions/:id/party", (req, res) => {
+    const { charName, status } = req.body || {};
+    const chars = ensureEngineState(req.params.id);
+    const c = chars[charName];
+    if (!c) return res.status(404).json({ error: `character ${charName} not found` });
+    c.status = status === "base" ? "base" : "active";
+    if (c.status === "base") {
+      c.hp_cur = c.hp_max;
+      c.stress = 0;
+    }
+    saveEngineState(req.params.id, chars);
+    // зеркалим в dashboard
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (row) {
+      const history = JSON.parse(row.history || "[]");
+      const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+      if (dashIdx >= 0) {
+        history[dashIdx].dashboard = mergeStateIntoDashboard(history[dashIdx].dashboard, chars);
+        db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      }
+    }
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: c.status === "base" ? `[PARTY: ${charName} остался(ась) на базе — HP восстановлено, стресс снят]` : `[PARTY: ${charName} снова в партии]`, characters: chars });
   });
 
   // --- Idle: пассивный доход, пока игрока нет ---
