@@ -91,6 +91,18 @@ db.exec(`
     action_text TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS pacing (
+    session_id TEXT PRIMARY KEY,
+    round INTEGER DEFAULT 0,
+    last_threat_round INTEGER DEFAULT -99,
+    safe_until INTEGER DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS searches (
+    session_id TEXT NOT NULL,
+    target TEXT NOT NULL,
+    count INTEGER DEFAULT 0,
+    PRIMARY KEY (session_id, target)
+  );
 `);
 
 async function startServer() {
@@ -410,6 +422,100 @@ async function startServer() {
     broadcastToRoom(sessionId, { type: "update", sessionId });
     broadcastToRoom(sessionId, { type: "actions_changed", sessionId });
     res.json({ status: "ok", committed: newMsgs.length });
+  });
+
+  // --- Pacing: реальная проверка эскалации (заменяет «мысленный d6») ---
+  const PACING_STYLES: Record<string, { limit: number; safeDelay: number; threshold: number; failedBonus: number }> = {
+    narrative: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
+    fairytale: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
+    balanced: { limit: 2, safeDelay: 2, threshold: 5, failedBonus: 1 },
+    combat: { limit: 3, safeDelay: 0, threshold: 3, failedBonus: 1 },
+  };
+
+  app.post("/api/sessions/:id/encounter-check", (req, res) => {
+    const { style = "balanced", playerFailed = false } = req.body || {};
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const round = history.filter((m: any) => m.role === "assistant").length;
+    const lastDash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
+    const threatsActive = Array.isArray(lastDash?.threats) ? lastDash.threats.length : 0;
+    const cfg = PACING_STYLES[style] || PACING_STYLES.balanced;
+
+    let p = db.prepare("SELECT * FROM pacing WHERE session_id = ?").get(req.params.id);
+    if (!p) { db.prepare("INSERT INTO pacing (session_id) VALUES (?)").run(req.params.id); p = { round: 0, last_threat_round: -99, safe_until: 0 }; }
+
+    const roll = Math.floor(Math.random() * 6) + 1;
+    const effectiveRoll = roll + (playerFailed ? cfg.failedBonus : 0);
+    let result: "encounter" | "none" | "silence" = "none";
+    let reason = "";
+
+    if (round < p.safe_until && style !== "combat") {
+      reason = `safe_haven (до хода ${p.safe_until})`;
+    } else if (threatsActive >= cfg.limit) {
+      reason = `лимит угроз (${threatsActive}/${cfg.limit})`;
+    } else if (round - (p.last_threat_round ?? -99) >= 5) {
+      result = "silence";
+      reason = "тишина 5+ ходов — авто-событие";
+    } else if (effectiveRoll >= cfg.threshold) {
+      result = "encounter";
+      reason = `d6=${roll} (порог ${cfg.threshold})`;
+    } else {
+      reason = `d6=${roll} < ${cfg.threshold}`;
+    }
+
+    if (result !== "none") {
+      db.prepare("UPDATE pacing SET round = ?, last_threat_round = ?, safe_until = ? WHERE session_id = ?")
+        .run(round, round, round + cfg.safeDelay, req.params.id);
+    }
+    const tag = result === "encounter"
+      ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие]`
+      : result === "silence"
+        ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
+        : "";
+    res.json({ roll, result, reason, tag });
+  });
+
+  // --- Loot: детерминированный поиск (локация / тело) ---
+  const LOOT_POOLS: Record<string, string[]> = {
+    common: ["12 золотых монет", "Зелье лечения (восстанавливает 5 HP)", "Старый железный кинжал", "Связка верёвки (10 м)", "Потертая карта окрестностей", "Пустая склянка"],
+    uncommon: ["30 золотых монет", "Зелье стабильности (снимает 2 Стресса)", "Кинжал гнева (+1 урон)", "Малый ключ", "Письмо с чужой печатью", "Фляга крепкого вина"],
+    rare: ["75 золотых монет", "Зелье великого лечения (восстанавливает 10 HP)", "Меч из лунного серебра (+2 урон, светится в темноте)", "Свиток с шифром", "Амулет старой гильдии", "Линза истины (видит невидимое)"],
+    epic: ["150 золотых монет", "Сердце Вельдегара (расходник: 20 HP или сброс 5 Стресса, 1 раз)", "Ключ от башни Инквизитора", "Дневник Варго (знание слабости врага)", "Печать Нексуса"],
+  };
+
+  const pickLoot = (pool: keyof typeof LOOT_POOLS, count: number, used: string[] = []) => {
+    const available = LOOT_POOLS[pool].filter(i => !used.includes(i));
+    const picked: string[] = [];
+    for (let i = 0; i < count && available.length > 0; i++) {
+      const idx = Math.floor(Math.random() * available.length);
+      picked.push(available.splice(idx, 1)[0]);
+    }
+    return picked;
+  };
+
+  const tierFor = (roll: number, danger: number): keyof typeof LOOT_POOLS | null => {
+    if (roll < 5) return null;
+    if (roll <= 14) return "common";
+    if (roll <= 19) return danger <= 2 ? "common" : "uncommon";
+    return danger <= 2 ? "uncommon" : danger <= 4 ? "rare" : "epic";
+  };
+
+  app.post("/api/sessions/:id/search", (req, res) => {
+    const { target = "location", targetName = "", dangerLevel = 1 } = req.body || {};
+    const key = target === "body" ? `body:${targetName}` : "location";
+    let s = db.prepare("SELECT * FROM searches WHERE session_id = ? AND target = ?").get(req.params.id, key);
+    if (s && s.count >= 1) {
+      return res.json({ roll: 0, found: false, loot: [], tag: `[LOOT: уже обыскано]`, repeat: true });
+    }
+    const roll = Math.floor(Math.random() * 20) + 1;
+    const tier = tierFor(roll, dangerLevel);
+    const items = tier ? pickLoot(tier, target === "body" ? 2 : 2) : [];
+    db.prepare("INSERT INTO searches (session_id, target, count) VALUES (?,?,1) ON CONFLICT(session_id, target) DO UPDATE SET count = count + 1")
+      .run(req.params.id, key);
+    const found = items.length > 0;
+    const tag = found ? `[LOOT FOUND: ${items.join("; ")}]` : `[LOOT: ничего ценного (d20=${roll})]`;
+    res.json({ roll, found, tier, loot: items, tag });
   });
 
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
