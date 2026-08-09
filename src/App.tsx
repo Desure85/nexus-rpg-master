@@ -1838,7 +1838,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                             setConfirmFinale(false);
                           } else {
                             setConfirmFinale(true);
-                            setTimeout(() => setConfirmFinale(false), 3000);
+                            setTimeout(() => setConfirmFinale(false), 8000);
                           }
                         }}
                         title="Вечерний финал (логическое завершение за 2-4 хода)"
