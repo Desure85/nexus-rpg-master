@@ -440,10 +440,22 @@ export const CharacterView: React.FC = () => {
                   </h3>
                   <div className="grid grid-cols-1 gap-3">
                     {character.abilities.map((ab, idx) => (
-                      <div key={idx} className="p-4 bg-sky-500/5 border border-sky-500/20 rounded-2xl">
-                        <h4 className="text-base font-bold text-sky-200">✦ {ab.name}</h4>
+                      <div key={idx} className={`p-4 border rounded-2xl ${
+                        ab.type === 'curse' ? 'bg-red-500/5 border-red-500/20' :
+                        ab.type === 'flavor' ? 'bg-white/5 border-white/10' :
+                        ab.type === 'mechanical' ? 'bg-violet-500/5 border-violet-500/20' :
+                        'bg-sky-500/5 border-sky-500/20'
+                      }`}>
+                        <div className="flex justify-between items-start gap-2">
+                          <h4 className={`text-base font-bold ${ab.type === 'curse' ? 'text-red-300' : ab.type === 'flavor' ? 'text-white/60' : ab.type === 'mechanical' ? 'text-violet-300' : 'text-sky-200'}`}>
+                            {ab.type === 'curse' ? '✚' : '✦'} {ab.name}
+                          </h4>
+                          <span className="text-[8px] px-1.5 py-0.5 rounded uppercase font-bold bg-white/10 text-white/50 shrink-0">
+                            {ab.type || 'boon'}
+                          </span>
+                        </div>
                         <p className="text-sm text-white/60 mt-1 leading-relaxed">{ab.desc}</p>
-                        {ab.effect && <p className="text-xs text-sky-300/70 mt-1 italic">{ab.effect}</p>}
+                        {ab.effect && ab.effect !== '—' && <p className="text-xs text-white/40 mt-1 italic">{ab.effect}</p>}
                       </div>
                     ))}
                   </div>

@@ -8,6 +8,7 @@ export interface Ability {
   name: string;
   desc: string;
   effect?: string;
+  type?: 'boon' | 'curse' | 'flavor' | 'mechanical';
 }
 
 export interface Relationship {

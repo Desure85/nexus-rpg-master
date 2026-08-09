@@ -596,15 +596,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <div className="space-y-2 pt-2 border-t border-white/5">
                   <h5 className="text-[8px] uppercase tracking-widest text-sky-300/60 font-bold">Способности (уникальные)</h5>
                   <div className="flex flex-wrap gap-1.5">
-                    {char.abilities.map((ab: any, idx: number) => (
-                      <span
-                        key={idx}
-                        className="px-2 py-1 bg-sky-500/10 border border-sky-500/20 rounded-full text-[9px] text-sky-300/80 cursor-help"
-                        title={`${ab.desc || ''}${ab.effect ? '\n' + ab.effect : ''}`}
-                      >
-                        ✦ {ab.name}
-                      </span>
-                    ))}
+                    {char.abilities.map((ab: any, idx: number) => {
+                      const typeCls = ab.type === 'curse'
+                        ? 'bg-red-500/10 border-red-500/20 text-red-300/80'
+                        : ab.type === 'flavor'
+                          ? 'bg-white/5 border-white/10 text-white/50'
+                          : ab.type === 'mechanical'
+                            ? 'bg-violet-500/10 border-violet-500/20 text-violet-300/80'
+                            : 'bg-sky-500/10 border-sky-500/20 text-sky-300/80';
+                      return (
+                        <span
+                          key={idx}
+                          className={`px-2 py-1 border rounded-full text-[9px] cursor-help ${typeCls}`}
+                          title={`${ab.type || 'boon'}${ab.desc ? '\n' + ab.desc : ''}${ab.effect && ab.effect !== '—' ? '\n' + ab.effect : ''}`}
+                        >
+                          {ab.type === 'curse' ? '✚' : '✦'} {ab.name}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               )}
