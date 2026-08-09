@@ -474,7 +474,7 @@ async function startServer() {
   app.post("/api/sessions/:id/encounter-check", (req, res) => {
     const { style = "balanced", playerFailed = false } = req.body || {};
     const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
-    if (!row) return res.status(404).json({ error: "session not found" });
+    if (!row) return res.json({ roll: 0, result: "none", reason: "session not found", tag: "" });
     const history = JSON.parse(row.history || "[]");
     const round = history.filter((m: any) => m.role === "assistant").length;
     const lastDash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;

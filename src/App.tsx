@@ -944,6 +944,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 2. Сгенерируй начальный <dashboard_json>, включив туда всех персонажей (заполни им базовые hp, stress, tokens, и добавь по 1-2 стартовых предмета в inventory/equipment исходя из их концепта).
 3. Сгенерируй <codex_json> с описанием стартовой локации.`;
 
+    await saveSession(newSession);
     await sendMessage(prompt, newSession);
   };
 
