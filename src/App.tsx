@@ -665,7 +665,9 @@ export default function App() {
       .replace(/\[GOLD:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'gold', name: name.trim(), delta: parseInt(d) }); return ''; })
       .replace(/\[XP:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'xp', name: name.trim(), delta: parseInt(d) }); return ''; })
       .replace(/\[TOKEN:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'tokens', name: name.trim(), delta: parseInt(d) }); return ''; })
-      .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '');
+      .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
+      .replace(/\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi, '')
+      .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '');
     return { clean, changes };
   };
 
@@ -811,6 +813,17 @@ export default function App() {
     sendMessage(`[ACCEPT QUEST] Партия принимает квест «${title}». Отметь его status 'active' в quests (dashboard_json) и начни сцену.`);
   };
 
+  const handleCarouse = async (charName: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/carouse`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charName })
+      });
+      const d = await res.json();
+      if (d.tag) sendMessage(`[CAROUSE] ${d.tag} — опиши этот вечер и его последствия (2-3 предложения).`);
+    } catch (e) { console.error("Carouse error", e); }
+  };
+
   const handleEconomy = async (action: string, charName: string, item?: string) => {
     if (!currentSession) return;
     try {
@@ -882,6 +895,9 @@ export default function App() {
         const ed = await er.json();
         if (!cancelled && ed?.tag) {
           sendMessage(`[EXPEDITION] ${ed.tag} — опиши коротко возвращение наёмников (2-3 предложения).`);
+        }
+        if (!cancelled && data?.newsTag) {
+          sendMessage(`[WORLD] ${data.newsTag} — «Тем временем...»: опиши это коротко и атмосферно (2-3 предложения).`);
         }
       } catch (e) { console.error("Idle error", e); }
     })();
@@ -1376,6 +1392,21 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         const tname = tm[1].trim();
         const tdesc = (tm[2] || '').trim();
         if (tname) fetch(`/api/sessions/${targetSession.id}/collection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: tname, desc: tdesc }) }).catch(() => {});
+      }
+      // Фронты: [FRONT: имя|импульс|портент1;портент2;...|гибель] → живой мир
+      const frontRe = /\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi;
+      let fm;
+      while ((fm = frontRe.exec(aiContent))) {
+        const fname = fm[1].trim();
+        const fportents = fm[3].split(';').map((s: string) => s.trim()).filter(Boolean);
+        if (fname && fportents.length) fetch(`/api/sessions/${targetSession.id}/fronts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fname, impulse: fm[2].trim(), portents: fportents, doom: fm[4].trim() }) }).catch(() => {});
+      }
+      // Мемориал: [MEMORIAL: имя|причина] → книга павших
+      const memRe = /\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi;
+      let mm;
+      while ((mm = memRe.exec(aiContent))) {
+        const mname = mm[1].trim();
+        if (mname) fetch(`/api/sessions/${targetSession.id}/memorial`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: mname, desc: (mm[2] || '').trim() }) }).catch(() => {});
       }
 
       // State Authority: применяем теги изменений + перезаписываем числа движковыми значениями
@@ -2159,6 +2190,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     onHire={(charName, tier) => handleHire(charName, tier)}
                     onClaimExpeditions={() => handleClaimExpeditions()}
                     onAcceptQuest={(title) => handleAcceptQuest(title)}
+                    onCarouse={(charName) => handleCarouse(charName)}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {
