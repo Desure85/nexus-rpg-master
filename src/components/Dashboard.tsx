@@ -15,10 +15,11 @@ interface DashboardProps {
   onTravel?: (locationId: string) => void;
   onExplore?: (locationId: string) => void;
   onSearch?: (kind: 'location' | 'body', targetName?: string) => void;
-  onEconomy?: (action: 'rest' | 'buy', charName: string, item?: string) => void;
+  onEconomy?: (action: 'rest' | 'buy' | 'inn' | 'heal', charName: string, item?: string) => void;
+  onParty?: (charName: string, status: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -350,6 +351,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         </button>
                       )}
                     </div>
+                  )}
+                  {onParty && (
+                    <button
+                      onClick={() => onParty(char.name, (char as any).status === 'base' ? 'active' : 'base')}
+                      className={`text-[9px] px-1.5 py-0.5 rounded transition-all ${(char as any).status === 'base' ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+                      title={(char as any).status === 'base' ? 'Персонаж на базе (отдыхает). Вернуть в партию.' : 'Отправить персонажа на базу (полное восстановление)'}
+                    >
+                      {(char as any).status === 'base' ? '🏠 На базе' : '⚔️ В партии'}
+                    </button>
                   )}
                 </div>
               </div>

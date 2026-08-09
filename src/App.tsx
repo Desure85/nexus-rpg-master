@@ -293,6 +293,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 АВТОРИТЕТ ЧИСЕЛ (STATE AUTHORITY): Числами персонажей (HP, стресс, жетоны, золото, XP) владеет ДВИЖОК. Каждый ход приходит тег [STATE: ...] с текущими значениями. Изменения чисел — ТОЛЬКО тегами в тексте ответа (не в dashboard_json — их всё равно перезапишет движок):
 [DAMAGE: Имя -N] урон · [HEAL: Имя +N] лечение · [STRESS: Имя +N] · [GOLD: Имя +N] · [XP: Имя +N] · [TOKEN: Имя -1].
 В dashboard_json числа пиши как в [STATE].
+РОСТЕР ПАРТИИ: персонажи со статусом 🏠 (base) — на базе: отдыхают, НЕ участвуют в текущих сценах и боях (упоминай их присутствие на базе, но не вводи в действие). В партии (⚔️) — действуют.
 ПРОГРЕССИЯ: Поле xp — опыт (золото = XP: получил золото — добавь столько же XP). Уровень = floor(sqrt(xp/50))+1 (уровень 1: 0 XP, 2: 50, 3: 200, 4: 450). При повышении уровня увеличь max HP персонажа на +2.
 АВТОСКЕЙЛ: Угрозы должны соответствовать уровню партии: HP врага ≈ 8 + уровень×3 + dangerLevel×2, особенностей ≈ 1 + уровень/2. Не делай врагов ни «мясом», ни «имбой».
 УНИКАЛЬНЫЕ СПОСОБНОСТИ (ПРОГРЕССИЯ): при повышении уровня персонажа ТЫ ОБЯЗАН придумать НОВУЮ уникальную способность (НЕ из фиксированного списка!): имя + описание + механика. Тип способности отражает ПУТЬ героя и может быть ЛЮБЫМ:
@@ -737,6 +738,17 @@ export default function App() {
       const data = await res.json();
       sendMessage(`[SEARCH BODY] ${data.tag || ''}\nПерсонажи обыскивают тело ${threatName}. Опиши, что нашли, добавь в sceneLoot или inventory.`);
     } catch (e) { console.error("Search body error", e); }
+  };
+
+  const handleParty = async (charName: string, status: string) => {
+    if (!currentSession) return;
+    try {
+      await fetch(`/api/sessions/${currentSession.id}/party`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ charName, status })
+      });
+    } catch (e) { console.error("Party error", e); }
   };
 
   const handleEconomy = async (action: string, charName: string, item?: string) => {
@@ -2065,6 +2077,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     onUpdate={handleUpdateDashboard}
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
                     onEconomy={(action, charName, item) => handleEconomy(action, charName, item)}
+                    onParty={(charName, status) => handleParty(charName, status)}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {
