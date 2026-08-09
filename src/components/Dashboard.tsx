@@ -970,6 +970,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     />
                   ))}
                 </div>
+                <p className="text-[9px] text-white/25 italic">
+                  При 5 — непредсказуемое мировое событие (благо / нейтраль / угроза)
+                </p>
+                {data.doomPool >= 5 && (
+                  <p className="text-[9px] text-red-400/80 font-bold animate-pulse">Пул Рока сработает на следующем ходу!</p>
+                )}
               </div>
             )}
 
