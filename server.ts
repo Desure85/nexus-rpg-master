@@ -447,10 +447,20 @@ async function startServer() {
 
     const roll = Math.floor(Math.random() * 6) + 1;
     const effectiveRoll = roll + (playerFailed ? cfg.failedBonus : 0);
-    let result: "encounter" | "none" | "silence" = "none";
+    let result: "encounter" | "none" | "silence" | "world" = "none";
     let reason = "";
+    let worldType: "positive" | "neutral" | "negative" = "neutral";
 
-    if (round < p.safe_until && style !== "combat") {
+    const doomPool = Number(lastDash?.doomPool || 0);
+    if (doomPool >= 5) {
+      // Пул Рока сработал: непредсказуемое мировое событие (полярность случайна)
+      result = "world";
+      const typeRoll = Math.floor(Math.random() * 6) + 1;
+      worldType = typeRoll <= 2 ? "positive" : typeRoll <= 4 ? "neutral" : "negative";
+      reason = `doom=${doomPool} ≥ 5, полярность d6=${typeRoll} → ${worldType}`;
+      db.prepare("UPDATE pacing SET round = ?, last_threat_round = ?, safe_until = ? WHERE session_id = ?")
+        .run(round, worldType === "negative" ? round : (p.last_threat_round ?? -99), round + (worldType === "negative" ? cfg.safeDelay : 0), req.params.id);
+    } else if (round < p.safe_until && style !== "combat") {
       reason = `safe_haven (до хода ${p.safe_until})`;
     } else if (threatsActive >= cfg.limit) {
       reason = `лимит угроз (${threatsActive}/${cfg.limit})`;
@@ -464,16 +474,19 @@ async function startServer() {
       reason = `d6=${roll} < ${cfg.threshold}`;
     }
 
-    if (result !== "none") {
+    if (result === "encounter" || result === "silence") {
       db.prepare("UPDATE pacing SET round = ?, last_threat_round = ?, safe_until = ? WHERE session_id = ?")
         .run(round, round, round + cfg.safeDelay, req.params.id);
     }
-    const tag = result === "encounter"
-      ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие]`
-      : result === "silence"
-        ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
-        : "";
-    res.json({ roll, result, reason, tag });
+    const typeLabel = worldType === "positive" ? "благосклонность судьбы" : worldType === "neutral" ? "нейтральное знамение" : "опасность";
+    const tag = result === "world"
+      ? `[WORLD EVENT: ${worldType} (${typeLabel})] Пул Рока разрядился — произойдёт НЕОЖИДАННОЕ событие ${worldType === "positive" ? "в пользу героев (союзник, находка, удача)" : worldType === "neutral" ? "— знамение, встреча, деталь мира" : "— угроза, засада, ухудшение"}. Опиши его живо и ОБНУЛИ doomPool до 0 в следующем dashboard_json.`
+      : result === "encounter"
+        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие]`
+        : result === "silence"
+          ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
+          : "";
+    res.json({ roll, result, reason, worldType: result === "world" ? worldType : undefined, tag });
   });
 
   // --- Loot: детерминированный поиск (локация / тело) ---
