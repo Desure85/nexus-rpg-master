@@ -39,6 +39,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const curLoc = data.locations?.find(l => l.id === data.currentLocationId);
   const hasMarket = curLoc?.services?.includes('market') ?? false;
   const hasTavern = curLoc?.services?.includes('tavern') ?? false;
+  const hasInn = curLoc?.services?.includes('inn') ?? false;
+  const hasHealer = curLoc?.services?.includes('healer') ?? false;
   const nearestTown = data.locations?.find(l =>
     (l.services?.includes('market') || l.services?.includes('tavern')) &&
     (l.status === 'visited' || l.status === 'known') && l.id !== data.currentLocationId
@@ -305,14 +307,36 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   >
                     🪙 {char.gold ?? 0}
                   </span>
-                  {onEconomy && hasTavern && (char.gold ?? 0) >= 10 && (
-                    <button
-                      onClick={() => onEconomy('rest', char.name)}
-                      className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
-                      title="Таверна: 10 золота → HP макс, стресс -2 (только в поселении)"
-                    >
-                      Таверна
-                    </button>
+                  {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
+                    <div className="flex gap-1">
+                      {hasTavern && (char.gold ?? 0) >= 10 && (
+                        <button
+                          onClick={() => onEconomy('rest', char.name)}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
+                          title="Таверна: 10 золота → HP макс, стресс -2"
+                        >
+                          Таверна
+                        </button>
+                      )}
+                      {hasInn && (char.gold ?? 0) >= 20 && (
+                        <button
+                          onClick={() => onEconomy('inn', char.name)}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-all"
+                          title="Постоялый двор: 20 золота → полное восстановление (HP макс, стресс 0)"
+                        >
+                          Ночлег
+                        </button>
+                      )}
+                      {hasHealer && (char.gold ?? 0) >= 12 && (
+                        <button
+                          onClick={() => onEconomy('heal', char.name)}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all"
+                          title="Лекарь: 12 золота → +5 HP"
+                        >
+                          Лекарь
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>

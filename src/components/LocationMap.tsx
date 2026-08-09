@@ -17,9 +17,14 @@ interface LocationMapProps {
   onLocationUpdate?: (locations: Location[]) => void;
 }
 
+// Иконки сервисов поселений
+const SERVICE_ICONS: Record<string, string> = {
+  market: '🪙', tavern: '🍺', inn: '🛏️', smith: '⚒️', healer: '✚',
+  questboard: '📜', library: '📚', stables: '🐎', barracks: '⚔️', dock: '⚓',
+};
+
 // Helper to choose icon based on name
-const getLocationIcon = (name: string) => {
-  const n = name.toLowerCase();
+const getLocationIcon = (name: string) => {  const n = name.toLowerCase();
   if (n.includes('forest') || n.includes('wood') || n.includes('grove') || n.includes('jungle')) return Trees;
   if (n.includes('mountain') || n.includes('hill') || n.includes('cliff') || n.includes('peak')) return Mountain;
   if (n.includes('cave') || n.includes('dungeon') || n.includes('crypt') || n.includes('mine') || n.includes('tomb')) return Skull;
@@ -331,16 +336,20 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
                     </div>
                   )}
 
-                  {/* Services (settlement) badge — где магазин/таверна */}
-                  {!isLocked && (loc.services?.includes('market') || loc.services?.includes('tavern')) && (
-                    <div
-                      className="absolute -bottom-1 -left-1 rounded-full border border-[#0a0a0a] bg-emerald-600 flex items-center justify-center pointer-events-none"
-                      style={{ width: `${14 / zoom}px`, height: `${14 / zoom}px`, fontSize: `${8 / zoom}px` }}
-                      title={loc.services?.includes('market') ? 'Магазин и таверна' : 'Таверна'}
-                    >
-                      {loc.services?.includes('market') ? '🪙' : '🍺'}
+                  {/* Services badges — сервисы поселения */}
+                  {!isLocked && loc.services?.length ? (
+                    <div className="absolute -bottom-2 -left-1 flex gap-0.5 pointer-events-none">
+                      {loc.services.slice(0, 3).map((s: string) => (
+                        <span
+                          key={s}
+                          className="rounded-full border border-[#0a0a0a] bg-emerald-700 flex items-center justify-center"
+                          style={{ width: `${13 / zoom}px`, height: `${13 / zoom}px`, fontSize: `${7 / zoom}px` }}
+                        >
+                          {SERVICE_ICONS[s] || '·'}
+                        </span>
+                      ))}
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 {/* Label */}
