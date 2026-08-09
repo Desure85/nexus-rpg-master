@@ -348,6 +348,7 @@ export default function App() {
   const [pendingRolls, setPendingRolls] = useState<Record<string, string>>({});
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState<string | null>(null);
   const [showLore, setShowLore] = useState(false);
   const [travelEvent, setTravelEvent] = useState<{ type: 'encounter' | 'discovery' | 'safe', locationName: string } | null>(null);
   const [ws, setWs] = useState<WebSocket | null>(null);
@@ -981,14 +982,38 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ system: fullSystemPrompt, prompt: promptText, model: settings.modelName })
+          body: JSON.stringify({ system: fullSystemPrompt, prompt: promptText, model: settings.modelName, stream: true })
         });
         if (!response.ok) {
           const data = await response.json().catch(() => ({}));
           throw new Error(`OpenCode Error: ${data.error || response.statusText}`);
         }
-        const data = await response.json();
-        aiContent = data.text;
+        if (!response.body) throw new Error("OpenCode: пустой стрим");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        let acc = '';
+        let streamDone = false;
+        setStreamingText('');
+        while (!streamDone) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith('data:')) continue;
+            const payload = line.slice(5).trim();
+            if (payload === '[DONE]') { streamDone = true; break; }
+            try {
+              const ev = JSON.parse(payload);
+              if (ev.delta) { acc += ev.delta; setStreamingText(acc); }
+            } catch { /* ignore keep-alive */ }
+          }
+        }
+        setStreamingText(null);
+        aiContent = acc;
         if (!aiContent) {
           throw new Error("OpenCode returned empty response.");
         }
@@ -1166,6 +1191,30 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
     a.click();
   };
 
+  const exportSkillFormat = async () => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/export`);
+      const data = await res.json();
+      if (data.status !== 'ok') throw new Error(data.error || 'export failed');
+      const download = (name: string, content: string, type: string) => {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      download(`${currentSession.id}.session.json`, JSON.stringify(data.session_json, null, 2), 'application/json');
+      download(`${currentSession.id}.archive.md`, data.archive_md || '# Story Archive\n\n(пусто)', 'text/markdown');
+      download(`${currentSession.id}.timeline.md`, data.timeline_md || '(пусто)', 'text/markdown');
+    } catch (e) {
+      console.error("Skill export error:", e);
+      alert(`Экспорт не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+    }
+  };
+
   const currentDashboard = currentSession?.history.slice().reverse().find(m => m.dashboard)?.dashboard || INITIAL_DASHBOARD;
 
   return (
@@ -1264,6 +1313,14 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     <Download size={12} /> Export
                   </button>
                   <div className="h-4 w-px bg-white/10" />
+                  <button 
+                    onClick={exportSkillFormat}
+                    className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-emerald-400/80 hover:text-emerald-300 transition-all"
+                    title="Export to skill format (session.json + archive.md + timeline.md)"
+                  >
+                    <ScrollText size={12} /> Nexus Export
+                  </button>
+                  <div className="h-4 w-px bg-white/10" />
                   <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
                     <button 
                       onClick={() => handleSaveSettings({ ...settings, fontSize: Math.max(12, settings.fontSize - 1) })}
@@ -1337,6 +1394,16 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     </motion.div>
                   ))}
                 </AnimatePresence>
+                {streamingText !== null && (
+                  <div className="max-w-3xl mx-auto w-full">
+                    <div className="narrative-text text-white/80" style={{ fontSize: `${settings.fontSize}px`, fontFamily: settings.fontFamily === 'serif' ? 'serif' : settings.fontFamily === 'mono' ? 'monospace' : 'inherit' }}>
+                      <p>
+                        {streamingText}
+                        <span className="inline-block w-1.5 h-4 bg-white/50 animate-pulse ml-0.5 align-middle rounded-sm" />
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {isLoading && (
                   <div className="max-w-3xl mx-auto flex items-center gap-3 text-white/40 italic font-serif text-sm lg:text-base">
                     <Loader2 className="animate-spin" size={18} />

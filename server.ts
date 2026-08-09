@@ -220,24 +220,82 @@ async function startServer() {
   };
 
   app.post("/api/chat", async (req, res) => {
-    const { system, prompt, model } = req.body || {};
+    const { system, prompt, model, stream } = req.body || {};
     if (!prompt) return res.status(400).json({ error: "prompt required" });
     if (!OPENCODE_API_KEY) return res.status(500).json({ error: "OPENCODE_API_KEY not configured on the server" });
     try {
       const messages: { role: string; content: string }[] = [];
       if (system) messages.push({ role: "system", content: system });
       messages.push({ role: "user", content: prompt });
-      const resp = await fetch(`${OPENCODE_API_URL}/chat/completions`, {
+      const upstream = await fetch(`${OPENCODE_API_URL}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${OPENCODE_API_KEY}` },
-        body: JSON.stringify({ model: model || OPENCODE_MODEL, messages, temperature: 0.7 })
+        body: JSON.stringify({ model: model || OPENCODE_MODEL, messages, temperature: 0.7, stream: !!stream })
       });
-      if (!resp.ok) {
-        const err = await resp.text().catch(() => "");
-        throw new Error(`OpenCode Go: HTTP ${resp.status} ${err.slice(0, 200)}`);
+      if (!upstream.ok) {
+        const err = await upstream.text().catch(() => "");
+        throw new Error(`OpenCode Go: HTTP ${upstream.status} ${err.slice(0, 200)}`);
       }
-      const data = await resp.json();
-      res.json({ text: stripMetaPrefix(data.choices?.[0]?.message?.content || "") });
+
+      if (!stream) {
+        const data = await upstream.json();
+        res.json({ text: stripMetaPrefix(data.choices?.[0]?.message?.content || "") });
+        return;
+      }
+
+      // Streaming: буферизуем первый абзац (чтобы срезать мету), дальше льём SSE.
+      const META_RE = /skill|brainstorm|AGENTS|creative writing|let me (check|think|just)|user (is asking|asks|wants|keeps)|according to|I.?ll answer|I will answer|this is (a|just|the)|Пользователь|навык|скилл|провер|рассужд|отвечу как|я отвечу|просит|задач/i;
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+
+      const reader = upstream.body!.getReader();
+      const decoder = new TextDecoder();
+      let raw = "";
+      let pending = "";
+      let firstPara = true;
+      let upstreamDone = false;
+      while (!upstreamDone) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        raw += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = raw.indexOf("\n")) >= 0) {
+          const line = raw.slice(0, nl).trim();
+          raw = raw.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (payload === "[DONE]") { upstreamDone = true; break; }
+          let delta = "";
+          try {
+            const ev = JSON.parse(payload);
+            delta = ev.choices?.[0]?.delta?.content || "";
+          } catch { continue; }
+          if (!delta) continue;
+          if (firstPara) {
+            pending += delta;
+            const boundary = pending.indexOf("\n\n");
+            if (boundary >= 0 || pending.length > 800) {
+              const head = boundary >= 0 ? pending.slice(0, boundary) : pending;
+              const rest = boundary >= 0 ? pending.slice(boundary + 2) : "";
+              let out = "";
+              if (!(head.length < 600 && META_RE.test(head))) out = head;
+              if (rest) out += (out ? "\n\n" : "") + rest;
+              if (out) res.write(`data: ${JSON.stringify({ delta: out })}\n\n`);
+              firstPara = false;
+              pending = "";
+            }
+          } else {
+            res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+          }
+        }
+      }
+      if (firstPara && pending && !(pending.length < 600 && META_RE.test(pending))) {
+        res.write(`data: ${JSON.stringify({ delta: pending })}\n\n`);
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : "opencode proxy error" });
     }
@@ -349,7 +407,7 @@ async function startServer() {
     fs.writeFileSync(path.join(exportDir, "archive.md"), archiveMd, "utf-8");
     fs.writeFileSync(path.join(exportDir, "timeline.md"), timelineMd, "utf-8");
 
-    res.json({ status: "ok", files: ["session.json", "archive.md", "timeline.md"], dir: exportDir, session_json: sessionJson });
+    res.json({ status: "ok", files: ["session.json", "archive.md", "timeline.md"], dir: exportDir, session_json: sessionJson, archive_md: archiveMd, timeline_md: timelineMd });
   });
 
   app.get("/api/download/dockerfile", (req, res) => {
