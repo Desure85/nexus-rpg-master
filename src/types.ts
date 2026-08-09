@@ -62,7 +62,8 @@ export interface Location {
   travelTime?: string;
   dangerLevel?: number; // 1-5
   status?: 'visited' | 'known' | 'locked';
-  services?: string[]; // market / tavern / inn
+  type?: string; // city | village | outpost | fortress | tavern | temple | wilderness | ruins | dungeon | ...
+  services?: string[]; // market / tavern / inn / smith / healer / questboard / library / stables / barracks / dock
   coordinates?: { x: number; y: number };
   connections?: string[]; // IDs of connected locations
 }
