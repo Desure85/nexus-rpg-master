@@ -432,6 +432,24 @@ export const CharacterView: React.FC = () => {
                 )}
               </section>
 
+              {/* Unique Abilities */}
+              {character.abilities && character.abilities.length > 0 && (
+                <section className="space-y-4">
+                  <h3 className="text-[10px] uppercase tracking-widest text-sky-300/70 font-bold flex items-center gap-2">
+                    <Zap size={12} /> Уникальные способности
+                  </h3>
+                  <div className="grid grid-cols-1 gap-3">
+                    {character.abilities.map((ab, idx) => (
+                      <div key={idx} className="p-4 bg-sky-500/5 border border-sky-500/20 rounded-2xl">
+                        <h4 className="text-base font-bold text-sky-200">✦ {ab.name}</h4>
+                        <p className="text-sm text-white/60 mt-1 leading-relaxed">{ab.desc}</p>
+                        {ab.effect && <p className="text-xs text-sky-300/70 mt-1 italic">{ab.effect}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
               {/* Actions */}
               {isMechanicEnabled('actions') && (
                 <section className="space-y-4">
