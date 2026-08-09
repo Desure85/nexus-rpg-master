@@ -24,9 +24,10 @@ interface DashboardProps {
   onHire?: (charName: string, tier: string) => void;
   onClaimExpeditions?: () => void;
   onAcceptQuest?: (title: string) => void;
+  onCarouse?: (charName: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -37,6 +38,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const [base, setBase] = useState<any>(null);
   const [expeditions, setExpeditions] = useState<any[]>([]);
   const [collection, setCollection] = useState<any[]>([]);
+  const [fronts, setFronts] = useState<any[]>([]);
+  const [memorial, setMemorial] = useState<any[]>([]);
 
   useEffect(() => {
     if (!isCampaign || !sessionId) return;
@@ -45,6 +48,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       fetch(`/api/sessions/${sessionId}/base`).then(r => r.json()).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
       fetch(`/api/sessions/${sessionId}/expeditions`).then(r => r.json()).then(e => { if (!cancelled) setExpeditions(e); }).catch(() => {});
       fetch(`/api/sessions/${sessionId}/collection`).then(r => r.json()).then(c => { if (!cancelled) setCollection(c); }).catch(() => {});
+      fetch(`/api/sessions/${sessionId}/fronts`).then(r => r.json()).then(f => { if (!cancelled) setFronts(f); }).catch(() => {});
+      fetch(`/api/sessions/${sessionId}/memorial`).then(r => r.json()).then(m => { if (!cancelled) setMemorial(m); }).catch(() => {});
     };
     load();
     return () => { cancelled = true; };
@@ -1456,6 +1461,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <span className={`font-mono ${r.value > 0 ? 'text-emerald-400' : r.value < 0 ? 'text-red-400' : 'text-white/40'}`}>
                     {r.value > 0 ? '+' : ''}{r.value} {r.status ? `· ${r.status}` : ''}
                   </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Фронты — мир живёт без тебя */}
+          {fronts.length > 0 && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-2">
+              <h3 className="text-[10px] uppercase tracking-widest text-red-400/70 font-bold">🌋 Фронты (мир живёт)</h3>
+              {fronts.map((f: any) => {
+                const portents = JSON.parse(f.portents || '[]');
+                const idx = Number(f.portent_index || 0);
+                return (
+                  <div key={f.id} className="p-2 bg-black/40 border border-white/10 rounded-lg">
+                    <p className="text-[10px] text-white/80 font-medium">{f.name}</p>
+                    {f.impulse && <p className="text-[9px] text-white/40 italic">{f.impulse}</p>}
+                    <p className="text-[9px] text-amber-300/80 mt-1">Следующий портент: {idx < portents.length ? portents[idx] : `⚠️ ${f.doom || 'катастрофа'}`}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {/* Караузинг */}
+          {onCarouse && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1.5">
+              <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">🍻 Караузинг (золото → XP, риск)</h3>
+              {(data.characters || []).map((c: any) => (
+                <button key={c.name} onClick={() => onCarouse(c.name)} className="w-full py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded text-[9px] font-bold uppercase tracking-widest">
+                  {c.name} прокутить (🪙{(c as any).gold ?? 0})
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Гравеярд павших */}
+          {memorial.length > 0 && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1">
+              <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold">🪦 Книга павших ({memorial.length})</h3>
+              {memorial.map((m: any) => (
+                <div key={m.id} className="text-[9px] text-white/50">
+                  <span className="text-red-300/80 font-medium">{m.name}</span>{m.desc ? ` — ${m.desc}` : ''}
                 </div>
               ))}
             </div>
