@@ -751,6 +751,26 @@ export default function App() {
     } catch (e) { console.error("Party error", e); }
   };
 
+  const handleClaimBase = async (name: string) => {
+    if (!currentSession) return;
+    try {
+      await fetch(`/api/sessions/${currentSession.id}/base/claim`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name })
+      });
+    } catch (e) { console.error("Claim base error", e); }
+  };
+
+  const handleUpgradeBase = async (building: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/base-upgrade`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ building })
+      });
+      const data = await res.json();
+      if (!res.ok) alert((data.tag || data.error || 'Ошибка').replace(/^\[BASE: |\]$/g, ''));
+    } catch (e) { console.error("Upgrade base error", e); }
+  };
+
   const handleEconomy = async (action: string, charName: string, item?: string) => {
     if (!currentSession) return;
     try {
@@ -2078,6 +2098,9 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
                     onEconomy={(action, charName, item) => handleEconomy(action, charName, item)}
                     onParty={(charName, status) => handleParty(charName, status)}
+                    isCampaign={currentSession.mode === 'campaign'}
+                    onClaimBase={(name) => handleClaimBase(name)}
+                    onUpgradeBase={(building) => handleUpgradeBase(building)}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {

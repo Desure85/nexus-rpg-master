@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
@@ -17,9 +17,12 @@ interface DashboardProps {
   onSearch?: (kind: 'location' | 'body', targetName?: string) => void;
   onEconomy?: (action: 'rest' | 'buy' | 'inn' | 'heal', charName: string, item?: string) => void;
   onParty?: (charName: string, status: string) => void;
+  isCampaign?: boolean;
+  onClaimBase?: (name: string) => void;
+  onUpgradeBase?: (building: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -27,6 +30,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const [shopOpen, setShopOpen] = useState(false);
   const [shopChar, setShopChar] = useState('');
   const [shopItems, setShopItems] = useState<{ name: string; cost: number; desc: string }[]>([]);
+  const [base, setBase] = useState<any>(null);
+
+  useEffect(() => {
+    if (!isCampaign || !sessionId) return;
+    let cancelled = false;
+    fetch(`/api/sessions/${sessionId}/base`).then(r => r.json()).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionId, isCampaign, data.currentLocationId]);
 
   const openShop = async () => {
     setShopChar((data.characters || [])[0]?.name || '');
@@ -1309,6 +1320,52 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             )}
           </div>
         )
+      )}
+
+      {/* Логово — только для кампаний */}
+      {isCampaign && onUpgradeBase && (
+        <div className="p-4 bg-white/5 border border-amber-500/10 rounded-xl space-y-3">
+          <div className="flex justify-between items-center">
+            <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold flex items-center gap-2">
+              🏠 Логово
+            </h3>
+            {base?.name ? <span className="text-[10px] text-white/50 truncate max-w-[140px]">{base.name}</span> : null}
+          </div>
+          {!base?.name ? (
+            <button
+              onClick={() => curLoc && onClaimBase?.(curLoc.name)}
+              disabled={!curLoc}
+              className="w-full py-2 bg-white/5 hover:bg-white/10 border border-dashed border-white/10 rounded-lg text-[10px] uppercase tracking-widest font-bold text-white/50 disabled:opacity-40"
+            >
+              Сделать «{curLoc?.name || '...'}» логовом
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'bedroom', name: 'Спальня', icon: '🛏️', desc: 'Бесплатный отдых в логове' },
+                { id: 'treasury', name: 'Казна', icon: '💰', desc: '+2🪙/час к идл-доходу за ур.' },
+                { id: 'barracks', name: 'Казарма', icon: '⚔️', desc: 'Откроет наёмников' },
+                { id: 'trophy_hall', name: 'Зал трофеев', icon: '🏆', desc: 'Откроет коллекцию' },
+                { id: 'armory', name: 'Оружейная', icon: '⚒️', desc: 'Улучшит магазин на базе' },
+                { id: 'garden', name: 'Огород', icon: '🌿', desc: 'Пассивные зелья' },
+              ].map(u => (
+                <div key={u.id} className="p-2 bg-black/40 border border-white/10 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] text-white/70">{u.icon} {u.name}</span>
+                    <span className="text-[9px] font-mono text-amber-300/80">ур.{base[u.id] || 0}</span>
+                  </div>
+                  <p className="text-[8px] text-white/30 leading-tight my-1">{u.desc}</p>
+                  <button
+                    onClick={() => onUpgradeBase(u.id)}
+                    className="w-full py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 rounded text-[9px] font-bold uppercase tracking-widest transition-all"
+                  >
+                    {60 * ((base[u.id] || 0) + 1)}🪙
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Decision Tree (Древо Решений) */}
