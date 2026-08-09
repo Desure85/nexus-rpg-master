@@ -284,6 +284,9 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 }
 ВАЖНО: Поля tokens, doomPool, threatLevel, progress, total, gold (если они есть) должны быть ЧИСЛАМИ. Поле stress может быть ЧИСЛОМ или СТРОКОЙ вида "X/Y" (где Y - максимум). Поля features, sceneAspects, sceneLoot, echoes должны быть МАССИВАМИ СТРОК.
 ВАЖНО: Поле gold — числовой кошелёк персонажа. Золото из лута добавляй СЮДА (числом), а не в inventory. У каждого персонажа свой кошелёк.
+АВТОРИТЕТ ЧИСЕЛ (STATE AUTHORITY): Числами персонажей (HP, стресс, жетоны, золото, XP) владеет ДВИЖОК. Каждый ход приходит тег [STATE: ...] с текущими значениями. Изменения чисел — ТОЛЬКО тегами в тексте ответа (не в dashboard_json — их всё равно перезапишет движок):
+[DAMAGE: Имя -N] урон · [HEAL: Имя +N] лечение · [STRESS: Имя +N] · [GOLD: Имя +N] · [XP: Имя +N] · [TOKEN: Имя -1].
+В dashboard_json числа пиши как в [STATE].
 ПРОГРЕССИЯ: Поле xp — опыт (золото = XP: получил золото — добавь столько же XP). Уровень = floor(sqrt(xp/50))+1 (уровень 1: 0 XP, 2: 50, 3: 200, 4: 450). При повышении уровня увеличь max HP персонажа на +2.
 АВТОСКЕЙЛ: Угрозы должны соответствовать уровню партии: HP врага ≈ 8 + уровень×3 + dangerLevel×2, особенностей ≈ 1 + уровень/2. Не делай врагов ни «мясом», ни «имбой».
 УНИКАЛЬНЫЕ СПОСОБНОСТИ (ПРОГРЕССИЯ): при повышении уровня персонажа ТЫ ОБЯЗАН придумать НОВУЮ уникальную способность (НЕ из фиксированного списка!): имя + описание + механика. Тип способности отражает ПУТЬ героя и может быть ЛЮБЫМ:
@@ -643,6 +646,18 @@ export default function App() {
     return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined, finalDraft: finalDraftMatch ? finalDraftMatch[1].trim() : undefined, sessionSummary: sessionSummaryMatch ? sessionSummaryMatch[1].trim() : undefined };
   };
 
+  const parseStateTags = (text: string): { clean: string; changes: any[] } => {
+    const changes: any[] = [];
+    const clean = text
+      .replace(/\[DAMAGE:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'hp', name: name.trim(), delta: -Math.abs(parseInt(d)) }); return ''; })
+      .replace(/\[HEAL:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'hp', name: name.trim(), delta: Math.abs(parseInt(d)) }); return ''; })
+      .replace(/\[STRESS:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'stress', name: name.trim(), delta: parseInt(d) }); return ''; })
+      .replace(/\[GOLD:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'gold', name: name.trim(), delta: parseInt(d) }); return ''; })
+      .replace(/\[XP:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'xp', name: name.trim(), delta: parseInt(d) }); return ''; })
+      .replace(/\[TOKEN:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'tokens', name: name.trim(), delta: parseInt(d) }); return ''; });
+    return { clean, changes };
+  };
+
   const saveSession = async (session: GameSession = currentSession!) => {
     if (!session) return;
     setIsSaving(true);
@@ -981,6 +996,10 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
           }).then(r => r.json());
           if (ec.tag) finalContent = (finalContent ? finalContent + '\n\n' : '') + ec.tag;
         } catch (e) { console.error("Encounter check error", e); }
+        try {
+          const st = await fetch(`/api/sessions/${targetSession.id}/state`).then(r => r.json());
+          if (st.tag && st.tag !== '[STATE: ]') finalContent = (finalContent ? finalContent + '\n\n' : '') + st.tag;
+        } catch (e) { console.error("State fetch error", e); }
       }
 
       const userMsg: Message = { role: 'user', content: finalContent };
@@ -1264,12 +1283,25 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         }).catch(err => console.error("Logging failed:", err));
       }
 
-      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft, sessionSummary } = parseDashboard(aiContent, currentDashboard);
+      const { clean: cleanAi, changes: stateChanges } = parseStateTags(aiContent);
+      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft, sessionSummary } = parseDashboard(cleanAi, currentDashboard);
+
+      // State Authority: применяем теги изменений + перезаписываем числа движковыми значениями
+      let authoritativeDashboard = aiDashboard;
+      try {
+        const stRes = await fetch(`/api/sessions/${targetSession.id}/state/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ changes: stateChanges, dashboard: aiDashboard || undefined })
+        });
+        const st = await stRes.json();
+        if (st.dashboard) authoritativeDashboard = st.dashboard;
+      } catch (e) { console.error("State apply error", e); }
 
       const aiMsg: Message = { 
         role: 'assistant', 
         content: cleanText,
-        dashboard: isClarify ? currentDashboard : (aiDashboard || currentDashboard)
+        dashboard: isClarify ? currentDashboard : (authoritativeDashboard || currentDashboard)
       };
 
       // Merge Codex Updates
@@ -1305,7 +1337,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       // Detect level-ups → DM придумывает уникальные способности
       const leveled: string[] = [];
       const prevChars = currentDashboard.characters || [];
-      const newChars = (aiDashboard?.characters || []);
+      const newChars = (authoritativeDashboard?.characters || []);
       for (const nc of newChars) {
         const prev = prevChars.find((c: any) => c.name === nc.name);
         if (prev && levelFromXp(Number(nc.xp || 0)) > levelFromXp(Number(prev.xp || 0))) {
