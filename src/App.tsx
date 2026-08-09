@@ -9,7 +9,7 @@ import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, CodexEntry, MechanicConfig } from './types';
-import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints } from 'lucide-react';
+import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleGenAI } from "@google/genai";
 
@@ -151,32 +151,67 @@ export const DEFAULT_MECHANICS: MechanicConfig[] = [
     name: 'Loot & Resources (Лут)',
     enabled: true,
     description: 'Если персонажи побеждают врагов или успешно обыскивают локацию, ОБЯЗАТЕЛЬНО добавляй полезные предметы (зелья лечения, броню, оружие, золото) в массив sceneLoot.'
+  },
+  {
+    id: 'decision_tree',
+    name: 'Древо Решений (Decision Tree)',
+    enabled: true,
+    description: 'В dashboard_json поддерживай массив decisionTree: [{"id": "D1", "choice": "Пощадил врага", "status": "active|resolved", "consequence": "Готовит месть"}]. Фиксируй ключевые выборы игроков: active — влияют на будущее, resolved — завершены. Обновляй статусы при развитии сюжета.'
+  },
+  {
+    id: 'nexus_save',
+    name: 'NEXUS SAVE (Сохранение Главы)',
+    enabled: true,
+    description: 'По команде [SAVE_CHAPTER]: 1) <lore_update> — кристаллизованный Story Archive (до 800 слов: NPC, локации, конфликты, улики); 2) <final_draft> — литературный Final Draft главы (300-600 слов, синтез диалогов и бросков); 3) обнови decisionTree в dashboard_json.'
   }
 ];
 
 export const SYSTEM_PROMPT = `
-# ROLE: Мастер Игры (DM) — Система "Fate & Dragons" (v.5.0 Core)
+# ROLE: Мастер Игры (DM) — Система "Fate & Dragons" (v.5.1 Nexus Prime)
 
 ## 1. ФИЛОСОФИЯ: БЕСПРИСТРАСТНЫЙ СУДЬЯ
-Ты — логичный, честный и беспристрастный мир. Твоя цель: реагировать на действия игроков максимально реалистично в рамках сеттинга. 
+Ты — логичный, честный и беспристрастный мир. Твоя цель: реагировать на действия игроков максимально реалистично в рамках сеттинга.
 **ЗОЛОТЫЕ ПРАВИЛА:**
 - **Никакой сюжетной брони (Plot Armor):** Не подыгрывай игрокам и не спасай их от последствий их собственных глупых решений.
 - **Никакой искусственной жестокости:** Не пытайся убить их специально. Если они действуют умно и бросок успешен — они побеждают.
 - **Кубик — это закон:** Если игрок провалил бросок, последствия должны быть реальными и ощутимыми.
 - НИКОГДА не описывай действия, мысли или реакции персонажей за них. Останавливайся в момент выбора или сразу после оглашения последствий.
 
-## 2. ПРОТОКОЛ ОТВЕТА
-1. Narrative (ТОЛЬКО художественное описание текущей ситуации. ВАЖНО: НЕ ПИШИ заголовки вроде "### Нарратив" или "### Narrative". Просто начинай писать текст. НЕ ВЫВОДИ векторы действий в тексте, они должны быть только в JSON дашборда!).
+## 2. АВТОРИТЕТ БРОСКОВ (КРИТИЧЕСКИ ВАЖНО): NO TAG = NO ROLL
+Кубики бросает ТОЛЬКО приложение (Dice Roller). Результаты приходят тегами вида:
+[ROLL: 1d20 = 14]
+[ROLL: Stress Resonance (3d20) = [7, 14, 19] | Stress: +2 (Max used)]
+[ROLL: Fate Shift (3d20 + 1d6) = [3, 11, 17] | d6: 5 (Mod: +1)]
+ПРАВИЛА:
+- Ты НИКОГДА не выдумываешь броски и не пересчитываешь их. Теги [ROLL:] — единственный источник правды.
+- Если тега нет — броска не было. Не описывай результат несуществующего броска.
+- Стат ВСЕГДА суммируется с итоговым кубиком. Учитывай выбранную позицию (Max/Mid/Min по стрессу).
+- Провал (итог ниже сложности) — реальные последствия: урон, стресс, потеря ресурсов, заполнение Часов или рост Doom Pool.
 
-## 3. СПЕЦИАЛЬНЫЕ КОМАНДЫ (МЕТА-ГЕЙМИНГ)
-- **[CLARIFY]**: Если сообщение игрока начинается с этого тега, это значит, что он задает вопрос о мире, предмете или NPC "вне игры". 
+## 3. ПРОТОКОЛ ОТВЕТА
+1. Narrative (ТОЛЬКО художественное описание текущей ситуации. ВАЖНО: НЕ ПИШИ заголовки вроде "### Нарратив" или "### Narrative". Просто начинай писать текст. НЕ ВЫВОДИ векторы действий в тексте, они должны быть только в JSON дашборда!).
+2. Механические теги [ROLL:] нарратизируются как ПРИЧИНА (мокрая земля, сорвавшийся хват), а не как «повезло/не повезло».
+
+## 4. САМОВОССТАНОВЛЕНИЕ (OMISSION_RECOVERY)
+Если ты заметил, что пропустил механику (не учёл [ROLL:] тег, не списал жетон/HP/Doom, забыл последствие):
+1. Стоп на полуслове — без «простите», по-деловому.
+2. Учти пропущенный тег и его последствия.
+3. Кратко перескажи ход с поправкой (1-2 предложения) и продолжай.
+Честность механики важнее ровного текста.
+
+## 5. СПЕЦИАЛЬНЫЕ КОМАНДЫ (МЕТА-ГЕЙМИНГ)
+- **[CLARIFY]**: Если сообщение игрока начинается с этого тега, это значит, что он задает вопрос о мире, предмете или NPC "вне игры".
   1. Сначала дай подробный ответ в тексте.
   2. ОБЯЗАТЕЛЬНО обнови Кодекс (<codex_json>), добавив туда все новые детали.
   3. НЕ продолжай сюжет активно, пока не ответишь на вопрос. Сосредоточься на уточнении лора.
   4. Если вопрос касается предмета в инвентаре — опиши его свойства. Если NPC — его внешность и статус.
 - **[FINALE]**: Если сообщение начинается с этого тега, игрок хочет завершить ТЕКУЩУЮ СЮЖЕТНУЮ АРКУ. Твоя задача — плавно подвести сюжет к кульминации (босс, главное открытие, побег). Сведи все текущие линии к решающему моменту. После разрешения кульминации дай персонажам передышку (Safe Haven) и намек на новое приключение (hook), чтобы игру можно было продолжить.
+- **[SAVE_CHAPTER]**: Игрок нажал "NEXUS SAVE". Твоя задача:
+  1. В <lore_update> выведи КРИСТАЛЛИЗОВАННЫЙ Story Archive (до 800 слов): NPC (кто, чего хочет), локации, неразрешённые конфликты, ключевые улики. Сжатая художественная экспозиция, от третьего лица, в стиле сессии.
+  2. В теге <final_draft> выведи Final Draft — полное литературное описание главы (синтез диалогов и бросков, 300-600 слов).
+  3. В <dashboard_json> добавь/обнови decisionTree: зафиксируй ключевые выборы со статусами ("Пощадил врага" -> status "active", "Сжёг мост" -> status "resolved").
 
-## 4. ЧЕСТНЫЕ ПОСЛЕДСТВИЯ
+## 6. ЧЕСТНЫЕ ПОСЛЕДСТВИЯ
 Мир реагирует строго по логике:
 - **Провал броска:** Логичные, жесткие, но честные последствия. Наноси урон (HP), повышай Стресс, лишай ресурсов, вводи новые Угрозы. Враги действуют эффективно и безжалостно.
 - **Успех броска:** Игрок получает ровно то, что хотел, без скрытых подвохов.
@@ -217,6 +252,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('echoes') ? `"echoes": ["Звон мечей вдали", "Шепот ветра"]` : null,
     `"atmosphere": "..."`,
     isEnabled('threat') ? `"threatLevel": 0` : null,
+    isEnabled('decision_tree') ? `"decisionTree": [{"id": "D1", "choice": "...", "status": "active|resolved", "consequence": "..."}]` : null,
     `"suggestedRoll": {"type": "classic|triple|shifted|taint", "reason": "..."}`
   ].filter(Boolean).join(',\n  ');
 
@@ -256,6 +292,8 @@ ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит эк
 
 3. Архив (Lore): ОБЯЗАТЕЛЬНО обновляй глобальный архив событий. Если произошло что-то важное, выведи теги <lore_update>...</lore_update> с ПОЛНЫМ обновленным кратким содержанием ВСЕГО сюжета (включая старые события). 
 ВАЖНО: Если ты отвечаешь на [CLARIFY], НЕ выводи <lore_update>, так как сюжет не продвинулся.
+
+4. Final Draft (только для [SAVE_CHAPTER]): Если в сообщении игрока был тег [SAVE_CHAPTER], выведи <final_draft>...</final_draft> — литературное описание главы (300-600 слов), синтез диалогов и бросков в стиле сессии. НИЧЕГО не пиши после закрывающего тега.
 `;
 };
 
@@ -267,6 +305,7 @@ const INITIAL_DASHBOARD: DashboardData = {
   doomPool: 0,
   echoes: [],
   atmosphere: "Waiting for initialization...",
+  decisionTree: [],
   threatLevel: 0
 };
 
@@ -445,7 +484,7 @@ export default function App() {
     if (currentSession?.id === id) setCurrentSession(null);
   };
 
-  const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string } => {
+  const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string, finalDraft?: string } => {
     let cleanText = text;
     let dashboard: DashboardData | undefined;
     let codexUpdates: CodexEntry[] | undefined;
@@ -525,6 +564,7 @@ export default function App() {
           currentLocationId: parsed.currentLocationId || currentDashboard.currentLocationId,
           clocks: parsed.clocks || currentDashboard.clocks || [],
           echoes: parsed.echoes || currentDashboard.echoes || [],
+          decisionTree: parsed.decisionTree || currentDashboard.decisionTree || [],
         };
         cleanText = cleanText.replace(/<dashboard_json>[\s\S]*?<\/dashboard_json>/, '').trim();
       } catch (e) { console.error("Dashboard parse error", e); }
@@ -543,24 +583,31 @@ export default function App() {
       cleanText = cleanText.replace(/<lore_update>[\s\S]*?<\/lore_update>/i, '').trim();
     }
 
+    const finalDraftMatch = text.match(/<final_draft>([\s\S]*?)<\/final_draft>/i);
+    if (finalDraftMatch) {
+      cleanText = cleanText.replace(/<final_draft>[\s\S]*?<\/final_draft>/i, '').trim();
+    }
+
     // Clean up unwanted headers that the model might still output
     cleanText = cleanText.replace(/^###\s*(Narrative|Нарратив)\s*\n?/i, '').trim();
     cleanText = cleanText.replace(/###\s*(Actions & Rolls|Векторы действий|Действия)[\s\S]*?(?=(<|$))/i, '').trim();
 
-    return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined };
+    return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined, finalDraft: finalDraftMatch ? finalDraftMatch[1].trim() : undefined };
   };
 
   const saveSession = async (session: GameSession = currentSession!) => {
     if (!session) return;
     setIsSaving(true);
     try {
+      const lastDashboard = session.history.slice().reverse().find(m => m.dashboard)?.dashboard;
       await fetch('/api/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...session,
           history: JSON.stringify(session.history),
-          codex: JSON.stringify(session.codex)
+          codex: JSON.stringify(session.codex),
+          decision_tree: lastDashboard?.decisionTree && lastDashboard.decisionTree.length > 0 ? JSON.stringify(lastDashboard.decisionTree) : null
         })
       });
       await fetchSessions();
@@ -676,6 +723,7 @@ export default function App() {
       snapshot: '',
       history: [],
       lore: `Сеттинг: ${setup.setting}\nЗавязка: ${setup.plotHook}\nСтиль: ${setup.style}`,
+      archive: '',
       codex: [],
       updated_at: new Date().toISOString()
     };
@@ -759,6 +807,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
       if (!isEnabled('clocks')) delete filteredDashboard.clocks;
       if (!isEnabled('doom_pool')) delete filteredDashboard.doomPool;
       if (!isEnabled('echoes')) delete filteredDashboard.echoes;
+      if (!isEnabled('decision_tree')) delete filteredDashboard.decisionTree;
       if (!isEnabled('threat')) delete filteredDashboard.threatLevel;
       
       filteredDashboard.characters = filteredDashboard.characters.map(char => {
@@ -971,7 +1020,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         }).catch(err => console.error("Logging failed:", err));
       }
 
-      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate } = parseDashboard(aiContent, currentDashboard);
+      const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft } = parseDashboard(aiContent, currentDashboard);
 
       const aiMsg: Message = { 
         role: 'assistant', 
@@ -997,6 +1046,7 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         ...targetSession, 
         history: finalHistory,
         lore: loreUpdate || targetSession.lore,
+        archive: finalDraft ? `${targetSession.archive ? targetSession.archive + '\n\n---\n\n' : ''}${finalDraft}` : targetSession.archive,
         codex: finalCodex,
         updated_at: new Date().toISOString()
       };
@@ -1394,12 +1444,19 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                       <button onClick={() => setInput('START_NEW_STORY [Dark Fantasy, Nexus Prime, Grimdark, A lone wanderer]')} className="vector-btn text-[10px] lg:text-sm text-emerald-400/80 border-emerald-500/20">Initialize Story</button>
                     )}
                     <button 
-                      onClick={() => saveSession()} 
-                      disabled={isSaving || !currentSession}
+                      onClick={() => {
+                        saveSession();
+                        sendMessage(`[SAVE_CHAPTER] Сохрани главу (NEXUS SAVE). Твоя задача:
+1. <lore_update> — кристаллизованный Story Archive до 800 слов (NPC: кто и чего хочет, локации, неразрешённые конфликты, ключевые улики; от третьего лица, в стиле сессии).
+2. <final_draft> — литературный Final Draft главы (300-600 слов): синтез диалогов и бросков.
+3. Обнови decisionTree в <dashboard_json>: зафиксируй ключевые выборы игроков со статусами active/resolved.`);
+                      }} 
+                      disabled={isSaving || !currentSession || isLoading}
+                      title="NEXUS SAVE: кристаллизует Story Archive + Final Draft + Древо Решений"
                       className="vector-btn text-[10px] lg:text-sm text-amber-400/80 border-amber-500/20 flex items-center gap-2"
                     >
-                      {isSaving ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                      {isSaving ? 'Saving...' : 'Nexus Save'}
+                      {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                      {isLoading ? 'Crystallizing...' : 'Nexus Save'}
                     </button>
                   </div>
                 </div>
@@ -1435,8 +1492,18 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                       <History size={12} /> Story Archive
                     </h3>
                     <div className="text-sm text-white/60 font-serif leading-relaxed whitespace-pre-wrap">
-                      {currentSession.lore || "No lore recorded yet. Use 'Save' command to crystallize the story."}
+                      {currentSession.lore || "No lore recorded yet. Use 'Nexus Save' to crystallize the story."}
                     </div>
+                    {currentSession.archive && (
+                      <>
+                        <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold flex items-center gap-2 pt-4 border-t border-white/10">
+                          <ScrollText size={12} /> Final Drafts (NEXUS SAVE)
+                        </h3>
+                        <div className="text-sm text-white/70 font-serif leading-relaxed whitespace-pre-wrap">
+                          {currentSession.archive}
+                        </div>
+                      </>
+                    )}
                   </div>
                 ) : rightPanelTab === 'codex' ? (
                   <Codex entries={currentSession.codex} />
