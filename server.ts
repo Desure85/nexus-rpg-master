@@ -199,6 +199,92 @@ async function startServer() {
     res.json(logs);
   });
 
+  // OpenCode subscription proxy: forwards LLM calls to a local `opencode serve`
+  const OPENCODE_URL = process.env.OPENCODE_SERVER_URL || "http://127.0.0.1:3448";
+  const OPENCODE_PASS = process.env.OPENCODE_SERVER_PASSWORD || "nexus-local-secret";
+  const OPENCODE_MODEL = process.env.OPENCODE_MODEL || "glm-5.2";
+  const OPENCODE_AGENT = process.env.OPENCODE_AGENT || "build";
+
+  // Модели (glm/deepseek/minimax) иногда сливают мета-абзацы перед ответом
+  // (рассуждения о скиллах, «I'll answer as...», служебные заметки). Срезаем
+  // все ведущие абзацы, похожие на мета, до первого «чистого» нарратива.
+  const stripMetaPrefix = (text: string): string => {
+    const meta = /skill|brainstorm|AGENTS|creative writing|let me (check|think|just)|user (is asking|asks|wants|keeps)|according to|I.?ll answer|I will answer|this is (a|just|the)|Пользователь|навык|скилл|провер|рассужд|отвечу как|я отвечу|просит|задач/i;
+    const out: string[] = [];
+    let metaMode = true;
+    for (const p of text.split(/\n\s*\n/)) {
+      if (metaMode && p.length < 600 && meta.test(p)) continue;
+      metaMode = false;
+      out.push(p);
+    }
+    return out.join("\n\n").trim();
+  };
+
+  app.post("/api/chat", async (req, res) => {
+    const { system, prompt } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: "prompt required" });
+    const auth = "Basic " + Buffer.from(`opencode:${OPENCODE_PASS}`).toString("base64");
+    const H = { Authorization: auth, "Content-Type": "application/json" };
+    try {
+      const sessRes = await fetch(`${OPENCODE_URL}/session`, {
+        method: "POST", headers: H,
+        body: JSON.stringify({ title: "nexus-rpg" })
+      });
+      if (!sessRes.ok) throw new Error(`opencode session: HTTP ${sessRes.status}`);
+      const { id: sessionID } = await sessRes.json();
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 180000);
+      const eventRes = await fetch(`${OPENCODE_URL}/event`, { headers: H, signal: controller.signal });
+      if (!eventRes.ok || !eventRes.body) throw new Error(`opencode event stream: HTTP ${eventRes.status}`);
+      const reader = eventRes.body.getReader();
+      const decoder = new TextDecoder();
+
+      const paRes = await fetch(`${OPENCODE_URL}/session/${sessionID}/prompt_async`, {
+        method: "POST", headers: H,
+        body: JSON.stringify({
+          model: { providerID: "opencode-go", modelID: OPENCODE_MODEL },
+          agent: OPENCODE_AGENT,
+          system: system || "",
+          parts: [{ type: "text", text: prompt }],
+          tools: { "*": false }
+        })
+      });
+      if (!paRes.ok) throw new Error(`opencode prompt_async: HTTP ${paRes.status}`);
+
+      let raw = "";
+      const deltas: Record<string, string> = {};
+      let finished = false;
+      while (!finished) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        raw += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = raw.indexOf("\n")) >= 0) {
+          const line = raw.slice(0, nl).trim();
+          raw = raw.slice(nl + 1);
+          if (!line.startsWith("data:")) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim());
+            const p = ev.properties || {};
+            if (ev.type === "message.part.delta" && p.field === "text" && p.sessionID === sessionID) {
+              deltas[p.partID] = (deltas[p.partID] || "") + (p.delta || "");
+            }
+            if (ev.type === "session.idle" && p.sessionID === sessionID) {
+              finished = true;
+              break;
+            }
+          } catch { /* ignore malformed events */ }
+        }
+      }
+      clearTimeout(timeout);
+      controller.abort();
+      res.json({ text: stripMetaPrefix(Object.values(deltas).join("")) });
+    } catch (e) {
+      res.status(502).json({ error: e instanceof Error ? e.message : "opencode proxy error" });
+    }
+  });
+
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
   app.get("/api/sessions/:id/export", (req, res) => {
     const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
