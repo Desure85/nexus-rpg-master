@@ -150,6 +150,24 @@ db.exec(`
     type TEXT DEFAULT 'trophy',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS fronts (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    impulse TEXT DEFAULT '',
+    portents TEXT NOT NULL,
+    portent_index INTEGER DEFAULT 0,
+    doom TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS memorial (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    desc TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 async function startServer() {
@@ -927,6 +945,67 @@ async function startServer() {
     res.json({ status: "ok", tag: `[TRAIN: ${charName} тренировался(ась) в логове — +20 XP, списано ${cost} золота]` });
   });
 
+  // --- Fronts (grim portents): мир живёт без игрока ---
+  const CAROUSING_INCIDENTS = [
+    "долг Гильдии воров: они придут за процентами", "проснулся(ась) с чужой татуировкой — она светится в темноте",
+    "вчера оскорбил(а) благородного — его люди уже ищут тебя", "должен услугу бармену «Ржавого якоря»",
+    "потерял(а) ценную вещь (движок не помнит какую — спроси у игрока)", "подслушал(а) секрет, который опасно знать",
+    "кто-то заплатил за твою выпивку и оставил записку без подписи", "присоединился(ась) к культу «Спящих» (по пьяни)",
+    "выиграл(а) чужой кошелёк в кости — владелец зол на тебя", "совсем не помнишь прошлой ночи — и это плохой знак",
+  ];
+
+  app.get("/api/sessions/:id/fronts", (req, res) => {
+    res.json(db.prepare("SELECT * FROM fronts WHERE session_id = ? AND status = 'active' ORDER BY created_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/fronts", (req, res) => {
+    const { name, impulse = "", portents = [], doom = "" } = req.body || {};
+    if (!name || !Array.isArray(portents) || portents.length === 0) return res.status(400).json({ error: "name + portents[] required" });
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO fronts (id, session_id, name, impulse, portents, doom) VALUES (?,?,?,?,?,?)")
+      .run(id, req.params.id, name, impulse, JSON.stringify(portents), doom);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", id, tag: `[FRONT: «${name}» активирован — ${portents.length} портентов до ${doom || "катастрофы"}]` });
+  });
+
+  app.post("/api/sessions/:id/fronts/:fid/resolve", (req, res) => {
+    db.prepare("UPDATE fronts SET status = 'resolved' WHERE id = ?").run(req.params.fid);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok" });
+  });
+
+  // --- Carousing: золото -> XP с риском происшествия (OSR) ---
+  app.post("/api/sessions/:id/carouse", (req, res) => {
+    const { charName } = req.body || {};
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const spend = Math.min(st.gold, Math.max(10, Math.floor(Math.random() * 6 + 1) * 10));
+    if (spend < 10) return res.status(400).json({ error: "not enough gold", tag: `[CAROUSE: у ${charName} меньше 10 золота]` });
+    st.gold -= spend;
+    st.xp += spend;
+    saveEngineState(req.params.id, chars);
+    const incident = Math.floor(Math.random() * 6) === 0;
+    const hook = incident ? CAROUSING_INCIDENTS[Math.floor(Math.random() * CAROUSING_INCIDENTS.length)] : "";
+    const tag = incident
+      ? `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) и вляпался(лась): ${hook} — придумай, как это разыграть как крючок]`
+      : `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) — удачно, без последствий]`;
+    res.json({ status: "ok", spend, xp: spend, incident, hook, tag });
+  });
+
+  // --- Memorial: павшие герои ---
+  app.get("/api/sessions/:id/memorial", (req, res) => {
+    res.json(db.prepare("SELECT * FROM memorial WHERE session_id = ? ORDER BY created_at DESC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/memorial", (req, res) => {
+    const { name, desc = "" } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO memorial (id, session_id, name, desc) VALUES (?,?,?,?)").run(crypto.randomUUID(), req.params.id, name, desc);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[MEMORIAL: «${name}» вписан в книгу павших]` });
+  });
+
   // --- Idle: пассивный доход, пока игрока нет ---
   app.post("/api/sessions/:id/idle", (req, res) => {
     const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
@@ -974,7 +1053,23 @@ async function startServer() {
     const tag = idleGold > 0
       ? `[IDLE: пока тебя не было (${hours.toFixed(1)} ч), город принёс +${idleGold} золота и XP${doomUp ? ", Пул Рока +1" : ""}]`
       : doomUp ? `[IDLE: пока тебя не было, Пул Рока +1 — мир не ждал]` : "";
-    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag });
+
+    // Фронты: грим-портенты идут сами, пока игрока нет
+    let newsTag = "";
+    if (hours >= 0.5) {
+      const fronts = db.prepare("SELECT * FROM fronts WHERE session_id = ? AND status = 'active'").all(req.params.id);
+      const news: string[] = [];
+      for (const f of fronts) {
+        const portents: string[] = JSON.parse(f.portents || "[]");
+        const idx = Number(f.portent_index || 0);
+        if (idx >= portents.length) continue;
+        db.prepare("UPDATE fronts SET portent_index = ? WHERE id = ?").run(idx + 1, f.id);
+        news.push(`«${f.name}»: ${portents[idx]}`);
+      }
+      if (news.length) newsTag = `[FRONT NEWS: пока вас не было, ${news.join("; ")} — мир не стоял на месте]`;
+    }
+
+    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag, newsTag });
   });
 
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
