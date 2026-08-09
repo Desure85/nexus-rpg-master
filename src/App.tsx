@@ -246,7 +246,7 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
     isEnabled('threats_dash') ? `"threats": [{"name": "...", "hp": "...", "features": ["Броня", "Яд"]}]` : null,
     isEnabled('scene_aspects') ? `"sceneAspects": ["Темный лес", "Запах гари", "Скользкий пол"]` : null,
     isEnabled('loot') ? `"sceneLoot": ["Лечебное зелье (Восстанавливает 5 HP)", "Ржавый меч"]` : null,
-    `"locations": [{"id": "uuid", "name": "...", "description": "...", "dangerLevel": 1, "status": "visited|known|locked", "services": ["market", "tavern"], "coordinates": {"x": 50, "y": 50}, "connections": ["other_loc_id"]}]`,
+    `"locations": [{"id": "uuid", "name": "...", "description": "...", "dangerLevel": 1, "status": "visited|known|locked", "type": "city|village|outpost|fortress|tavern|temple|wilderness|ruins|dungeon", "services": ["market", "tavern", "inn", "smith", "healer", "questboard", "library", "stables", "barracks", "dock"], "coordinates": {"x": 50, "y": 50}, "connections": ["other_loc_id"]}]`,
     `"currentLocationId": "uuid"`,
     isEnabled('clocks') ? `"clocks": [{"name": "...", "progress": 0, "total": 4}]` : null,
     isEnabled('doom_pool') ? `"doomPool": 0` : null,
@@ -286,7 +286,14 @@ ${isEnabled('equipment') ? 'ВАЖНО: Поле equipment содержит эк
 2. Укажи connections: [id_текущей_локации]. Также добавь id новой локации в connections текущей локации. Это создаст связь на карте.
 Если они прибывают в локацию, обнови ее описание, установи status="visited" и ОБЯЗАТЕЛЬНО установи currentLocationId равным id этой локации.
 ОБЯЗАТЕЛЬНО соблюдай выбранный СТИЛЬ ИГРЫ при генерации dangerLevel (1-5). Не делай все локации сложными (4-5), если стиль не Combat Heavy! Чередуй уровни опасности.
-ОБЯЗАТЕЛЬНО помечай ПОСЕЛЕНИЯ (город, деревня, рынок, придорожный трактир) полем services: ["market", "tavern"]. Дикая местность, лес, руины, пещеры — БЕЗ services (или services: []). Магазин и таверна доступны ТОЛЬКО в локации с соответствующим сервисом — торговля аутентична месту.
+ТИП И СЕРВИСЫ ЛОКАЦИЙ: у каждой локации указывай type (city/village/outpost/fortress/tavern/temple/wilderness/ruins/dungeon) и services из списка: market, tavern, inn, smith, healer, questboard, library, stables, barracks, dock.
+- city (город): market, tavern, inn, smith, healer, questboard, library, stables, barracks, dock (если приморский)
+- village (деревня): market (малый рынок), tavern, inn, smith, healer
+- outpost/fortress (застава/крепость): barracks, stables, smith
+- tavern (придорожный трактир): tavern, inn, stables
+- temple (храм): healer, library
+- wilderness/ruins/dungeon: services: [] (никаких сервисов!)
+Торговля, отдых и лечение доступны ТОЛЬКО в локации с соответствующим сервисом — аутентичность месту.
 2. Кодекс: Оберни в теги <codex_json>...</codex_json>.
 Используй для фиксации NPC, локаций или предметов. 
 ВАЖНО: Если в запросе есть тег [CLARIFY], твой приоритет №1 — обновить Кодекс. Зафиксируй там все детали, которые ты только что описал в тексте. Это твоя внешняя память.
