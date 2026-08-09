@@ -355,6 +355,11 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
         )}
 
         <div className="grid grid-cols-2 gap-2">
+          {(!selectedChar || !selectedAction) && (
+            <p className="col-span-2 text-[9px] text-white/30 italic text-center py-0.5">
+              {!selectedChar ? '1️⃣ Выбери персонажа' : ''}{!selectedChar && !selectedAction ? ' → ' : ''}{!selectedAction ? '2️⃣ Выбери действие' : ''}{(!selectedChar || !selectedAction) ? ' → 3️⃣ Брось кубик' : ''}
+            </p>
+          )}
           {isMechanicEnabled('classic') && (
             <RollButton 
               label="Classic Flow" 
