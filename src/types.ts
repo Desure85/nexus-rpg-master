@@ -120,7 +120,7 @@ export interface MechanicConfig {
 }
 
 export interface AppSettings {
-  provider: 'local' | 'gemini' | 'openrouter';
+  provider: 'local' | 'gemini' | 'openrouter' | 'opencode';
   modelUrl: string;
   apiKey: string;
   modelName: string;
