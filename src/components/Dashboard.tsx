@@ -20,9 +20,13 @@ interface DashboardProps {
   isCampaign?: boolean;
   onClaimBase?: (name: string) => void;
   onUpgradeBase?: (building: string) => void;
+  onTrain?: (charName: string) => void;
+  onHire?: (charName: string, tier: string) => void;
+  onClaimExpeditions?: () => void;
+  onAcceptQuest?: (title: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -31,13 +35,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const [shopChar, setShopChar] = useState('');
   const [shopItems, setShopItems] = useState<{ name: string; cost: number; desc: string }[]>([]);
   const [base, setBase] = useState<any>(null);
+  const [expeditions, setExpeditions] = useState<any[]>([]);
+  const [collection, setCollection] = useState<any[]>([]);
 
   useEffect(() => {
     if (!isCampaign || !sessionId) return;
     let cancelled = false;
-    fetch(`/api/sessions/${sessionId}/base`).then(r => r.json()).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
+    const load = () => {
+      fetch(`/api/sessions/${sessionId}/base`).then(r => r.json()).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
+      fetch(`/api/sessions/${sessionId}/expeditions`).then(r => r.json()).then(e => { if (!cancelled) setExpeditions(e); }).catch(() => {});
+      fetch(`/api/sessions/${sessionId}/collection`).then(r => r.json()).then(c => { if (!cancelled) setCollection(c); }).catch(() => {});
+    };
+    load();
     return () => { cancelled = true; };
-  }, [sessionId, isCampaign, data.currentLocationId]);
+  }, [sessionId, isCampaign, data.currentLocationId, data.characters]);
 
   const openShop = async () => {
     setShopChar((data.characters || [])[0]?.name || '');
@@ -1361,6 +1372,90 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   >
                     {60 * ((base[u.id] || 0) + 1)}🪙
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Кампания: квесты, наёмники, коллекция, репутация, тренировка */}
+      {isCampaign && base?.name && (
+        <div className="space-y-3">
+          {/* Квесты */}
+          {(data as any).quests && (data as any).quests.length > 0 && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-2">
+              <h3 className="text-[10px] uppercase tracking-widest text-emerald-400/70 font-bold">📜 Квесты</h3>
+              {(data as any).quests.map((q: any, idx: number) => (
+                <div key={idx} className="p-2 bg-black/40 border border-white/10 rounded-lg">
+                  <div className="flex justify-between items-start gap-2">
+                    <p className="text-[10px] text-white/80">{q.title}</p>
+                    <span className={`text-[8px] px-1.5 py-0.5 rounded uppercase font-bold shrink-0 ${q.status === 'done' ? 'bg-emerald-500/15 text-emerald-400' : q.status === 'active' ? 'bg-amber-500/15 text-amber-400' : 'bg-white/10 text-white/50'}`}>{q.status}</span>
+                  </div>
+                  {q.desc && <p className="text-[9px] text-white/40 mt-0.5">{q.desc}</p>}
+                  {q.reward && <p className="text-[9px] text-amber-300/70 mt-0.5">Награда: {q.reward}</p>}
+                  {q.status === 'available' && onAcceptQuest && (
+                    <button onClick={() => onAcceptQuest(q.title)} className="mt-1.5 text-[9px] px-2 py-0.5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded font-bold uppercase tracking-widest">Взять</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Наёмники */}
+          {onHire && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-2">
+              <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">⚔️ Наёмники (Казарма ур.{base.barracks || 0})</h3>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[['short', 'Малый 20🪙 30м'], ['long', 'Дальний 50🪙 2ч'], ['deep', 'Глубокий 100🪙 6ч']].map(([tier, label]) => (
+                  <button key={tier} onClick={() => onHire((data.characters?.[0] as any)?.name || '', tier)} disabled={!data.characters?.length}
+                    className={`py-1.5 rounded text-[9px] font-bold uppercase tracking-widest transition-all ${(base.barracks || 0) >= (tier === 'short' ? 0 : tier === 'long' ? 1 : 2) ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-white/5 text-white/30 line-through'}`}
+                    title={tier === 'short' ? 'Казарма ур.0+' : tier === 'long' ? 'Казарма ур.1+' : 'Казарма ур.2+'}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {expeditions.length > 0 && (
+                <div className="space-y-1">
+                  {expeditions.map((e: any) => (
+                    <p key={e.id} className="text-[9px] text-white/50">{e.hireling} · {e.char_name} · возврат ~{new Date(e.returns_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</p>
+                  ))}
+                  <button onClick={onClaimExpeditions} className="w-full py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 rounded text-[9px] font-bold uppercase tracking-widest">Забрать вернувшихся</button>
+                </div>
+              )}
+            </div>
+          )}
+          {/* Тренировка */}
+          {onTrain && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1.5">
+              <h3 className="text-[10px] uppercase tracking-widest text-sky-400/70 font-bold">🎯 Тренировка (30🪙 = +20 XP)</h3>
+              {(data.characters || []).map((c: any) => (
+                <button key={c.name} onClick={() => onTrain(c.name)} className="w-full py-1 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 rounded text-[9px] font-bold uppercase tracking-widest">
+                  {c.name} · 🪙{(c as any).gold ?? 0}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Коллекция */}
+          {collection.length > 0 && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1.5">
+              <h3 className="text-[10px] uppercase tracking-widest text-violet-400/70 font-bold">🏆 Зал трофеев ({collection.length})</h3>
+              <div className="flex flex-wrap gap-1">
+                {collection.map((t: any) => (
+                  <span key={t.id} className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/20 rounded text-[9px] text-violet-300/80 cursor-help" title={t.desc || t.type}>{t.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {/* Репутация */}
+          {(data as any).reputation && (data as any).reputation.length > 0 && (
+            <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1">
+              <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold">🤝 Репутация</h3>
+              {(data as any).reputation.map((r: any, idx: number) => (
+                <div key={idx} className="flex justify-between items-center text-[10px]">
+                  <span className="text-white/70">{r.faction}</span>
+                  <span className={`font-mono ${r.value > 0 ? 'text-emerald-400' : r.value < 0 ? 'text-red-400' : 'text-white/40'}`}>
+                    {r.value > 0 ? '+' : ''}{r.value} {r.status ? `· ${r.status}` : ''}
+                  </span>
                 </div>
               ))}
             </div>

@@ -294,6 +294,9 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
 [DAMAGE: Имя -N] урон · [HEAL: Имя +N] лечение · [STRESS: Имя +N] · [GOLD: Имя +N] · [XP: Имя +N] · [TOKEN: Имя -1].
 В dashboard_json числа пиши как в [STATE].
 РОСТЕР ПАРТИИ: персонажи со статусом 🏠 (base) — на базе: отдыхают, НЕ участвуют в текущих сценах и боях (упоминай их присутствие на базе, но не вводи в действие). В партии (⚔️) — действуют.
+КОЛЛЕКЦИЯ: выдающиеся находки (уникальные враги, артефакты, редкости) помечай тегом [TROPHY: Название|описание] — попадёт в Зал трофеев.
+КВЕСТЫ: в dashboard поле "quests" (status: available/active/done). На доске объявлений (questboard) предлагай 1-3 квеста; при теге [ACCEPT QUEST] — status active; при выполнении — done + награда.
+РЕПУТАЦИЯ: в dashboard поле "reputation": [{"faction": "...", "value": 0, "status": "..."}]. Меняй по решениям партии (от -10 «враг» до +10 «верный союзник»). Влияет на отношение NPC и доступ к услугам.
 ПРОГРЕССИЯ: Поле xp — опыт (золото = XP: получил золото — добавь столько же XP). Уровень = floor(sqrt(xp/50))+1 (уровень 1: 0 XP, 2: 50, 3: 200, 4: 450). При повышении уровня увеличь max HP персонажа на +2.
 АВТОСКЕЙЛ: Угрозы должны соответствовать уровню партии: HP врага ≈ 8 + уровень×3 + dangerLevel×2, особенностей ≈ 1 + уровень/2. Не делай врагов ни «мясом», ни «имбой».
 УНИКАЛЬНЫЕ СПОСОБНОСТИ (ПРОГРЕССИЯ): при повышении уровня персонажа ТЫ ОБЯЗАН придумать НОВУЮ уникальную способность (НЕ из фиксированного списка!): имя + описание + механика. Тип способности отражает ПУТЬ героя и может быть ЛЮБЫМ:
@@ -661,7 +664,8 @@ export default function App() {
       .replace(/\[STRESS:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'stress', name: name.trim(), delta: parseInt(d) }); return ''; })
       .replace(/\[GOLD:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'gold', name: name.trim(), delta: parseInt(d) }); return ''; })
       .replace(/\[XP:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'xp', name: name.trim(), delta: parseInt(d) }); return ''; })
-      .replace(/\[TOKEN:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'tokens', name: name.trim(), delta: parseInt(d) }); return ''; });
+      .replace(/\[TOKEN:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'tokens', name: name.trim(), delta: parseInt(d) }); return ''; })
+      .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '');
     return { clean, changes };
   };
 
@@ -771,6 +775,42 @@ export default function App() {
     } catch (e) { console.error("Upgrade base error", e); }
   };
 
+  const handleTrain = async (charName: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/train`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charName })
+      });
+      const d = await res.json();
+      if (!res.ok) alert((d.tag || d.error || 'Ошибка').replace(/^\[TRAIN: |\]$/g, ''));
+    } catch (e) { console.error("Train error", e); }
+  };
+
+  const handleHire = async (charName: string, tier: string) => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/expedition`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charName, tier })
+      });
+      const d = await res.json();
+      if (!res.ok) alert((d.tag || d.error || 'Ошибка').replace(/^\[EXPEDITION: |\]$/g, ''));
+    } catch (e) { console.error("Hire error", e); }
+  };
+
+  const handleClaimExpeditions = async () => {
+    if (!currentSession) return;
+    try {
+      const res = await fetch(`/api/sessions/${currentSession.id}/expeditions/claim`, { method: 'POST' });
+      const d = await res.json();
+      if (d.tag) sendMessage(`[EXPEDITION] ${d.tag} — опиши коротко возвращение наёмников (2-3 предложения).`);
+    } catch (e) { console.error("Claim expeditions error", e); }
+  };
+
+  const handleAcceptQuest = async (title: string) => {
+    if (!currentSession) return;
+    sendMessage(`[ACCEPT QUEST] Партия принимает квест «${title}». Отметь его status 'active' в quests (dashboard_json) и начни сцену.`);
+  };
+
   const handleEconomy = async (action: string, charName: string, item?: string) => {
     if (!currentSession) return;
     try {
@@ -837,6 +877,11 @@ export default function App() {
         const data = await res.json();
         if (!cancelled && data?.idleGold > 0 && data.tag) {
           sendMessage(`[IDLE] ${data.tag} — опиши коротко и атмосферно (2-3 предложения), что произошло в городе, пока героев не было.`);
+        }
+        const er = await fetch(`/api/sessions/${currentSession.id}/expeditions/claim`, { method: 'POST' });
+        const ed = await er.json();
+        if (!cancelled && ed?.tag) {
+          sendMessage(`[EXPEDITION] ${ed.tag} — опиши коротко возвращение наёмников (2-3 предложения).`);
         }
       } catch (e) { console.error("Idle error", e); }
     })();
@@ -1323,6 +1368,15 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
 
       const { clean: cleanAi, changes: stateChanges } = parseStateTags(aiContent);
       const { cleanText, dashboard: aiDashboard, codexUpdates, loreUpdate, finalDraft, sessionSummary } = parseDashboard(cleanAi, currentDashboard);
+
+      // Коллекция: теги [TROPHY: Название|описание] → Зал трофеев
+      const trophyRe = /\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi;
+      let tm;
+      while ((tm = trophyRe.exec(aiContent))) {
+        const tname = tm[1].trim();
+        const tdesc = (tm[2] || '').trim();
+        if (tname) fetch(`/api/sessions/${targetSession.id}/collection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: tname, desc: tdesc }) }).catch(() => {});
+      }
 
       // State Authority: применяем теги изменений + перезаписываем числа движковыми значениями
       let authoritativeDashboard = aiDashboard;
@@ -2101,6 +2155,10 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
                     isCampaign={currentSession.mode === 'campaign'}
                     onClaimBase={(name) => handleClaimBase(name)}
                     onUpgradeBase={(building) => handleUpgradeBase(building)}
+                    onTrain={(charName) => handleTrain(charName)}
+                    onHire={(charName, tier) => handleHire(charName, tier)}
+                    onClaimExpeditions={() => handleClaimExpeditions()}
+                    onAcceptQuest={(title) => handleAcceptQuest(title)}
                     onTravel={(locId) => {
                       const loc = currentDashboard.locations?.find(l => l.id === locId);
                       if (loc) {

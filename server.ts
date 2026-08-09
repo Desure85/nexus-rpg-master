@@ -142,6 +142,14 @@ db.exec(`
     armory INTEGER DEFAULT 0,
     garden INTEGER DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS collection (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    desc TEXT DEFAULT '',
+    type TEXT DEFAULT 'trophy',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 async function startServer() {
@@ -824,6 +832,100 @@ async function startServer() {
     res.json({ status: "ok", building, level: level + 1, cost, base, tag: `[BASE: «${BASE_NAMES[building] || building}» улучшена до уровня ${level + 1} (стоимость ${cost} золота)]` });
   });
   const BASE_NAMES: Record<string, string> = { bedroom: "Спальня", treasury: "Казна", barracks: "Казарма", trophy_hall: "Зал трофеев", armory: "Оружейная", garden: "Огород" };
+
+  // --- Expeditions: наёмники приносят награды (идл-ожидание) ---
+  const EXPEDITION_TIERS: Record<string, { cost: number; hours: number; reward: number; pool: keyof typeof LOOT_POOLS; minBarracks: number }> = {
+    short: { cost: 20, hours: 0.5, reward: 35, pool: "common", minBarracks: 0 },
+    long: { cost: 50, hours: 2, reward: 90, pool: "uncommon", minBarracks: 1 },
+    deep: { cost: 100, hours: 6, reward: 200, pool: "rare", minBarracks: 2 },
+  };
+
+  app.post("/api/sessions/:id/expedition", (req, res) => {
+    const { charName, tier } = req.body || {};
+    const cfg = EXPEDITION_TIERS[tier];
+    if (!cfg) return res.status(400).json({ error: "unknown tier (short/long/deep)" });
+    const base = getBase(req.params.id);
+    const barracksLvl = Number(base.barracks || 0);
+    if (barracksLvl < cfg.minBarracks) {
+      return res.status(400).json({ error: "barracks too low", tag: `[EXPEDITION: нужна Казарма ур. ${cfg.minBarracks} для тира «${tier}» (сейчас ${barracksLvl})]` });
+    }
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const cost = Math.max(5, Math.floor(cfg.cost * (1 - 0.1 * barracksLvl)));
+    if (st.gold < cost) return res.status(400).json({ error: "not enough gold", tag: `[EXPEDITION: у ${charName} не хватает золота (${st.gold}/${cost})]` });
+    st.gold -= cost;
+    saveEngineState(req.params.id, chars);
+    const id = crypto.randomUUID();
+    const rewardItem = pickLoot(cfg.pool, 1)[0] || "";
+    db.prepare("INSERT INTO expeditions (id, session_id, char_name, hireling, tier, cost, reward_gold, reward_item, returns_at) VALUES (?,?,?,?,?,?,?,?, datetime('now', ?))")
+      .run(id, req.params.id, charName, `Наёмник «${tier}»`, tier, cost, cfg.reward, rewardItem, `+${Math.round(cfg.hours * 60)} minutes`);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", id, tag: `[EXPEDITION: наёмник ушёл в поход (${tier}, ${cfg.hours} ч). Вернётся с ~${cfg.reward}🪙${rewardItem ? ' и «' + rewardItem + '»' : ''}]` });
+  });
+
+  app.get("/api/sessions/:id/expeditions", (req, res) => {
+    res.json(db.prepare("SELECT * FROM expeditions WHERE session_id = ? AND claimed = 0 ORDER BY returns_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/expeditions/claim", (req, res) => {
+    const ready = db.prepare("SELECT * FROM expeditions WHERE session_id = ? AND claimed = 0 AND returns_at <= datetime('now')").all(req.params.id);
+    if (ready.length === 0) return res.json({ status: "ok", claimed: [] });
+    const chars = ensureEngineState(req.params.id);
+    const claimed: any[] = [];
+    for (const e of ready) {
+      const st = chars[e.char_name];
+      if (st) {
+        st.gold += e.reward_gold;
+        claimed.push({ char: e.char_name, tier: e.tier, gold: e.reward_gold, item: e.reward_item, hireling: e.hireling });
+      }
+      db.prepare("UPDATE expeditions SET claimed = 1 WHERE id = ?").run(e.id);
+    }
+    saveEngineState(req.params.id, chars);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    const tag = claimed.length
+      ? `[EXPEDITION: вернулись наёмники — ${claimed.map(c => `${c.char} +${c.gold}🪙${c.item ? ' + «' + c.item + '»' : ''}`).join("; ")}]`
+      : "";
+    res.json({ status: "ok", claimed, tag });
+  });
+
+  // --- Collection: трофеи (Зал трофеев) ---
+  app.get("/api/sessions/:id/collection", (req, res) => {
+    res.json(db.prepare("SELECT * FROM collection WHERE session_id = ? ORDER BY created_at DESC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/collection", (req, res) => {
+    const { name, desc = "", type = "trophy" } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO collection (id, session_id, name, desc, type) VALUES (?,?,?,?,?)").run(crypto.randomUUID(), req.params.id, name, desc, type);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[COLLECTION: «${name}» добавлен в коллекцию]` });
+  });
+
+  // --- Training (downtime у базы): золото -> XP ---
+  app.post("/api/sessions/:id/train", (req, res) => {
+    const { charName } = req.body || {};
+    const base = getBase(req.params.id);
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    const dash = dashIdx >= 0 ? history[dashIdx].dashboard : null;
+    const curLoc = (dash?.locations || []).find((l: any) => l.id === dash?.currentLocationId);
+    const atBase = curLoc && base.name && curLoc.name === base.name;
+    if (!atBase) return res.status(400).json({ error: "not at base", tag: `[TRAIN: тренировка — только в логове]` });
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const cost = 30;
+    if (st.gold < cost) return res.status(400).json({ error: "not enough gold", tag: `[TRAIN: у ${charName} не хватает золота (${st.gold}/${cost})]` });
+    st.gold -= cost;
+    st.xp += 20;
+    saveEngineState(req.params.id, chars);
+    if (dash) { history[dashIdx].dashboard = mergeStateIntoDashboard(dash, chars); db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id); }
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[TRAIN: ${charName} тренировался(ась) в логове — +20 XP, списано ${cost} золота]` });
+  });
 
   // --- Idle: пассивный доход, пока игрока нет ---
   app.post("/api/sessions/:id/idle", (req, res) => {
