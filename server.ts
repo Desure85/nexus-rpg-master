@@ -132,6 +132,16 @@ db.exec(`
     session_id TEXT PRIMARY KEY,
     characters TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS bases (
+    session_id TEXT PRIMARY KEY,
+    name TEXT DEFAULT '',
+    bedroom INTEGER DEFAULT 0,
+    treasury INTEGER DEFAULT 0,
+    barracks INTEGER DEFAULT 0,
+    trophy_hall INTEGER DEFAULT 0,
+    armory INTEGER DEFAULT 0,
+    garden INTEGER DEFAULT 0
+  );
 `);
 
 async function startServer() {
@@ -628,12 +638,15 @@ async function startServer() {
     };
 
     if (action === "rest") {
-      if (st.gold < REST_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${REST_COST})]` });
-      st.gold -= REST_COST;
+      const base = getBase(req.params.id);
+      const atBase = curLoc && base.name && curLoc.name === base.name;
+      const freeRest = atBase && Number(base.bedroom || 0) >= 1;
+      if (st.gold < (freeRest ? 0 : REST_COST)) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${REST_COST})]` });
+      st.gold -= freeRest ? 0 : REST_COST;
       st.hp_cur = st.hp_max;
       st.stress = Math.max(0, st.stress - 2);
       finalize();
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`, gold: st.gold });
+      return res.json({ status: "ok", tag: freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_max}, стресс -2 (бесплатно, Спальня)]` : `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`, gold: st.gold });
     }
     if (action === "inn") {
       const INN_COST = 20;
@@ -759,6 +772,59 @@ async function startServer() {
     res.json({ status: "ok", tag: c.status === "base" ? `[PARTY: ${charName} остался(ась) на базе — HP восстановлено, стресс снят]` : `[PARTY: ${charName} снова в партии]`, characters: chars });
   });
 
+  // --- Base (Логово): апгрейды за золото ---
+  const BASE_BUILDINGS = ["bedroom", "treasury", "barracks", "trophy_hall", "armory", "garden"];
+  const getBase = (sessionId: string) => {
+    const b = db.prepare("SELECT * FROM bases WHERE session_id = ?").get(sessionId);
+    return b || { session_id: sessionId, name: "", bedroom: 0, treasury: 0, barracks: 0, trophy_hall: 0, armory: 0, garden: 0 };
+  };
+
+  app.get("/api/sessions/:id/base", (req, res) => {
+    res.json(getBase(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/base/claim", (req, res) => {
+    const { name } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO bases (session_id, name) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET name=excluded.name").run(req.params.id, name);
+    // помечаем текущую локацию type='base' в dashboard
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
+    if (row) {
+      const history = JSON.parse(row.history || "[]");
+      const idx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+      if (idx >= 0) {
+        const locs = history[idx].dashboard.locations || [];
+        const loc = locs.find((l: any) => l.name === name);
+        if (loc) loc.type = "base";
+        db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      }
+    }
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", base: getBase(req.params.id), tag: `[BASE: «${name}» теперь логово партии]` });
+  });
+
+  app.post("/api/sessions/:id/base-upgrade", (req, res) => {
+    const { building } = req.body || {};
+    if (!BASE_BUILDINGS.includes(building)) return res.status(400).json({ error: "unknown building" });
+    const b = getBase(req.params.id);
+    const level = Number(b[building] || 0);
+    const cost = 60 * (level + 1);
+    const chars = ensureEngineState(req.params.id);
+    const names = Object.keys(chars);
+    if (names.length === 0) return res.status(400).json({ error: "no characters" });
+    const share = Math.ceil(cost / names.length);
+    if (names.some(n => (chars[n].gold || 0) < share)) {
+      return res.status(400).json({ error: "not enough gold", tag: `[BASE: не хватает золота на улучшение (нужно ${cost} на всех, по ${share} с героя)]` });
+    }
+    for (const n of names) chars[n].gold -= share;
+    saveEngineState(req.params.id, chars);
+    db.prepare(`INSERT INTO bases (session_id, ${building}) VALUES (?,1) ON CONFLICT(session_id) DO UPDATE SET ${building} = bases.${building} + 1`).run(req.params.id);
+    const base = getBase(req.params.id);
+    broadcastToRoom(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", building, level: level + 1, cost, base, tag: `[BASE: «${BASE_NAMES[building] || building}» улучшена до уровня ${level + 1} (стоимость ${cost} золота)]` });
+  });
+  const BASE_NAMES: Record<string, string> = { bedroom: "Спальня", treasury: "Казна", barracks: "Казарма", trophy_hall: "Зал трофеев", armory: "Оружейная", garden: "Огород" };
+
   // --- Idle: пассивный доход, пока игрока нет ---
   app.post("/api/sessions/:id/idle", (req, res) => {
     const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id);
@@ -774,7 +840,9 @@ async function startServer() {
     const hours = Math.min(12, Math.max(0, (now - last) / 3600000));
     db.prepare("INSERT INTO idle (session_id, last_seen) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(session_id) DO UPDATE SET last_seen = CURRENT_TIMESTAMP").run(req.params.id);
 
-    const idleGold = Math.floor((2 + pl * 2) * hours);
+    const base = getBase(req.params.id);
+    const treasuryLvl = Number(base.treasury || 0);
+    const idleGold = Math.floor((2 + pl * 2) * hours) + Math.floor(treasuryLvl * 2 * hours);
     const doomUp = hours >= 6 ? 1 : 0;
     let changed = false;
 
