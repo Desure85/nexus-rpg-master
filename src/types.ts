@@ -4,6 +4,12 @@ export interface CharacterAction {
   description: string;
 }
 
+export interface Ability {
+  name: string;
+  desc: string;
+  effect?: string;
+}
+
 export interface Relationship {
   target: string;
   level: number; // -10 to 10
@@ -28,6 +34,8 @@ export interface Character {
   stress: number | string;
   tokens: number;
   gold?: number;
+  xp?: number;
+  abilities?: Ability[];
   condition: string;
   goal: string;
   actions?: CharacterAction[];
@@ -46,6 +54,14 @@ export interface Clock {
   name: string;
   progress: number;
   total: number;
+}
+
+export interface Quest {
+  id: string;
+  title: string;
+  desc: string;
+  reward?: string;
+  status: 'available' | 'active' | 'done' | 'failed';
 }
 
 export interface DecisionNode {
@@ -79,6 +95,7 @@ export interface DashboardData {
   doomPool: number;
   echoes: string[];
   atmosphere: string;
+  quests?: Quest[];
   decisionTree?: DecisionNode[];
   threatLevel?: number;
   suggestedRoll?: {
@@ -107,6 +124,7 @@ export interface GameSession {
   genre: string;
   setting: string;
   style: string;
+  mode?: 'short' | 'campaign';
   snapshot: string;
   history: Message[];
   lore: string;
