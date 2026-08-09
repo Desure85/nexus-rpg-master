@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { DashboardData, MechanicConfig, Character } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch } from 'lucide-react';
+import QRCode from 'qrcode';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
 import { EquipmentVisualizer } from './EquipmentVisualizer';
@@ -18,6 +19,15 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
+  const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
+
+  const showQr = async (charName: string) => {
+    if (!sessionId) return;
+    const encodedName = encodeURIComponent(btoa(unescape(encodeURIComponent(charName))));
+    const url = `${window.location.origin}/character/${sessionId}/${encodedName}`;
+    const img = await QRCode.toDataURL(url, { width: 260, margin: 1 });
+    setQrData({ char: charName, url, img });
+  };
 
   const isMechanicEnabled = (id: string) => {
     if (!enabledMechanics) return true;
@@ -85,6 +95,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <div className="flex items-center gap-2">
                   <div className="flex flex-col items-end">
                     <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => showQr(char.name)}
+                        className="p-1 hover:bg-white/10 rounded text-white/20 hover:text-amber-400 transition-all"
+                        title="Show QR to connect a player"
+                      >
+                        <QrCode size={12} />
+                      </button>
                       <button 
                         onClick={async () => {
                           if (!sessionId) return;
@@ -1247,6 +1264,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           </p>
         </div>
       </section>
+
+      {qrData && (
+        <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setQrData(null)}>
+          <div className="bg-[#14100d] border border-white/10 rounded-2xl p-6 max-w-xs w-full text-center space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-white">Подключить игрока: {qrData.char}</h3>
+            <img src={qrData.img} alt="QR" className="mx-auto rounded-xl bg-white p-2" />
+            <p className="text-[10px] text-white/40 break-all">{qrData.url}</p>
+            <button
+              onClick={() => { navigator.clipboard.writeText(qrData.url); }}
+              className="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[10px] font-bold uppercase tracking-widest text-white transition-all"
+            >
+              Копировать ссылку
+            </button>
+            <button onClick={() => setQrData(null)} className="w-full py-2 text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white transition-all">
+              Закрыть
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

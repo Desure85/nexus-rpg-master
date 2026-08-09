@@ -130,5 +130,6 @@ export interface AppSettings {
   fontSize: number;
   fontFamily: 'sans' | 'serif' | 'mono';
   loggingEnabled: boolean;
+  idlePlayerAction?: 'random' | 'skip' | 'gm';
   mechanics?: MechanicConfig[];
 }

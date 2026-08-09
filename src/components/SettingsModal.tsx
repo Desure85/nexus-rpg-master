@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppSettings } from '../types';
-import { X, Save, Globe, Key, Cpu, Terminal, Type, Database, Copy, Check, RotateCcw, AlertTriangle } from 'lucide-react';
+import { X, Save, Globe, Key, Cpu, Terminal, Type, Database, Copy, Check, RotateCcw, AlertTriangle, Users } from 'lucide-react';
 import { SYSTEM_PROMPT } from '../App';
 import { GoogleGenAI } from "@google/genai";
 
@@ -390,6 +390,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
             </div>
           ) : activeTab === 'mechanics' ? (
             <div className="space-y-4 h-full flex flex-col overflow-y-auto custom-scrollbar pr-2">
+              <div className="p-4 bg-black/40 border border-white/10 rounded-xl space-y-3">
+                <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                  <Users size={12} /> Игрок не успел отправить действие
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setLocalSettings({ ...localSettings, idlePlayerAction: 'random' })}
+                    className={`flex-1 py-2.5 rounded-lg border text-xs font-bold transition-all ${localSettings.idlePlayerAction !== 'skip' && localSettings.idlePlayerAction !== 'gm' ? 'bg-white text-black border-white' : 'bg-black/40 text-white/60 border-white/10 hover:border-white/30'}`}
+                  >
+                    Случайно
+                  </button>
+                  <button
+                    onClick={() => setLocalSettings({ ...localSettings, idlePlayerAction: 'skip' })}
+                    className={`flex-1 py-2.5 rounded-lg border text-xs font-bold transition-all ${localSettings.idlePlayerAction === 'skip' ? 'bg-white text-black border-white' : 'bg-black/40 text-white/60 border-white/10 hover:border-white/30'}`}
+                  >
+                    Не действует
+                  </button>
+                  <button
+                    onClick={() => setLocalSettings({ ...localSettings, idlePlayerAction: 'gm' })}
+                    className={`flex-1 py-2.5 rounded-lg border text-xs font-bold transition-all ${localSettings.idlePlayerAction === 'gm' ? 'bg-white text-black border-white' : 'bg-black/40 text-white/60 border-white/10 hover:border-white/30'}`}
+                  >
+                    Играет ГМ
+                  </button>
+                </div>
+                <p className="text-[10px] text-white/30 italic">
+                  Если игрок не успел: «Случайно» — персонаж действует по обстоятельствам; «Не действует» — пропускает ход; «Играет ГМ» — ты сам вписываешь ход за персонажа (соло-плей).
+                </p>
+              </div>
               <p className="text-[10px] text-white/40 uppercase tracking-widest font-bold mb-2">Game Mechanics</p>
               {(localSettings.mechanics || []).map((mechanic, index) => (
                 <div key={mechanic.id} className="p-4 bg-black/40 border border-white/10 rounded-xl space-y-3">

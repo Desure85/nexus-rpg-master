@@ -19,6 +19,55 @@ export const CharacterView: React.FC = () => {
   const [fontSize, setFontSize] = useState(16);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
+  // --- Multiplayer: claim (закрепление персонажа за игроком) ---
+  const deviceId = React.useMemo(() => {
+    let id = localStorage.getItem('nexus_device_id');
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('nexus_device_id', id); }
+    return id;
+  }, []);
+  const [claimState, setClaimState] = useState<'loading' | 'unclaimed' | 'pending' | 'approved' | 'rejected' | 'other'>('loading');
+  const [claimOwner, setClaimOwner] = useState('');
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem('nexus_player_name') || '');
+  const [myPending, setMyPending] = useState(false);
+
+  const fetchPending = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/pending`);
+      const pending = await res.json();
+      setMyPending(pending.some((p: any) => p.char_name === charName));
+    } catch (e) { console.error("Pending fetch error", e); }
+  };
+
+  const fetchClaims = async () => {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/claims`);
+      const claims = await res.json();
+      const mine = claims.filter((c: any) => c.char_name === charName).sort((a: any, b: any) => a.created_at.localeCompare(b.created_at));
+      const mineByDevice = mine.find((c: any) => c.device_id === deviceId);
+      const others = mine.filter((c: any) => c.device_id !== deviceId && c.status === 'approved');
+      if (mineByDevice?.status === 'approved') { setClaimState('approved'); }
+      else if (mineByDevice?.status === 'pending') { setClaimState('pending'); }
+      else if (mineByDevice?.status === 'rejected') { setClaimState('rejected'); }
+      else if (others.length > 0) { setClaimState('other'); setClaimOwner(others[0].player_name); }
+      else { setClaimState('unclaimed'); }
+    } catch (e) { console.error("Claims fetch error", e); }
+  };
+
+  const submitClaim = async () => {
+    const name = playerName.trim();
+    if (!name) return;
+    localStorage.setItem('nexus_player_name', name);
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ charName, playerName: name, deviceId })
+      });
+      const data = await res.json();
+      if (data.status === 'pending' || data.status === 'approved') { setClaimState(data.status); }
+    } catch (e) { console.error("Claim error", e); }
+  };
+
   // Decode character name safely (handle both Base64 and legacy URI encoded)
   const charName = React.useMemo(() => {
     if (!rawCharName) return '';
@@ -69,6 +118,8 @@ export const CharacterView: React.FC = () => {
   useEffect(() => {
     fetchData();
     fetchSettings();
+    fetchClaims();
+    fetchPending();
 
     let socket: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout;
@@ -87,6 +138,10 @@ export const CharacterView: React.FC = () => {
         if (data.type === 'update') {
           console.log('CharacterView received update');
           fetchData();
+        }
+        if (data.type === 'claims_changed' || data.type === 'actions_changed') {
+          fetchClaims();
+          fetchPending();
         }
       };
 
@@ -129,41 +184,25 @@ export const CharacterView: React.FC = () => {
     }
   };
 
-  const hasActed = React.useMemo(() => {
-    if (!session || session.history.length === 0) return false;
-    const lastMsg = session.history[session.history.length - 1];
-    if (lastMsg.role === 'assistant') return false;
-    // If the last message is from a user, check if it's from THIS character
-    if (lastMsg.role === 'user' && (lastMsg.content || '').includes(`[PLAYER ACTION: ${charName}]`)) {
-      return true;
-    }
-    // If it's from another user, we still let this player act (concurrent actions)
-    // Actually, if the DM hasn't responded, maybe we block? Let's just block if THIS player has acted since the DM's last response.
-    // Let's find the last assistant message index
-    const lastAssistantIdx = session.history.map(m => m.role).lastIndexOf('assistant');
-    const messagesSinceDM = session.history.slice(lastAssistantIdx + 1);
-    return messagesSinceDM.some(m => (m.content || '').includes(`[PLAYER ACTION: ${charName}]`));
-  }, [session, charName]);
+  const hasActed = React.useMemo(() => myPending, [myPending]);
 
   const sendAction = async (actionText: string = actionInput) => {
-    if (!actionText.trim() || !session || isSending || hasActed) return;
+    if (!actionText.trim() || !session || isSending || hasActed || claimState !== 'approved') return;
     setIsSending(true);
     try {
-      const actionMsg = `[PLAYER ACTION: ${charName}] ${actionText}`;
-      const updatedHistory = [...session.history, { role: 'user', content: actionMsg }];
-      
-      await fetch('/api/sessions', {
+      const res = await fetch(`/api/sessions/${sessionId}/actions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...session,
-          history: JSON.stringify(updatedHistory),
-          codex: JSON.stringify(session.codex)
-        })
+        body: JSON.stringify({ charName, deviceId, action: actionText })
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'action rejected');
+      }
       setActionInput('');
     } catch (e) {
       console.error("Send error", e);
+      alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
@@ -178,6 +217,58 @@ export const CharacterView: React.FC = () => {
         <p className="text-white/60 italic">
           {session ? `Character "${charName}" not found in this session.` : "Loading character data..."}
         </p>
+      </div>
+    );
+  }
+
+  if (claimState !== 'approved') {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center bg-[#0a0502] text-white p-6">
+        <div className="max-w-sm w-full text-center space-y-6">
+          <div>
+            <h1 className="text-3xl font-display font-bold tracking-tighter">{charName}</h1>
+            <p className="text-white/40 text-[10px] mt-1 uppercase tracking-widest">Подключение к сессии</p>
+          </div>
+          {claimState === 'loading' && (
+            <div className="flex justify-center"><div className="animate-spin rounded-full h-8 w-8 border-t-2 border-amber-400" /></div>
+          )}
+          {(claimState === 'unclaimed' || claimState === 'rejected') && (
+            <div className="space-y-4">
+              {claimState === 'rejected' && (
+                <p className="text-sm text-red-400">Мастер отклонил предыдущую заявку. Попробуй снова.</p>
+              )}
+              <p className="text-sm text-white/60 leading-relaxed">
+                Чтобы играть этим персонажем — назови себя. Мастер подтвердит заявку.
+              </p>
+              <input
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="Твоё имя"
+                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 transition-all text-center"
+              />
+              <button
+                onClick={submitClaim}
+                disabled={!playerName.trim()}
+                className="w-full py-3 bg-amber-400 text-black rounded-xl font-bold hover:bg-amber-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                Запросить персонажа
+              </button>
+            </div>
+          )}
+          {claimState === 'pending' && (
+            <div className="space-y-3">
+              <p className="text-amber-400 text-sm font-bold animate-pulse">Заявка отправлена</p>
+              <p className="text-sm text-white/50">Ждём, пока Мастер подтвердит, что ты играешь {charName}.</p>
+            </div>
+          )}
+          {claimState === 'other' && (
+            <div className="space-y-3">
+              <p className="text-sm text-white/50">Этот персонаж уже занят игроком</p>
+              <p className="text-amber-400 font-bold text-lg">«{claimOwner}»</p>
+              <p className="text-xs text-white/30">Попроси Мастера освободить персонажа или выбери другого.</p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -336,7 +427,7 @@ export const CharacterView: React.FC = () => {
                 </div>
                 {hasActed && (
                   <p className="text-xs text-emerald-400 text-center animate-pulse">
-                    Action submitted. Waiting for Master's response...
+                    Действие отправлено Мастеру. Ждём его решения...
                   </p>
                 )}
               </section>
