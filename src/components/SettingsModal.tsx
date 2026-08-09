@@ -108,6 +108,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
                   >
                     OpenRouter
                   </button>
+                  <button
+                    onClick={() => setLocalSettings({ ...localSettings, provider: 'opencode' })}
+                    className={`flex-1 py-3 rounded-xl border transition-all text-sm font-bold ${localSettings.provider === 'opencode' ? 'bg-white text-black border-white' : 'bg-black/40 text-white/60 border-white/10 hover:border-white/30'}`}
+                  >
+                    OpenCode
+                  </button>
                 </div>
               </div>
 
@@ -479,7 +485,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, onSave, 
               <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
                 {logs.length === 0 ? (
                   <div className="text-white/40 text-sm text-center py-10">No logs found. Ensure logging is enabled in Model & Provider.</div>
-                ) : (
+              ) : localSettings.provider === 'opencode' ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                    <p className="text-xs text-emerald-200/80 leading-relaxed">
+                      Подключён сервер OpenCode (подписка). Запросы идут через локальный прокси
+                      <code className="bg-black/40 px-1 rounded ml-1">/api/chat</code> на этом же сервере —
+                      ключ хранится на сервере, в браузер не попадает.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                      <Cpu size={12} /> Модель (OpenCode)
+                    </label>
+                    <select
+                      value={localSettings.modelName === 'local-model' ? 'deepseek-v4-flash' : localSettings.modelName}
+                      onChange={(e) => setLocalSettings({ ...localSettings, modelName: e.target.value })}
+                      className="w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white focus:outline-none focus:border-white/30 transition-all font-mono text-sm appearance-none"
+                    >
+                      <option value="glm-5.2">glm-5.2 (чистый нарратив, рекоменд.)</option>
+                      <option value="deepseek-v4-flash">deepseek-v4-flash (быстро)</option>
+                      <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                      <option value="kimi-k2.6">kimi-k2.6</option>
+                      <option value="qwen3.7-plus">qwen3.7-plus</option>
+                      <option value="minimax-m3">minimax-m3</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
                   logs.map(log => (
                     <div key={log.id} className="bg-black/40 p-3 rounded-xl border border-white/10">
                       <div className="text-[10px] text-white/40 mb-2 font-mono">

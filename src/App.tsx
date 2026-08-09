@@ -691,6 +691,21 @@ export default function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(`OpenRouter Error: ${data.error?.message || response.statusText}`);
       return data.choices?.[0]?.message?.content || '';
+    } else if (settings.provider === 'opencode') {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system: "Ты креативный помощник для настольных ролевых игр. Отвечай кратко, емко и атмосферно.",
+          prompt
+        })
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(`OpenCode Error: ${data.error || response.statusText}`);
+      }
+      const data = await response.json();
+      return data.text || '';
     } else {
       const baseUrl = settings.modelUrl.replace(/\/$/, '');
       const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -958,6 +973,23 @@ ${setup.characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина'
         
         if (!aiContent) {
           throw new Error("OpenRouter returned empty response or invalid format.");
+        }
+      } else if (settings.provider === 'opencode') {
+        const promptText = contextWindow.map(m => `${m.role === 'user' ? 'Игрок' : 'Мастер'}: ${m.content}`).join('\n\n');
+        logRequest = { system: fullSystemPrompt, prompt: promptText };
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ system: fullSystemPrompt, prompt: promptText })
+        });
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(`OpenCode Error: ${data.error || response.statusText}`);
+        }
+        const data = await response.json();
+        aiContent = data.text;
+        if (!aiContent) {
+          throw new Error("OpenCode returned empty response.");
         }
       } else {
         const messages = [
