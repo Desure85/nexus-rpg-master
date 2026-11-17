@@ -172,3 +172,21 @@ export interface AppSettings {
   idlePlayerAction?: 'random' | 'skip' | 'gm';
   mechanics?: MechanicConfig[];
 }
+
+export type WorkspaceRole = 'owner' | 'admin' | 'gm';
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  status: 'active' | 'suspended';
+  role?: WorkspaceRole;
+  credits: number;
+  plan: 'free' | 'pro';
+  planExpiresAt?: string | null;
+  limits: { title: string; maxSessions: number; maxHeroes: number; maxPlayers: number };
+  ai: { mode: 'platform' | 'byok'; provider: string; model: string; url: string; key: string; providers: string[] };
+  platformAi: { available: boolean; provider: string };
+  payments: 'none' | 'yookassa' | 'mock';
+}
+
+export interface CurrentUser { id: string; email: string; name: string; isSuperadmin: boolean }

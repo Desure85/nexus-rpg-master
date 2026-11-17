@@ -13,3 +13,4 @@ game.db
 game.db-*
 data/
 exports/
+eval-report.md

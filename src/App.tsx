@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
 import { SettingsModal } from './components/SettingsModal';
@@ -8,13 +8,16 @@ import { Codex } from './components/Codex';
 import { CharacterView } from './components/CharacterView';
 import { PromptModal } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
-import { GameSession, AppSettings, Message, DashboardData, MechanicConfig, stressValue } from './types';
+import { GameSession, AppSettings, Message, DashboardData, MechanicConfig, stressValue, WorkspaceInfo, CurrentUser } from './types';
 import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users, Award, Share2, Swords, Feather } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_MECHANICS, SYSTEM_PROMPT, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
 import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
-import { api, ApiError, useSessionSocket, characterLink, setAccessCode, type SocketEvent } from './api';
-import { customPrompt } from './components/PromptModal';
+import { api, ApiError, useSessionSocket, characterLink, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
+import { AuthScreen } from './components/AuthScreen';
+import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
+import { AdminPanel } from './components/AdminPanel';
+import { customPrompt, customConfirm } from './components/PromptModal';
 
 export { DEFAULT_MECHANICS, SYSTEM_PROMPT };
 
@@ -22,12 +25,29 @@ export { DEFAULT_MECHANICS, SYSTEM_PROMPT };
 interface SessionListItem { id: string; name: string; mode?: string; setting?: string; updated_at: string; turns?: number; busy?: boolean }
 
 interface ServerConfig {
-  adminConfigured: boolean;
-  isAdmin: boolean;
-  accessCodeRequired: boolean;
-  hasAccess: boolean;
+  registration: 'open' | 'invite' | 'closed';
+  payments: 'none' | 'yookassa' | 'mock';
   llm: { provider: string; forcedByEnv: boolean; keyPresent: boolean };
 }
+
+/** Приглашение мастера в пространство: /invite/:token */
+const InviteRoute: React.FC<{ user: CurrentUser | null; registration: ServerConfig['registration']; onAccepted: (wid?: string) => void }> = ({ user, registration, onAccepted }) => {
+  const { token = '' } = useParams();
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!user) return;
+    api<{ workspaceId: string }>(`/api/invites/${token}/accept`, { body: {} })
+      .then(r => { onAccepted(r.workspaceId); navigate('/', { replace: true }); })
+      .catch(e => setError(e instanceof Error ? e.message : 'Ошибка'));
+  }, [user, token]);
+  if (!user) return <AuthScreen registration={registration} inviteToken={token} onDone={() => onAccepted()} />;
+  return (
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center gap-4 bg-[#0a0502] text-white/60 text-sm">
+      {error ? <><p className="text-red-400">{error}</p><button onClick={() => navigate('/')} className="underline">На главную</button></> : <Loader2 className="animate-spin" />}
+    </div>
+  );
+};
 
 const APPEARANCE_KEY = 'nexus_appearance';
 const loadAppearance = (): { fontSize: number; fontFamily: 'sans' | 'serif' | 'mono' } => {
@@ -40,6 +60,14 @@ const loadAppearance = (): { fontSize: number; fontFamily: 'sans' | 'serif' | 'm
 const TALE_END_COMMAND = '[TALE_END] Заверши сказку этой главой: счастливый (или светлый) конец.';
 
 export default function App() {
+  const [authState, setAuthState] = useState<'loading' | 'anon' | 'ready'>('loading');
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  const [workspaceId, setWorkspaceId] = useState<string>(getSavedWorkspace());
+  const [wsModal, setWsModal] = useState<WorkspaceTab | null>(null);
+  const [adminView, setAdminView] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [turnErrorCode, setTurnErrorCode] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [currentSession, setCurrentSession] = useState<GameSession | null>(null);
   const [isSettingUp, setIsSettingUp] = useState(false);
@@ -99,8 +127,51 @@ export default function App() {
   };
 
   // ------------------------------ загрузка ------------------------------
-  const fetchSessions = async () => {
-    try { setSessions(await api<SessionListItem[]>('/api/sessions')); } catch (e) { console.error('sessions', e); }
+  const workspace = workspaces.find(w => w.id === workspaceId) || workspaces[0] || null;
+  const workspaceIdRef = useRef<string | null>(null);
+  workspaceIdRef.current = workspace?.id || null;
+
+  const showToast = (text: string) => { setToast(text); setTimeout(() => setToast(null), 5000); };
+
+  /** Кто я и в каких пространствах. */
+  const loadMe = async (preferWs?: string) => {
+    try {
+      const me = await api<{ user: CurrentUser; workspaces: WorkspaceInfo[] }>('/api/auth/me');
+      setUser(me.user);
+      setWorkspaces(me.workspaces);
+      const wanted = preferWs || workspaceIdRef.current || getSavedWorkspace();
+      const ws = me.workspaces.find(w => w.id === wanted) || me.workspaces[0];
+      if (ws) { setWorkspaceId(ws.id); saveWorkspace(ws.id); }
+      setAuthState('ready');
+      return me;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) { setUser(null); setAuthState('anon'); }
+      else { console.error('me', e); setAuthState('anon'); }
+      return null;
+    }
+  };
+
+  const switchWorkspace = (id: string) => {
+    setWorkspaceId(id);
+    saveWorkspace(id);
+    setCurrentSession(null);
+    setAdminView(false);
+    localStorage.removeItem('nexus_last_session');
+  };
+
+  const fetchSessions = async (wid = workspaceIdRef.current) => {
+    if (!wid) return;
+    try { setSessions(await api<SessionListItem[]>(`/api/workspaces/${wid}/sessions`)); } catch (e) { console.error('sessions', e); }
+  };
+
+  const logout = async () => {
+    await api('/api/auth/logout', { body: {} }).catch(() => undefined);
+    setUser(null);
+    setWorkspaces([]);
+    setCurrentSession(null);
+    setSessions([]);
+    setIsSettingsOpen(false);
+    setAuthState('anon');
   };
 
   const loadSessionById = async (id: string) => {
@@ -131,15 +202,37 @@ export default function App() {
       }));
     } catch (e) { console.error('settings', e); }
     try { setServerConfig(await api<ServerConfig>('/api/config')); } catch (e) { console.error('config', e); }
+    if (workspaceIdRef.current) loadMe(workspaceIdRef.current).catch(() => undefined);
   };
 
   useEffect(() => {
-    fetchSessions();
+    onUnauthorized(() => { setUser(null); setAuthState('anon'); });
+    api<ServerConfig>('/api/config').then(setServerConfig).catch(() => undefined);
+    loadMe();
+    return () => onUnauthorized(null);
+  }, []);
+
+  useEffect(() => {
+    if (authState !== 'ready') return;
     fetchSettings();
+    // возврат с оплаты: перепроверяем платёж и показываем результат
+    const params = new URLSearchParams(window.location.search);
+    const pid = params.get('payment');
+    if (pid && workspaceIdRef.current) {
+      window.history.replaceState(null, '', window.location.pathname);
+      api<any>(`/api/workspaces/${workspaceIdRef.current}/payments/${pid}/refresh`, { body: {} })
+        .then(p => { showToast(p.status === 'succeeded' ? `Оплата прошла: +${p.credits} кредитов` : p.status === 'pending' ? 'Платёж ещё обрабатывается — баланс обновится автоматически' : 'Оплата не завершена'); loadMe(); })
+        .catch(() => undefined);
+    }
+  }, [authState]);
+
+  useEffect(() => {
+    if (authState !== 'ready' || !workspace?.id) return;
+    fetchSessions(workspace.id);
     // восстановить последнюю открытую сессию
     const last = localStorage.getItem('nexus_last_session');
-    if (last) loadSessionById(last).catch(() => localStorage.removeItem('nexus_last_session'));
-  }, []);
+    if (last && !currentSession) loadSessionById(last).catch(() => localStorage.removeItem('nexus_last_session'));
+  }, [authState, workspace?.id]);
 
   useEffect(() => {
     if (currentSession?.id) localStorage.setItem('nexus_last_session', currentSession.id);
@@ -174,6 +267,8 @@ export default function App() {
       case 'turn_error':
         setStreamingText(null);
         setTurnError(e.error);
+        setTurnErrorCode(e.code || null);
+        if (e.code === 'insufficient_credits') loadMe();
         break;
       case 'update':
         loadSessionById(id).catch(() => undefined);
@@ -241,19 +336,6 @@ export default function App() {
       setSessions(prev => prev.filter(s => s.id !== id));
       if (currentSession?.id === id) { setCurrentSession(null); localStorage.removeItem('nexus_last_session'); }
     } catch (e) { reportError(e, 'Не удалось удалить'); }
-  };
-
-  /** Выполняет запрос мастера; при отсутствии кода доступа спрашивает его и повторяет. */
-  const withAccess = async <T,>(fn: () => Promise<T>): Promise<T> => {
-    try {
-      return await fn();
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'access_code_required') {
-        const code = await customPrompt('Сервер закрыт кодом доступа. Введите код мастера:');
-        if (code) { setAccessCode(code); return await fn(); }
-      }
-      throw e;
-    }
   };
 
   const fetchPanels = async () => {
@@ -396,14 +478,15 @@ export default function App() {
   };
 
   const generateIdea = async (prompt: string): Promise<string> => {
-    const data = await withAccess(() => api<{ text: string }>('/api/generate', { body: { prompt } }));
+    const data = await api<{ text: string }>('/api/generate', { body: { prompt, workspaceId: workspace?.id } });
     return data.text || '';
   };
 
   const handleStartAdventure = async (setup: SetupData) => {
     try {
-      const created = await withAccess(() => api<GameSession>('/api/sessions', {
+      const created = await api<GameSession>('/api/sessions', {
         body: {
+          workspaceId: workspace?.id,
           setup,
           config: {
             mechanics: settings.mechanics,
@@ -412,7 +495,7 @@ export default function App() {
             autoApprove: setup.autoApprove,
           },
         },
-      }));
+      });
       currentIdRef.current = created.id;
       setCurrentSession(created);
       setIsSettingUp(false);
@@ -422,6 +505,10 @@ export default function App() {
       if (setup.multiplayer) { setRightPanelTab('players'); }
       fetchSessions();
     } catch (e) {
+      if (e instanceof ApiError && (e.code === 'insufficient_credits' || e.code === 'plan_limit')) {
+        if (await customConfirm(`${e.message}\n\nОткрыть баланс пространства?`)) setWsModal('billing');
+        return;
+      }
       reportError(e, 'Не удалось начать игру');
     }
   };
@@ -685,10 +772,29 @@ export default function App() {
 
   const currentDashboard = currentSession?.history.slice().reverse().find(m => m.dashboard)?.dashboard || INITIAL_DASHBOARD;
 
+  const createWorkspace = async () => {
+    const name = await customPrompt('Название нового пространства (клуб, семья, команда):');
+    if (!name?.trim()) return;
+    try {
+      const ws = await api<WorkspaceInfo>('/api/workspaces', { body: { name: name.trim() } });
+      await loadMe(ws.id);
+      switchWorkspace(ws.id);
+    } catch (e) { reportError(e); }
+  };
+
+  const gate = (node: React.ReactNode) =>
+    authState === 'loading' ? (
+      <div className="h-[100dvh] flex items-center justify-center bg-[#0a0502]"><Loader2 className="animate-spin text-white/40" /></div>
+    ) : authState === 'anon' ? (
+      <AuthScreen registration={serverConfig?.registration || 'open'} onDone={() => loadMe()} />
+    ) : node;
+
   return (
     <Routes>
       <Route path="/character/:sessionId/:charName" element={<CharacterView />} />
-      <Route path="/" element={
+      <Route path="/invite/:token" element={authState === 'loading' ? gate(null) : <InviteRoute user={user} registration={serverConfig?.registration || 'open'} onAccepted={(wid) => loadMe(wid)} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/" element={gate(
         <div className="flex h-screen h-[100dvh] bg-[#0a0502] overflow-hidden relative">
       {/* Mobile Sidebar Overlay */}
       <AnimatePresence>
@@ -721,11 +827,20 @@ export default function App() {
             setIsSettingsOpen(true);
             setIsSidebarOpen(false);
           }}
+          user={user}
+          workspaces={workspaces}
+          workspace={workspace}
+          onSwitchWorkspace={(id) => { switchWorkspace(id); setIsSidebarOpen(false); }}
+          onCreateWorkspace={createWorkspace}
+          onOpenWorkspace={(tab) => { setWsModal(tab || 'members'); setIsSidebarOpen(false); }}
+          onOpenAdmin={() => { setAdminView(true); setCurrentSession(null); setIsSettingUp(false); setIsSidebarOpen(false); }}
         />
       </div>
 
       <main className="flex-1 flex flex-col relative min-w-0">
-        {isSettingUp ? (
+        {adminView && user?.isSuperadmin ? (
+          <AdminPanel settings={settings} serverLlm={serverConfig?.llm || null} onBack={() => setAdminView(false)} onSettingsSaved={fetchSettings} />
+        ) : isSettingUp ? (
           <div className="flex-1 flex items-center justify-center p-4 bg-[#0a0502] overflow-y-auto">
             <SessionSetup
               preset={setupPreset}
@@ -908,6 +1023,9 @@ export default function App() {
                     <span><b>Мастер не смог ответить.</b> {turnError}</span>
                     {currentSession.isOwner && (
                       <div className="flex gap-2">
+                        {turnErrorCode === 'insufficient_credits' && (
+                          <button onClick={() => setWsModal('billing')} className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-lg text-xs font-bold uppercase tracking-widest text-emerald-300">Пополнить</button>
+                        )}
                         <button onClick={() => sendMessage('')} className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-xs font-bold uppercase tracking-widest">Повторить</button>
                         <button onClick={() => setTurnError(null)} className="px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs font-bold uppercase tracking-widest">Скрыть</button>
                       </div>
@@ -1430,7 +1548,7 @@ export default function App() {
             
             {serverConfig && !serverConfig.llm.keyPresent && (
               <div className="max-w-xl mx-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-200/80">
-                ИИ-провайдер «{serverConfig.llm.provider}» не настроен: нет ключа на сервере. {serverConfig.isAdmin ? 'Откройте настройки → Модель.' : 'Попросите администратора сервера добавить ключ.'}
+                ИИ-провайдер «{serverConfig.llm.provider}» не настроен: нет ключа на сервере. {user?.isSuperadmin ? 'Откройте Администрирование → ИИ платформы.' : 'Подключите свой ключ ИИ в настройках пространства или попросите администратора.'}
               </div>
             )}
 
@@ -1470,11 +1588,10 @@ export default function App() {
       {isSettingsOpen && (
         <SettingsModal
           settings={effectiveSettings}
-          canEditGlobal={canEditGlobal}
           sessionName={currentSession?.isOwner ? currentSession.name : undefined}
-          serverConfig={serverConfig}
+          user={user}
           onSave={handleSaveSettings}
-          onAdminTokenChanged={fetchSettings}
+          onLogout={logout}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
@@ -1527,6 +1644,20 @@ export default function App() {
       </AnimatePresence>
 
       <PromptModal />
+
+      {wsModal && workspace && user && (
+        <WorkspaceModal
+          workspace={workspace}
+          user={user}
+          initialTab={wsModal}
+          onChanged={() => loadMe(workspace.id)}
+          onClose={() => { setWsModal(null); loadMe(workspace.id); }}
+        />
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[10000] px-5 py-3 bg-emerald-600 text-white rounded-xl shadow-2xl text-sm font-medium">{toast}</div>
+      )}
 
       {showTaleBook && currentSession && isTale && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm" onClick={() => setShowTaleBook(false)}>
@@ -1581,7 +1712,7 @@ export default function App() {
         </div>
       )}
     </div>
-    } />
+    )} />
     </Routes>
   );
 }

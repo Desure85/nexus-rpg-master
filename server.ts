@@ -14,8 +14,8 @@ async function main() {
     staticDir: isProd ? path.resolve(process.env.STATIC_DIR || "dist") : undefined,
   });
 
-  if (!process.env.ADMIN_TOKEN) {
-    console.warn("[nexus] ADMIN_TOKEN не задан: настройки ИИ может менять любой посетитель. Для публичного сервера задайте ADMIN_TOKEN.");
+  if (isProd && !process.env.APP_SECRET) {
+    console.warn("[nexus] APP_SECRET не задан — ключ шифрования хранится в data/secret.key. Для прода задайте APP_SECRET.");
   }
 
   server.listen(PORT, HOST, () => console.log(`[nexus] сервер запущен: http://localhost:${PORT} (${isProd ? "production" : "development"})`));
