@@ -2,19 +2,28 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Wand2, Swords, UserPlus, Trash2, X, Sparkles } from 'lucide-react';
 
+export type SessionMode = 'short' | 'campaign' | 'tale';
+
 export interface SetupData {
   setting: string;
   plotHook: string;
   style: string;
-  mode: 'short' | 'campaign';
+  mode: SessionMode;
   characters: { id: string; name: string; concept: string; gender: string }[];
+  multiplayer?: boolean;
+  autoApprove?: boolean;
+  tale?: { age: string; chapters: number; moral?: string };
 }
 
 interface Props {
-  onStart: (data: SetupData) => void;
+  preset?: { mode: SessionMode; multiplayer: boolean };
+  taleAges?: { id: string; name: string; desc: string }[];
+  onStart: (data: SetupData) => void | Promise<void>;
   onCancel: () => void;
   onGenerate: (prompt: string) => Promise<string>;
 }
+
+const TALE_SETTINGS = ["Волшебный лес", "Подводное царство", "Город игрушек", "Облачное королевство", "Зимняя сказка", "Космос и звёзды"];
 
 const PREDEFINED_SETTINGS = [
   "Dark Fantasy", "Cyberpunk", "Space Opera", "Post-Apocalyptic", "Victorian Horror", "Weird West"
@@ -27,11 +36,18 @@ const GAME_STYLES = [
   { id: 'fairytale', name: 'Сказка для детей', desc: 'Добрая, волшебная атмосфера. Без жестокости и мрака. Фокус на дружбе и чудесах.' },
 ];
 
-export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate }) => {
+export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, onCancel, onGenerate }) => {
   const [setting, setSetting] = useState('');
   const [plotHook, setPlotHook] = useState('');
-  const [style, setStyle] = useState('balanced');
-  const [mode, setMode] = useState<'short' | 'campaign'>('short');
+  const [mode, setMode] = useState<SessionMode>(preset?.mode || 'short');
+  const [style, setStyle] = useState(preset?.mode === 'tale' ? 'fairytale' : 'balanced');
+  const [multiplayer, setMultiplayer] = useState(!!preset?.multiplayer);
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [taleAge, setTaleAge] = useState('6-8');
+  const [taleChapters, setTaleChapters] = useState(6);
+  const [taleMoral, setTaleMoral] = useState('');
+  const [isStarting, setIsStarting] = useState(false);
+  const isTale = mode === 'tale';
   const [characters, setCharacters] = useState<{ id: string; name: string; concept: string; gender: string }[]>([
     { id: Date.now().toString() + Math.random().toString(), name: '', concept: '', gender: 'М' }
   ]);
@@ -44,7 +60,9 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
   const handleGenSetting = async () => {
     setIsGenSetting(true);
     try {
-      const basePrompt = "Придумай короткий, необычный и атмосферный сеттинг для НРИ (1-2 предложения).";
+      const basePrompt = isTale
+        ? `Придумай волшебный мир для сказки (1-2 предложения) для слушателей ${taleAge === 'adult' ? 'взрослых' : `${taleAge} лет`}.`
+        : "Придумай короткий, необычный и атмосферный сеттинг для НРИ (1-2 предложения).";
       const userPrompt = settingPrompt.trim() ? ` Направление/идея от игрока: "${settingPrompt}".` : "";
       const res = await onGenerate(basePrompt + userPrompt);
       setSetting(res.replace(/["*]/g, ''));
@@ -59,7 +77,9 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
   const handleGenPlot = async () => {
     setIsGenPlot(true);
     try {
-      const res = await onGenerate(`Придумай интригующую завязку сюжета (plot hook) для НРИ в сеттинге: ${setting || 'Любой'}. (1-2 предложения).`);
+      const res = await onGenerate(isTale
+        ? `Придумай завязку сказки (1-2 предложения) в мире: ${setting || 'Любой'}. Что за чудесная проблема стоит перед героями?`
+        : `Придумай интригующую завязку сюжета (plot hook) для НРИ в сеттинге: ${setting || 'Любой'}. (1-2 предложения).`);
       setPlotHook(res.replace(/["*]/g, ''));
     } catch (e) { 
       console.error(e);
@@ -82,7 +102,9 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
     const char = characters.find(c => c.id === id);
     const genderStr = char?.gender === 'Ж' ? 'Женщина' : 'Мужчина';
     try {
-      const res = await onGenerate(`Придумай имя и краткий концепт (класс/профессия/особенность) для персонажа в сеттинге: ${setting || 'Любой'}. Пол персонажа: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Гаррет: Вор-тень из трущоб"`);
+      const res = await onGenerate(isTale
+        ? `Придумай сказочного героя для мира: ${setting || 'Любой'}. Пол: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Ёжик Тимоша: Любопытный и очень храбрый"`
+        : `Придумай имя и краткий концепт (класс/профессия/особенность) для персонажа в сеттинге: ${setting || 'Любой'}. Пол персонажа: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Гаррет: Вор-тень из трущоб"`);
       
       // Clean up the response first (remove markdown bold, quotes, etc)
       const cleanRes = res.replace(/[*"']/g, '').trim();
@@ -116,17 +138,30 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
     setGenCharId(null);
   };
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!setting.trim()) {
-      alert("Пожалуйста, укажите сеттинг!");
+      alert(isTale ? "Опишите мир сказки!" : "Пожалуйста, укажите сеттинг!");
       return;
     }
-    const validChars = characters.filter(c => c.name.trim() && c.concept.trim());
+    const validChars = characters.filter(c => c.name.trim() && (isTale || c.concept.trim()));
     if (validChars.length === 0) {
-      alert("Добавьте хотя бы одного персонажа с именем и концептом!");
+      alert(isTale ? "Добавьте хотя бы одного героя сказки!" : "Добавьте хотя бы одного персонажа с именем и концептом!");
       return;
     }
-    onStart({ setting, plotHook, style, mode, characters: validChars });
+    if (new Set(validChars.map(c => c.name.trim())).size !== validChars.length) {
+      alert("Имена героев должны различаться.");
+      return;
+    }
+    setIsStarting(true);
+    try {
+      await onStart({
+        setting, plotHook, style: isTale ? 'fairytale' : style, mode, characters: validChars.map(c => ({ ...c, name: c.name.trim(), concept: c.concept.trim() })),
+        multiplayer, autoApprove,
+        tale: isTale ? { age: taleAge, chapters: taleChapters, moral: taleMoral.trim() || undefined } : undefined,
+      });
+    } finally {
+      setIsStarting(false);
+    }
   };
 
   return (
@@ -138,7 +173,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
       <div className="p-6 border-b border-white/10 flex justify-between items-center bg-white/5 shrink-0">
         <h2 className="text-xl font-display font-bold text-white flex items-center gap-2">
           <Sparkles className="text-emerald-400" size={20} />
-          Создание Кампании
+          {isTale ? 'Новая сказка' : 'Новое приключение'}
         </h2>
         <button onClick={onCancel} className="text-white/40 hover:text-white transition-colors">
           <X size={20} />
@@ -149,7 +184,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
         {/* Setting Section */}
         <section className="space-y-3">
           <div className="flex justify-between items-end">
-            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Сеттинг / Мир</label>
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Мир сказки' : 'Сеттинг / Мир'}</label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -168,7 +203,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
             </div>
           </div>
           <div className="flex flex-wrap gap-2 mb-2">
-            {PREDEFINED_SETTINGS.map(s => (
+            {(isTale ? TALE_SETTINGS : PREDEFINED_SETTINGS).map(s => (
               <button
                 key={s}
                 onClick={() => setSetting(s)}
@@ -189,7 +224,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
         {/* Plot Hook Section */}
         <section className="space-y-3">
           <div className="flex justify-between items-end">
-            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Завязка сюжета (Plot Hook)</label>
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Завязка (необязательно)' : 'Завязка сюжета (Plot Hook)'}</label>
             <button 
               onClick={handleGenPlot}
               disabled={isGenPlot}
@@ -206,60 +241,98 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
           />
         </section>
 
-        {/* Game Style Section */}
+        {/* Session Format Section */}
         <section className="space-y-3">
-          <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Стиль Игры</label>
+          <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Формат</label>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {GAME_STYLES.map(s => (
+            {([
+              { id: 'short', title: '⚡ Партия на вечер', desc: '1 сессия на 2-3 часа. Без идл-механик и базы.' },
+              { id: 'campaign', title: '🗺️ Кампания', desc: 'Много сессий: идл-доход, логово, экспедиции, долгая прокачка.' },
+              { id: 'tale', title: '📖 Сказка', desc: 'История с выборами без кубиков и цифр. В конце — книга.' },
+            ] as const).map(opt => (
               <button
-                key={s.id}
-                onClick={() => setStyle(s.id)}
-                className={`p-4 rounded-xl border text-left transition-all ${style === s.id ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
+                key={opt.id}
+                onClick={() => { setMode(opt.id); if (opt.id === 'tale') setStyle('fairytale'); else if (style === 'fairytale' && mode === 'tale') setStyle('balanced'); }}
+                className={`p-4 rounded-xl border text-left transition-all ${mode === opt.id ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
               >
-                <div className={`text-sm font-bold mb-1 ${style === s.id ? 'text-emerald-400' : 'text-white'}`}>
-                  {s.name}
-                </div>
-                <div className="text-[10px] text-white/60 leading-tight">
-                  {s.desc}
-                </div>
+                <div className={`text-sm font-bold mb-1 ${mode === opt.id ? 'text-emerald-400' : 'text-white'}`}>{opt.title}</div>
+                <div className="text-[10px] text-white/60 leading-tight">{opt.desc}</div>
               </button>
             ))}
           </div>
         </section>
 
-        {/* Session Format Section */}
-        <section className="space-y-3">
-          <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Формат партии</label>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <button
-              onClick={() => setMode('short')}
-              className={`p-4 rounded-xl border text-left transition-all ${mode === 'short' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
-            >
-              <div className={`text-sm font-bold mb-1 ${mode === 'short' ? 'text-emerald-400' : 'text-white'}`}>
-                ⚡ Партия на вечер
-              </div>
-              <div className="text-[10px] text-white/60 leading-tight">
-                1 сессия, глава укладывается в 2-3 часа. Без идл-механик, базы и долгосрочной прокачки.
-              </div>
-            </button>
-            <button
-              onClick={() => setMode('campaign')}
-              className={`p-4 rounded-xl border text-left transition-all ${mode === 'campaign' ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
-            >
-              <div className={`text-sm font-bold mb-1 ${mode === 'campaign' ? 'text-emerald-400' : 'text-white'}`}>
-                🗺️ Кампания
-              </div>
-              <div className="text-[10px] text-white/60 leading-tight">
-                Несколько сессий. Идл-доход, логово, экспедиции наёмников, долгая прогрессия.
-              </div>
-            </button>
-          </div>
+        {isTale ? (
+          <section className="space-y-4">
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Для кого сказка</label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {taleAges.map(a => (
+                <button
+                  key={a.id}
+                  onClick={() => setTaleAge(a.id)}
+                  className={`p-3 rounded-xl border text-left transition-all ${taleAge === a.id ? 'bg-amber-400/10 border-amber-400/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
+                >
+                  <div className={`text-sm font-bold ${taleAge === a.id ? 'text-amber-300' : 'text-white'}`}>{a.name}</div>
+                  <div className="text-[10px] text-white/50 leading-tight mt-1">{a.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-col md:flex-row gap-4">
+              <label className="flex-1 space-y-2">
+                <span className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Глав: {taleChapters}</span>
+                <input type="range" min={3} max={12} value={taleChapters} onChange={e => setTaleChapters(Number(e.target.value))} className="w-full accent-amber-400" />
+              </label>
+              <label className="flex-[2] space-y-2">
+                <span className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Чему научит (необязательно)</span>
+                <input value={taleMoral} onChange={e => setTaleMoral(e.target.value)} placeholder="напр. Делиться — это здорово" className="w-full bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-amber-400/50" />
+              </label>
+            </div>
+          </section>
+        ) : (
+          <section className="space-y-3">
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Стиль Игры</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {GAME_STYLES.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => setStyle(s.id)}
+                  className={`p-4 rounded-xl border text-left transition-all ${style === s.id ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-black/40 border-white/10 hover:border-white/30'}`}
+                >
+                  <div className={`text-sm font-bold mb-1 ${style === s.id ? 'text-emerald-400' : 'text-white'}`}>
+                    {s.name}
+                  </div>
+                  <div className="text-[10px] text-white/60 leading-tight">
+                    {s.desc}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Multiplayer */}
+        <section className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-2">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" className="accent-emerald-500 w-4 h-4" checked={multiplayer} onChange={e => setMultiplayer(e.target.checked)} />
+            <span className="text-sm text-white font-medium">Играть с друзьями онлайн</span>
+          </label>
+          <p className="text-[10px] text-white/40 leading-relaxed pl-7">
+            {isTale
+              ? 'Друзья откроют ссылки своих героев и будут предлагать, что делать дальше. Вы собираете их идеи и продолжаете сказку.'
+              : 'Каждый игрок получит ссылку на своего героя и будет ходить со своего устройства. Вы подтверждаете раунд — ИИ отвечает всем сразу.'}
+          </p>
+          {multiplayer && (
+            <label className="flex items-center gap-3 cursor-pointer pl-7">
+              <input type="checkbox" className="accent-emerald-500" checked={autoApprove} onChange={e => setAutoApprove(e.target.checked)} />
+              <span className="text-xs text-white/70">Пускать по ссылке без подтверждения</span>
+            </label>
+          )}
         </section>
 
         {/* Characters Section */}
         <section className="space-y-4">
           <div className="flex justify-between items-end border-b border-white/10 pb-2">
-            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">Персонажи</label>
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Герои сказки' : 'Персонажи'}</label>
             <button 
               onClick={handleAddChar}
               className="text-[10px] uppercase tracking-widest text-white/60 hover:text-white flex items-center gap-1"
@@ -298,7 +371,7 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
                       type="text"
                       value={char.concept}
                       onChange={e => setCharacters(chars => chars.map(c => c.id === char.id ? { ...c, concept: e.target.value } : c))}
-                      placeholder="Концепт (напр. Угрюмый дворф-наемник)"
+                      placeholder={isTale ? 'Какой он? (напр. Любопытный зайчонок)' : 'Концепт (напр. Угрюмый дворф-наемник)'}
                       className="flex-1 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                     />
                   </div>
@@ -330,10 +403,11 @@ export const SessionSetup: React.FC<Props> = ({ onStart, onCancel, onGenerate })
       <div className="p-6 border-t border-white/10 bg-black/40 flex justify-end shrink-0">
         <button 
           onClick={handleStart}
+          disabled={isStarting}
           className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-2 transition-all shadow-[0_0_20px_rgba(5,150,105,0.3)] hover:shadow-[0_0_30px_rgba(5,150,105,0.5)]"
         >
           <Swords size={18} />
-          Начать Приключение
+          {isStarting ? 'Начинаем...' : isTale ? 'Начать сказку' : 'Начать приключение'}
         </button>
       </div>
     </motion.div>

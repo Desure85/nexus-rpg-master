@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Dices, RotateCcw, Zap, ShieldAlert, Binary, User, Activity, Plus, Star, Flame, Users, Ghost, CheckCircle2, Info, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Character, MechanicConfig } from '../types';
+import { Character, MechanicConfig, stressValue } from '../types';
 
 export type RollType = 'classic' | 'triple' | 'shifted' | 'taint';
 
@@ -191,7 +191,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
             {characters.map(c => {
               const hasActed = !!pendingRolls[c.name];
-              const isDead = c.hp === '0' || c.stress >= 10 || c.condition?.toLowerCase().includes('мертв');
+              const isDead = c.hp === '0' || stressValue(c.stress) >= 10 || c.condition?.toLowerCase().includes('мертв');
               const isDisabled = hasActed || isDead;
               const isSelected = selectedChar === c.name;
               return (

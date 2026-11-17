@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DashboardData, MechanicConfig, Character } from '../types';
+import { DashboardData, MechanicConfig, Character, stressValue, itemName } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode, Search } from 'lucide-react';
@@ -423,7 +423,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-orange-500 transition-all duration-500" 
-                        style={{ width: `${(char.stress / 10) * 100}%` }}
+                        style={{ width: `${Math.min(100, (stressValue(char.stress) / 10) * 100)}%` }}
                       />
                     </div>
                   </div>
@@ -532,7 +532,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           <span 
                             className="text-[10px] text-white/80 cursor-pointer hover:text-emerald-400 truncate"
                             onClick={async () => {
-                              const next = await customPrompt(`Equip item in ${eq.slot}:`, eq.item);
+                              const next = await customPrompt(`Equip item in ${eq.slot}:`, itemName(eq.item));
                               if (next !== null) {
                                 const newEq = [...(char.equipment || [])];
                                 newEq[eqIdx] = { ...eq, item: next || "Пусто" };
@@ -540,7 +540,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                               }
                             }}
                           >
-                            {eq.item}
+                            {itemName(eq.item) || 'Пусто'}
                           </span>
                         </div>
                         <button 

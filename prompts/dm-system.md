@@ -1,12 +1,12 @@
 # DM System Prompt — Fate & Dragons: Nexus Prime (v5.1)
 
 Этот промпт — дефолтный `SYSTEM_PROMPT` приложения `nexus-rpg-master` (файл
-`src/App.tsx`). Он сшивает протокол из скилла `fate-dragons-dm` с архитектурой
+`shared/rules.ts`). Он сшивает протокол из скилла `fate-dragons-dm` с архитектурой
 приложения (броски через `[ROLL:]`-теги Dice Roller, JSON-блоки `<dashboard_json>`,
 `<codex_json>`, `<lore_update>`, `<final_draft>`).
 
 Синхронизация: при изменении здесь — обнови константу `SYSTEM_PROMPT` в
-`src/App.tsx` (кнопка «Reset to Default» в Settings → System Prompt возвращает её).
+`shared/rules.ts` (кнопка «Reset to Default» в Settings → System Prompt возвращает её).
 
 ---
 

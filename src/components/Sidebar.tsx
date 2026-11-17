@@ -1,10 +1,10 @@
 import React from 'react';
 import { Settings as SettingsIcon, Save, Trash2, Plus, Play, ChevronRight, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GameSession, AppSettings } from '../types';
+export interface SidebarSession { id: string; name: string; mode?: string; updated_at: string; busy?: boolean }
 
 interface SidebarProps {
-  sessions: GameSession[];
+  sessions: SidebarSession[];
   currentSessionId: string | null;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
@@ -40,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white text-black rounded-xl font-semibold hover:bg-white/90 transition-all active:scale-95"
         >
           <Plus size={18} />
-          New Story
+          Новая игра
         </button>
       </div>
 
@@ -60,7 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{session.name || 'Untitled Story'}</p>
-              <p className="text-[10px] opacity-50 truncate">{session.genre} • {new Date(session.updated_at).toLocaleDateString()}</p>
+              <p className="text-[10px] opacity-50 truncate">{session.mode === 'tale' ? '📖 Сказка' : session.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Вечер'} • {new Date(String(session.updated_at).replace(' ', 'T') + (String(session.updated_at).includes('Z') ? '' : 'Z')).toLocaleDateString()}{session.busy ? ' • ✍️' : ''}</p>
             </div>
             
             <div className="flex items-center gap-1">
