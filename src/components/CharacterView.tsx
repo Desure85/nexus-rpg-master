@@ -4,6 +4,7 @@ import { GameSession, Character, DashboardData, MechanicConfig, stressValue, ite
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
 import { Codex } from './Codex';
+import { isUsableItem } from './Dashboard';
 import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 
@@ -365,6 +366,12 @@ export const CharacterView: React.FC = () => {
                 </div>
               )}
 
+              {character.status === 'downed' && (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200">
+                  💀 <b>Герой повержен.</b> Ходить нельзя, пока союзник не стабилизирует его (жетон, зелье или помощь). Мастер уже знает.
+                </div>
+              )}
+
               {masterBusy && (
                 <div className="p-3 bg-amber-400/5 border border-amber-400/20 rounded-xl text-xs text-amber-200 flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" /> {isTale ? 'Сказочник пишет новую главу...' : 'Мастер обдумывает ход...'}
@@ -495,8 +502,20 @@ export const CharacterView: React.FC = () => {
                 </h3>
                 <div className="flex flex-wrap gap-2">
                   {character.inventory?.map((item, idx) => (
-                    <span key={idx} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-xs text-white/60">
+                    <span key={idx} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-xs text-white/60 flex items-center gap-2">
                       {item}
+                      {isUsableItem(item) && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api(`/api/sessions/${sessionId}/use`, { body: { charName, item } });
+                            } catch (e) { alert(e instanceof Error ? e.message : 'Не получилось'); }
+                          }}
+                          className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold"
+                        >
+                          Использовать
+                        </button>
+                      )}
                     </span>
                   ))}
                   {(!character.inventory || character.inventory.length === 0) && (

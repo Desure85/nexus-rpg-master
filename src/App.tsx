@@ -14,7 +14,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_MECHANICS, SYSTEM_PROMPT, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
 import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
 import { api, ApiError, useSessionSocket, characterLink, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
-import { AuthScreen } from './components/AuthScreen';
+import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { customPrompt, customConfirm } from './components/PromptModal';
@@ -29,6 +29,12 @@ interface ServerConfig {
   payments: 'none' | 'yookassa' | 'mock';
   llm: { provider: string; forcedByEnv: boolean; keyPresent: boolean };
 }
+
+const ResetRoute: React.FC<{ onDone: () => void }> = ({ onDone }) => {
+  const { token = '' } = useParams();
+  const navigate = useNavigate();
+  return <ResetPasswordScreen token={token} onDone={() => { onDone(); navigate('/', { replace: true }); }} />;
+};
 
 /** Приглашение мастера в пространство: /invite/:token */
 const InviteRoute: React.FC<{ user: CurrentUser | null; registration: ServerConfig['registration']; onAccepted: (wid?: string) => void }> = ({ user, registration, onAccepted }) => {
@@ -278,6 +284,9 @@ export default function App() {
       case 'actions_changed':
         fetchPanels();
         break;
+      case 'level_up':
+        showToast(`Новый уровень: ${(e as any).leveled.join(', ')}. Способности появятся в следующем ходе.`);
+        break;
       case 'deleted':
         setCurrentSession(null);
         fetchSessions();
@@ -408,7 +417,8 @@ export default function App() {
 
   const handleClaimExpeditions = async () => {
     const d = await serviceCall('/expeditions/claim', {}, 'EXPEDITION');
-    if (d?.tag) sendMessage(`[EXPEDITION] ${d.tag} — опиши коротко возвращение наёмников (2-3 предложения).`);
+    if (d?.tag) showToast(`${d.tag.replace(/^\[EXPEDITION: |\]$/g, '')}. Мастер расскажет об этом в следующем ходе.`);
+    else if (d) showToast('Наёмники ещё в пути');
   };
 
   const handleAcceptQuest = (title: string) =>
@@ -447,7 +457,7 @@ export default function App() {
     }
   };
 
-  // Idle: пассивный доход и «живой мир», пока героев не было (только кампании) — одним ходом
+  // Idle: пассивный доход и «живой мир», пока героев не было (только кампании)
   useEffect(() => {
     if (!currentSession?.isOwner || currentSession.mode !== 'campaign') return;
     let cancelled = false;
@@ -456,10 +466,9 @@ export default function App() {
         const id = currentSession.id;
         const idle = await api<any>(`/api/sessions/${id}/idle`, { method: 'POST', body: {} });
         const exp = await api<any>(`/api/sessions/${id}/expeditions/claim`, { method: 'POST', body: {} });
-        const parts = [idle?.idleGold > 0 ? idle.tag : '', exp?.tag || '', idle?.newsTag || ''].filter(Boolean);
-        if (!cancelled && parts.length) {
-          sendMessage(`[IDLE] ${parts.join('\n')}\nКоротко и атмосферно (3-5 предложений) опиши, что произошло, пока героев не было: доход, вернувшиеся наёмники, вести «Тем временем...».`);
-        }
+        // Вести копятся на сервере и уйдут мастеру вместе со следующим ходом — без отдельного платного вызова ИИ
+        const parts = [idle?.idleGold > 0 ? `+${idle.idleGold} золота за ${idle.hours} ч` : '', exp?.claimed?.length ? `вернулись наёмники (${exp.claimed.length})` : '', idle?.newsTag ? 'мир не стоял на месте' : ''].filter(Boolean);
+        if (!cancelled && parts.length) showToast(`Пока вас не было: ${parts.join(', ')}. Подробности — в следующем ходе.`);
       } catch (e) { console.error('Idle error', e); }
     })();
     return () => { cancelled = true; };
@@ -793,6 +802,7 @@ export default function App() {
     <Routes>
       <Route path="/character/:sessionId/:charName" element={<CharacterView />} />
       <Route path="/invite/:token" element={authState === 'loading' ? gate(null) : <InviteRoute user={user} registration={serverConfig?.registration || 'open'} onAccepted={(wid) => loadMe(wid)} />} />
+      <Route path="/reset/:token" element={<ResetRoute onDone={() => loadMe()} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
       <Route path="/" element={gate(
         <div className="flex h-screen h-[100dvh] bg-[#0a0502] overflow-hidden relative">
@@ -1467,59 +1477,28 @@ export default function App() {
                     onClaimExpeditions={() => handleClaimExpeditions()}
                     onAcceptQuest={(title) => handleAcceptQuest(title)}
                     onCarouse={(charName) => handleCarouse(charName)}
-                    onTravel={(locId) => {
-                      const loc = currentDashboard.locations?.find(l => l.id === locId);
-                      if (loc) {
-                        const roll = Math.random();
-                        let type: 'encounter' | 'discovery' | 'safe' = 'safe';
-                        let prompt = "";
-                        
-                        if (roll < 0.3) {
-                          type = 'encounter';
-                          prompt = `[TRAVEL ENCOUNTER] The party attempts to travel to ${loc.name}, but they are interrupted on the road! 
-1. Generate a random encounter, obstacle, or event fitting the current setting and genre.
-2. DO NOT let them arrive at ${loc.name} yet. They must deal with this first.
-3. Ask how they respond to the situation.`;
-                        } else if (roll < 0.6) {
-                          type = 'discovery';
-                          prompt = `[TRAVEL DISCOVERY] While traveling to ${loc.name}, the party discovers something hidden off the beaten path!
-1. Describe the journey and the discovery of a NEW location or landmark.
-2. Add this new location to the 'locations' JSON array with:
-   - status='known'
-   - dangerLevel (1-5, based on Game Style)
-   - coordinates (x,y near current)
-   - connections (link to current and/or ${loc.id})
-3. Describe their arrival at ${loc.name}.`;
-                        } else {
-                          type = 'safe';
-                          prompt = `[TRAVEL ACTION] The party travels safely to ${loc.name}. 
-1. Describe the scenery and atmosphere of the journey based on the setting.
-2. Describe their arrival at ${loc.name} and what they see first.`;
-                        }
-
-                        setTravelEvent({ type, locationName: loc.name });
-                        
-                        setTimeout(() => {
-                          setTravelEvent(null);
-                          sendMessage(prompt);
-                        }, 2500);
-                      }
+                    onTravel={async (locId) => {
+                      if (!currentSession) return;
+                      try {
+                        const r = await api<{ type: 'encounter' | 'discovery' | 'safe'; locationName: string }>(`/api/sessions/${currentSession.id}/travel`, { body: { locationId: locId } });
+                        setIsLoading(true);
+                        setTravelEvent(r);
+                        setTimeout(() => setTravelEvent(null), 2500);
+                      } catch (e) { reportError(e, 'Путешествие'); }
                     }}
-                    onExplore={(locId) => {
-                      const loc = currentDashboard.locations?.find(l => l.id === locId);
-                      if (loc) {
-                        sendMessage(`[EXPLORE ACTION] The party explores ${loc.name}. 
-1. Describe what they find.
-2. REVEAL 1-2 NEW LOCATIONS. Add them to 'locations' JSON with:
-   - id: UUID
-   - name: "..."
-   - description: "..."
-   - dangerLevel: (1-5, MUST match Game Style!)
-   - status: 'known'
-   - coordinates: {x: ..., y: ...} (offset from current)
-   - connections: ["${loc.id}"]
-3. Ensure dangerLevel is set correctly!`);
-                      }
+                    onExplore={async (locId) => {
+                      if (!currentSession) return;
+                      try {
+                        await api(`/api/sessions/${currentSession.id}/explore`, { body: { locationId: locId } });
+                        setIsLoading(true);
+                      } catch (e) { reportError(e, 'Исследование'); }
+                    }}
+                    onUseItem={async (charName, item) => {
+                      if (!currentSession) return;
+                      try {
+                        const r = await api<{ tag: string }>(`/api/sessions/${currentSession.id}/use`, { body: { charName, item } });
+                        showToast(r.tag.replace(/^\[ITEM USED: |\]$/g, ''));
+                      } catch (e) { reportError(e, 'Не получилось'); }
                     }}
                   />
                 )}

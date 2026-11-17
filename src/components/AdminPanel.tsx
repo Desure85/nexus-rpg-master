@@ -83,6 +83,19 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
               </div>
               <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Поиск по названию или email" className="flex-1 min-w-48 px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-white" />
               <button onClick={load} className="p-2 bg-white/5 rounded-lg text-white/60"><RefreshCw size={16} /></button>
+              <button
+                onClick={async () => {
+                  const email = await customPrompt('Email пользователя, которому нужна ссылка сброса пароля:');
+                  if (!email) return;
+                  try {
+                    const r = await api<{ link: string }>('/api/admin/users/reset-link', { body: { email } });
+                    await customPrompt('Ссылка действует 24 часа — отправьте её пользователю:', r.link);
+                  } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка'); }
+                }}
+                className="px-3 py-2 bg-white/5 rounded-lg text-xs text-white/70"
+              >
+                Сброс пароля
+              </button>
             </div>
             <div className="overflow-x-auto border border-white/10 rounded-xl">
               <table className="w-full text-xs text-white/80">

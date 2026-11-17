@@ -25,9 +25,13 @@ interface DashboardProps {
   onClaimExpeditions?: () => void;
   onAcceptQuest?: (title: string) => void;
   onCarouse?: (charName: string) => void;
+  onUseItem?: (charName: string, item: string) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse }) => {
+/** Предмет с эффектом в названии («восстанавливает 5 HP», «снимает 2 Стресса») движок умеет применить. */
+export const isUsableItem = (item: string) => /(восстанавливает|лечит|снимает)\s*\d+|\d+\s*HP/i.test(item);
+
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -477,6 +481,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         className="group/item px-1.5 py-0.5 bg-white/5 border border-white/10 rounded text-[9px] text-white/50 flex items-center gap-1"
                       >
                         {item}
+                        {onUseItem && isUsableItem(item) && (
+                          <button onClick={() => onUseItem(char.name, item)} className="text-emerald-400/70 hover:text-emerald-300 font-bold" title="Использовать">
+                            ✚
+                          </button>
+                        )}
                         <button 
                           onClick={async () => {
                             const newInv = [...(char.inventory || [])];

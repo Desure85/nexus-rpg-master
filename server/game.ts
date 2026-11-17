@@ -241,6 +241,18 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   });
 
   // --- Engine State (State Authority: движок владеет числами) ---
+  // --- Вести мира: копятся и уходят ИИ вместе со следующим ходом (без отдельного платного вызова) ---
+  const queueNews = (sessionId: string, tag: string) => {
+    if (tag) db.prepare("INSERT INTO world_news (session_id, tag) VALUES (?, ?)").run(sessionId, tag);
+  };
+  const takeNews = (sessionId: string): string[] => {
+    const rows = db.prepare("SELECT id, tag FROM world_news WHERE session_id = ? ORDER BY id").all(sessionId) as { id: number; tag: string }[];
+    if (rows.length) db.prepare("DELETE FROM world_news WHERE session_id = ? AND id <= ?").run(sessionId, rows[rows.length - 1].id);
+    return rows.map(r => r.tag);
+  };
+  const peekNews = (sessionId: string): string[] =>
+    (db.prepare("SELECT tag FROM world_news WHERE session_id = ? ORDER BY id").all(sessionId) as { tag: string }[]).map(r => r.tag);
+
   const ensureEngineState = (sessionId: string): any => {
     const row = db.prepare("SELECT * FROM engine_state WHERE session_id = ?").get(sessionId) as any;
     if (row) return JSON.parse(row.characters);
@@ -263,8 +275,9 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   const saveEngineState = (sessionId: string, chars: any) => {
     db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
   };
+  const STATUS_ICON: Record<string, string> = { base: "🏠", downed: "💀 ПОВЕРЖЕН", active: "⚔️" };
   const stateToTag = (chars: any) =>
-    Object.entries(chars).map(([name, c]: any) => `${c.status === "base" ? "🏠" : "⚔️"} ${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
+    Object.entries(chars).map(([name, c]: any) => `${STATUS_ICON[c.status] || "⚔️"} ${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
   const mergeStateIntoDashboard = (dash: any, chars: any) => {
     if (!dash || !Array.isArray(dash.characters)) return dash;
     dash.characters = dash.characters.map((c: any) => {
@@ -296,6 +309,9 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       if (field === "hp") {
         const before = c.hp_cur;
         c.hp_cur = Math.max(0, Math.min(c.hp_max, c.hp_cur + delta));
+        // «Повержен»: 0 HP у героя в партии; лечение выше 0 возвращает в строй
+        if (c.hp_cur === 0 && c.status !== "base") c.status = "downed";
+        else if (c.hp_cur > 0 && c.status === "downed") c.status = "active";
         applied.push({ field, name, delta, from: before, to: c.hp_cur });
       } else if (["stress", "gold", "xp", "tokens"].includes(field)) {
         const before = c[field] || 0;
@@ -440,9 +456,22 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     }
     saveEngineState(req.params.id, chars);
     broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    // предметы наёмников кладём в инвентарь героя
+    const row = db.prepare("SELECT history FROM sessions WHERE id = ?").get(req.params.id) as any;
+    const history = JSON.parse(row?.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    if (dashIdx >= 0) {
+      for (const c of claimed) {
+        const ch = (history[dashIdx].dashboard.characters || []).find((x: any) => x.name === c.char);
+        if (ch && c.item) ch.inventory = [...(ch.inventory || []), c.item];
+      }
+      history[dashIdx].dashboard = mergeStateIntoDashboard(history[dashIdx].dashboard, chars);
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+    }
     const tag = claimed.length
       ? `[EXPEDITION: вернулись наёмники — ${claimed.map(c => `${c.char} +${c.gold}🪙${c.item ? ' + «' + c.item + '»' : ''}`).join("; ")}]`
       : "";
+    queueNews(req.params.id, tag);
     res.json({ status: "ok", claimed, tag });
   });
 
@@ -608,7 +637,9 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       if (news.length) newsTag = `[FRONT NEWS: пока вас не было, ${news.join("; ")} — мир не стоял на месте]`;
     }
 
-    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag, newsTag });
+    queueNews(req.params.id, tag);
+    queueNews(req.params.id, newsTag);
+    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag, newsTag, queued: !!(tag || newsTag) });
   });
 
   // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
@@ -715,7 +746,46 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   });
 
 
-  return { encounterCheck, resolveName, ensureEngineState, saveEngineState, stateToTag, mergeStateIntoDashboard, applyStateChanges, partyLevel, getBase };
+  // --- Расходники: эффект зашит в название («восстанавливает 5 HP», «снимает 2 Стресса») и применяется движком ---
+  const itemEffect = (item: string): { field: "hp" | "stress"; delta: number }[] => {
+    const out: { field: "hp" | "stress"; delta: number }[] = [];
+    const heal = item.match(/(?:восстанавливает|лечит|\+)\s*(\d+)\s*(?:HP|ОЗ|здоровья)/i) || item.match(/(\d+)\s*HP/i);
+    const calm = item.match(/(?:снимает|сброс|-)\s*(\d+)\s*стресс/i);
+    if (heal) out.push({ field: "hp", delta: parseInt(heal[1], 10) });
+    if (calm) out.push({ field: "stress", delta: -parseInt(calm[1], 10) });
+    return out;
+  };
+  const isConsumable = (item: string) => itemEffect(item).length > 0 && /зелье|эликсир|отвар|бинт|аптечк|стимулятор|расходник|сердце|еда|пирог|настой|мазь|potion|medkit/i.test(item);
+
+  /** Использовать предмет: убрать из инвентаря героя в последнем дашборде и применить эффект. */
+  const useItem = (sessionId: string, charName: string, itemQuery: string): { ok: boolean; tag: string; item?: string } => {
+    const row = db.prepare("SELECT history FROM sessions WHERE id = ?").get(sessionId) as any;
+    const history = JSON.parse(row?.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    if (dashIdx < 0) return { ok: false, tag: "" };
+    const dash = history[dashIdx].dashboard;
+    const chars = ensureEngineState(sessionId);
+    const name = resolveName(chars, charName);
+    const ch = (dash.characters || []).find((c: any) => c.name === name);
+    if (!name || !ch) return { ok: false, tag: `[ITEM: героя «${charName}» нет]` };
+    const q = itemQuery.toLowerCase();
+    const idx = (ch.inventory || []).findIndex((i: string) => i.toLowerCase() === q) >= 0
+      ? (ch.inventory || []).findIndex((i: string) => i.toLowerCase() === q)
+      : (ch.inventory || []).findIndex((i: string) => i.toLowerCase().includes(q) || q.includes(i.toLowerCase().split("(")[0].trim()));
+    if (idx < 0) return { ok: false, tag: `[ITEM: у ${name} нет «${itemQuery}»]` };
+    const item: string = ch.inventory[idx];
+    const effects = itemEffect(item);
+    if (!effects.length) return { ok: false, tag: `[ITEM: «${item}» — не расходник, его применение описывает мастер]` };
+    ch.inventory = ch.inventory.filter((_: string, i: number) => i !== idx);
+    const applied = applyStateChanges(chars, effects.map(e => ({ ...e, name })));
+    saveEngineState(sessionId, chars);
+    history[dashIdx].dashboard = mergeStateIntoDashboard(dash, chars);
+    db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), sessionId);
+    const summary = applied.map(a => a.field === "hp" ? `HP ${a.from}→${a.to}` : `стресс ${a.from}→${a.to}`).join(", ");
+    return { ok: true, item, tag: `[ITEM USED: ${name} использует «${item}»: ${summary}]` };
+  };
+
+  return { queueNews, takeNews, peekNews, itemEffect, isConsumable, useItem, encounterCheck, resolveName, ensureEngineState, saveEngineState, stateToTag, mergeStateIntoDashboard, applyStateChanges, partyLevel, getBase };
 }
 
 export type GameApi = ReturnType<typeof registerGameRoutes>;
