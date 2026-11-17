@@ -2,12 +2,13 @@ import crypto from "crypto";
 import type { DB } from "./db";
 import type { GameApi } from "./game";
 import { complete, type ChatMessage, type LlmRequest } from "./llm";
-import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
+import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, upgradeSystemPrompt, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
-import { parseDashboard, parseStateTags, parseSideTags, parseTale } from "../shared/parse";
+import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects } from "../shared/parse";
+import { museTag, actionSlotsTag, taleIdea } from "../shared/oracle";
 import type { DashboardData, Message, MechanicConfig } from "../src/types";
 
 export interface TurnOptions {
@@ -111,7 +112,7 @@ export class Engine {
     return {
       llm: g.llm,
       loggingEnabled: g.loggingEnabled,
-      systemPrompt: c.systemPrompt || g.systemPrompt,
+      systemPrompt: c.systemPrompt ? upgradeSystemPrompt(c.systemPrompt) : g.systemPrompt,
       mechanics: c.mechanics ? mergeMechanics(c.mechanics) : g.mechanics,
       idlePlayerAction: c.idlePlayerAction || g.idlePlayerAction,
       tale: { ...DEFAULT_TALE, ...(c.tale || {}) },
@@ -159,12 +160,21 @@ export class Engine {
     if (opts.rolls?.length) finalContent += (finalContent ? "\n\n" : "") + `### GM Rolls:\n${opts.rolls.join("\n")}`;
 
     if (finalContent) {
-      if (!isTale && !META_COMMAND_RE.test(finalContent)) {
+      const isMetaCmd = META_COMMAND_RE.test(finalContent);
+      if (!isTale && !isMetaCmd) {
         const ec = this.game.encounterCheck(sessionId, s.style || "balanced", false);
         if (ec.tag) finalContent += `\n\n${ec.tag}`;
+        // Оракул: случайный мотив — всегда при событии, иначе примерно в каждом третьем ходе
+        if (ec.result !== "none" || Math.random() < 0.35) finalContent += `\n\n${museTag(s.style)}`;
         const chars = this.game.ensureEngineState(sessionId);
         const stateTag = this.game.stateToTag(chars);
         if (stateTag) finalContent += `\n\n[STATE: ${stateTag}]`;
+      }
+      // Слоты действий выбирает движок (модель «случайно» выбирает одно и то же)
+      if (!isTale && !finalContent.startsWith("[CLARIFY]") && this.isEnabled(cfg.mechanics, "actions")) {
+        const active = (lastDashboard(s.history).characters || []).filter(c => c.status !== "base").map(c => c.name);
+        const slots = actionSlotsTag(active, s.style);
+        if (slots) finalContent += `\n\n${slots}`;
       }
       s.history.push({ role: "user", content: finalContent });
       saveSession(this.db, s);
@@ -176,6 +186,10 @@ export class Engine {
     if (isTale) return this.runTaleTurn(s, cfg, finalContent);
 
     const userText = s.history[s.history.length - 1].content;
+    // Всё, что пришло от игроков с прошлого ответа мастера (для эффектов бросков)
+    let lastAssistantIdx = -1;
+    for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].role === "assistant") { lastAssistantIdx = i; break; }
+    const turnUserText = s.history.slice(lastAssistantIdx + 1).filter(m => m.role === "user").map(m => m.content).join("\n");
     const isClarify = userText.startsWith("[CLARIFY]");
     const currentDashboard = lastDashboard(s.history);
     const mechanics = cfg.mechanics;
@@ -205,6 +219,7 @@ export class Engine {
     for (const f of side.fronts) this.db.prepare("INSERT INTO fronts (id, session_id, name, impulse, portents, doom) VALUES (?,?,?,?,?,?)").run(crypto.randomUUID(), sessionId, f.name, f.impulse, JSON.stringify(f.portents), f.doom);
     for (const m of side.memorials) this.db.prepare("INSERT INTO memorial (id, session_id, name, desc) VALUES (?,?,?,?)").run(crypto.randomUUID(), sessionId, m.name, m.desc);
 
+    const leveled: string[] = [];
     let dashboard: DashboardData = isClarify ? currentDashboard : (parsed.dashboard || structuredClone(currentDashboard));
     if (!isClarify) {
       // State Authority: новые персонажи из ответа попадают в движок, затем применяются теги и числа перезаписываются
@@ -217,9 +232,35 @@ export class Engine {
           added = true;
         }
       }
-      const applied = this.game.applyStateChanges(chars, changes);
-      if (added || applied.length) this.game.saveEngineState(sessionId, chars);
+      const prevLevels = Object.fromEntries(Object.entries(chars).map(([n, c]: [string, any]) => [n, levelFromXp(c.xp || 0)]));
+      // Стресс из меток бросков применяет движок; если модель сама дала [STRESS] этому герою — не дублируем
+      const rollFx = extractRollEffects(turnUserText);
+      const aiStress = new Set(changes.filter(c => c.field === "stress").map(c => this.game.resolveName(chars, c.name)));
+      const auto = rollFx.stress
+        .map(r => ({ field: "stress" as const, name: this.game.resolveName(chars, r.name) || r.name, delta: r.delta }))
+        .filter(r => chars[r.name] && !aiStress.has(r.name));
+      const applied = this.game.applyStateChanges(chars, [...changes, ...auto]);
+      // Повышение уровня: +2 max HP за уровень — детерминированно, движком
+      for (const [n, c] of Object.entries(chars) as [string, any][]) {
+        const gained = levelFromXp(c.xp || 0) - (prevLevels[n] ?? levelFromXp(c.xp || 0));
+        if (gained > 0) {
+          c.hp_max += 2 * gained;
+          c.hp_cur = Math.min(c.hp_max, c.hp_cur + 2 * gained);
+          leveled.push(`${n} → уровень ${levelFromXp(c.xp || 0)}`);
+        }
+      }
+      if (added || applied.length || leveled.length) this.game.saveEngineState(sessionId, chars);
       dashboard = this.game.mergeStateIntoDashboard(dashboard, chars);
+
+      // Пул Рока: обнуление после мирового события и дубли Хаоса — движком
+      if (this.isEnabled(mechanics, "doom_pool")) {
+        const prevDoom = Number(currentDashboard.doomPool) || 0;
+        const worldEvent = /\[WORLD EVENT/.test(turnUserText);
+        let doom = Number(dashboard.doomPool) || 0;
+        if (worldEvent && doom >= prevDoom) doom = 0;
+        doom = Math.max(doom, (worldEvent ? 0 : prevDoom) + rollFx.doomDoubles);
+        dashboard.doomPool = Math.max(0, Math.min(10, doom));
+      }
     }
 
     let codex = [...fresh.codex];
@@ -241,13 +282,8 @@ export class Engine {
 
     // Повышение уровня → ИИ придумывает уникальные способности (отдельный ход)
     if (!opts.followUp && !isClarify && this.isEnabled(mechanics, "abilities")) {
-      const leveled: string[] = [];
-      for (const nc of dashboard.characters || []) {
-        const prev = (currentDashboard.characters || []).find(c => c.name === nc.name);
-        if (prev && levelFromXp(Number(nc.xp || 0)) > levelFromXp(Number(prev.xp || 0))) leveled.push(`${nc.name} → уровень ${levelFromXp(Number(nc.xp || 0))}`);
-      }
       if (leveled.length) {
-        this.enqueueTurn(sessionId, `[LEVEL UP] ${leveled.join(", ")}. Для КАЖДОГО придумай УНИКАЛЬНУЮ способность, отражающую путь героя. Тип — любой: boon (бонус), curse (шрам/проклятие от пережитого), flavor (особенность без механики) или mechanical (конкретное правило). Добавь в abilities (с полем type) в dashboard_json.`, { followUp: true });
+        this.enqueueTurn(sessionId, `[LEVEL UP] ${leveled.join(", ")}. Для КАЖДОГО придумай УНИКАЛЬНУЮ способность, отражающую путь героя. Тип — любой: boon (бонус), curse (шрам/проклятие от пережитого), flavor (особенность без механики) или mechanical (конкретное правило). Добавь в abilities (с полем type) в dashboard_json, старые способности сохрани. Max HP уже повышен движком.`, { followUp: true });
       }
     }
   }
@@ -291,7 +327,7 @@ export class Engine {
     const isFinal = /^\[TALE_END\]/.test(content) || chapter >= tale.chapters;
     const heroes = (lastDashboard(s.history).characters || []).map(c => `- ${c.name}${c.goal ? `: ${c.goal}` : ""}`).join("\n");
     const memory = (heroes ? `\n\n## ГЕРОИ СКАЗКИ\n${heroes}` : "") + (s.lore ? `\n\n## ПАМЯТЬ СКАЗКИ\n${s.lore}` : "");
-    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
+    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, taleIdea()) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
 
     const turnId = crypto.randomUUID();
     this.busy.add(sessionId);

@@ -3,6 +3,7 @@ import type { Message, CodexEntry, MechanicConfig, DashboardData } from "../src/
 import type { LlmSettings, Provider } from "./llm";
 import { DEFAULT_MECHANICS, SYSTEM_PROMPT, INITIAL_DASHBOARD } from "../shared/rules";
 import type { TaleConfig } from "../shared/rules";
+import { LEGACY_MECHANIC_DESCRIPTIONS, LEGACY_SYSTEM_PROMPTS } from "../shared/legacy-prompts";
 
 export interface SessionConfig {
   mechanics?: MechanicConfig[];
@@ -102,11 +103,19 @@ export const readSettingsRaw = (db: DB): Record<string, string> => {
   return Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.key, r.value]));
 };
 
+/** Сохранённые механики поверх актуальных; неотредактированные старые описания обновляются до новой версии. */
 export const mergeMechanics = (stored?: MechanicConfig[] | null): MechanicConfig[] =>
   DEFAULT_MECHANICS.map(def => {
     const existing = stored?.find(p => p.id === def.id);
-    return existing ? { ...def, ...existing } : def;
+    if (!existing) return def;
+    const legacy = LEGACY_MECHANIC_DESCRIPTIONS[def.id] || [];
+    const description = !existing.description || legacy.includes(existing.description) ? def.description : existing.description;
+    return { ...def, ...existing, name: def.name, description };
   });
+
+/** Старый дефолтный промпт, сохранённый без правок, заменяем актуальным. */
+export const upgradeSystemPrompt = (p?: string | null) =>
+  !p || LEGACY_SYSTEM_PROMPTS.some(l => l.trim() === p.trim()) ? SYSTEM_PROMPT : p;
 
 export const readSettings = (db: DB): GlobalSettings => {
   const r = readSettingsRaw(db);
@@ -119,7 +128,7 @@ export const readSettings = (db: DB): GlobalSettings => {
       openRouterApiKey: r.openRouterApiKey || undefined,
       openRouterModel: r.openRouterModel || undefined,
     },
-    systemPrompt: r.systemPrompt || SYSTEM_PROMPT,
+    systemPrompt: upgradeSystemPrompt(r.systemPrompt),
     mechanics: mergeMechanics(parse<MechanicConfig[] | null>(r.mechanics, null)),
     idlePlayerAction: (r.idlePlayerAction as any) || "random",
     loggingEnabled: r.loggingEnabled === "true",
