@@ -1,7 +1,9 @@
 import crypto from "crypto";
 import type { DB } from "./db";
 import type { GameApi } from "./game";
-import { complete, type ChatMessage, type LlmRequest } from "./llm";
+import type { Tenancy } from "./tenancy";
+import type { Billing } from "./billing";
+import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, upgradeSystemPrompt, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -27,7 +29,7 @@ export class Engine {
   private busy = new Set<string>();
   private pendingTurns = new Map<string, number>();
 
-  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast) {}
+  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing) {}
 
   isBusy(sessionId: string) {
     return this.busy.has(sessionId) || (this.pendingTurns.get(sessionId) || 0) > 0;
@@ -63,7 +65,7 @@ export class Engine {
         await this.runTurn(sessionId, content, opts);
       } catch (e: any) {
         console.error(`[turn ${sessionId}]`, e?.message || e);
-        this.broadcast(sessionId, { type: "turn_error", sessionId, error: e?.message || "Ошибка хода" });
+        this.broadcast(sessionId, { type: "turn_error", sessionId, error: e?.message || "Ошибка хода", code: e?.code });
       } finally {
         if (!this.isBusy(sessionId)) this.broadcast(sessionId, { type: "busy", sessionId, busy: false });
       }
@@ -98,7 +100,7 @@ export class Engine {
         await this.runTurn(sessionId, content, {});
       } catch (e: any) {
         console.error(`[round ${sessionId}]`, e?.message || e);
-        this.broadcast(sessionId, { type: "turn_error", sessionId, error: e?.message || "Ошибка хода" });
+        this.broadcast(sessionId, { type: "turn_error", sessionId, error: e?.message || "Ошибка хода", code: e?.code });
       } finally {
         if (!this.isBusy(sessionId)) this.broadcast(sessionId, { type: "busy", sessionId, busy: false });
       }
@@ -109,8 +111,10 @@ export class Engine {
   effectiveConfig(s: StoredSession) {
     const g = readSettings(this.db);
     const c: SessionConfig = s.config || {};
+    const { llm, mode } = this.tenancy.resolveLlm(s.workspace_id);
     return {
-      llm: g.llm,
+      llm,
+      aiMode: mode,
       loggingEnabled: g.loggingEnabled,
       systemPrompt: c.systemPrompt ? upgradeSystemPrompt(c.systemPrompt) : g.systemPrompt,
       mechanics: c.mechanics ? mergeMechanics(c.mechanics) : g.mechanics,
@@ -119,9 +123,18 @@ export class Engine {
     };
   }
 
-  private log(enabled: boolean, sessionId: string, request: LlmRequest, response: string) {
+  /** Вызов ИИ с проверкой и списанием кредитов пространства. */
+  private async callLlm(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, kind: string, onDelta: (d: string) => void) {
+    if (s.workspace_id) this.billing.assertCanSpend(s.workspace_id, cfg.aiMode);
+    const r = await completeWithUsage(cfg.llm, request, onDelta);
+    if (s.workspace_id) this.billing.recordUsage({ workspaceId: s.workspace_id, sessionId: s.id, userId: s.created_by, kind, mode: cfg.aiMode, llm: cfg.llm as LlmSettings, usage: r.usage });
+    this.log(cfg.loggingEnabled, s, request, r.text);
+    return r.text;
+  }
+
+  private log(enabled: boolean, s: StoredSession, request: LlmRequest, response: string) {
     if (!enabled) return;
-    this.db.prepare("INSERT INTO logs (session_id, request, response) VALUES (?, ?, ?)").run(sessionId, JSON.stringify(request), response);
+    this.db.prepare("INSERT INTO logs (session_id, workspace_id, request, response) VALUES (?, ?, ?, ?)").run(s.id, s.workspace_id, JSON.stringify(request), response);
     this.db.prepare("DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT 500)").run();
   }
 
@@ -202,12 +215,11 @@ export class Engine {
     const stream = this.streamTo(sessionId, turnId);
     let aiContent: string;
     try {
-      aiContent = await complete(cfg.llm, request, stream.push);
+      aiContent = await this.callLlm(s, cfg, request, isClarify ? "clarify" : "turn", stream.push);
     } finally {
       stream.end();
       this.busy.delete(sessionId);
     }
-    this.log(cfg.loggingEnabled, sessionId, request, aiContent);
 
     // Перечитываем сессию: пока модель думала, никто не мог её поменять (очередь), но конфиг/имя — могли
     const fresh = loadSession(this.db, sessionId) || s;
@@ -335,12 +347,11 @@ export class Engine {
     const stream = this.streamTo(sessionId, turnId);
     let raw: string;
     try {
-      raw = await complete(cfg.llm, request, stream.push);
+      raw = await this.callLlm(s, cfg, request, "tale", stream.push);
     } finally {
       stream.end();
       this.busy.delete(sessionId);
     }
-    this.log(cfg.loggingEnabled, sessionId, request, raw);
 
     const fresh = loadSession(this.db, sessionId) || s;
     const t = parseTale(raw);

@@ -1,22 +1,19 @@
-import crypto from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
-export const hashKey = (key: string) => crypto.createHash("sha256").update(key).digest("hex");
+import type { DB } from "./db";
+import { sha256 } from "./crypto";
 
-const safeEqual = (a: string, b: string) => {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
-};
+export const SESSION_COOKIE = "nexus_sid";
+export const SESSION_DAYS = 30;
+
+export interface AuthUser { id: string; email: string; name: string; isSuperadmin: boolean }
 
 export interface AuthInfo {
-  /** sha256 ключа мастера (браузер ГМа хранит сам ключ в localStorage) */
-  ownerHash?: string;
+  user?: AuthUser;
+  /** id auth-сессии (хеш токена из cookie) */
+  sid?: string;
   /** секрет устройства игрока: подтверждает, что это тот же игрок, что подавал заявку */
   deviceId?: string;
-  isAdmin: boolean;
-  /** прошёл ли код доступа для создания игр (GM_ACCESS_CODE) */
-  hasAccess: boolean;
 }
 
 declare global {
@@ -26,33 +23,60 @@ declare global {
   }
 }
 
-export const adminConfigured = () => !!process.env.ADMIN_TOKEN;
+export const parseCookies = (header?: string): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const part of (header || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    if (k) out[k] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+};
 
-export function authMiddleware(req: Request, _res: Response, next: NextFunction) {
-  const ownerKey = String(req.header("x-owner-key") || "");
-  const deviceId = String(req.header("x-device-id") || "");
-  const adminToken = process.env.ADMIN_TOKEN || "";
-  const accessCode = process.env.GM_ACCESS_CODE || "";
-  const adminByToken = !!adminToken && safeEqual(String(req.header("x-admin-token") || ""), adminToken);
-  // Без ADMIN_TOKEN сервер в «локальном режиме»: настройки может менять любой
-  const isAdmin = adminToken ? adminByToken : true;
-  req.auth = {
-    ownerHash: ownerKey.length >= 16 ? hashKey(ownerKey) : undefined,
-    deviceId: deviceId.length >= 16 ? deviceId : undefined,
-    isAdmin,
-    hasAccess: !accessCode || adminByToken || safeEqual(String(req.header("x-access-code") || ""), accessCode),
-  };
-  next();
+const isHttps = (req: Request) => req.secure || String(req.header("x-forwarded-proto") || "").startsWith("https");
+
+export function setSessionCookie(req: Request, res: Response, token: string, maxAgeSec = SESSION_DAYS * 86400) {
+  const secure = process.env.COOKIE_SECURE === "true" || (process.env.COOKIE_SECURE !== "false" && isHttps(req));
+  res.append("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secure ? "; Secure" : ""}`);
 }
 
-export const requireAdmin = (req: Request, res: Response, next: NextFunction) =>
-  req.auth.isAdmin ? next() : res.status(403).json({ error: "admin_required", message: "Нужен токен администратора" });
+export const clearSessionCookie = (req: Request, res: Response) => setSessionCookie(req, res, "", 0);
 
-export const requireAccess = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.auth.ownerHash) return res.status(401).json({ error: "owner_key_required", message: "Нет ключа мастера" });
-  if (!req.auth.hasAccess) return res.status(403).json({ error: "access_code_required", message: "Нужен код доступа мастера" });
-  next();
-};
+/** Достаёт пользователя по cookie-сессии и секрет устройства игрока. */
+export function authMiddleware(db: DB) {
+  const findSession = db.prepare(`SELECT u.id, u.email, u.name, u.is_superadmin, s.id AS sid FROM auth_sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.id = ? AND s.expires_at > datetime('now')`);
+  return (req: Request, _res: Response, next: NextFunction) => {
+    const deviceId = String(req.header("x-device-id") || "");
+    req.auth = { deviceId: deviceId.length >= 16 ? deviceId.slice(0, 128) : undefined };
+    const token = parseCookies(req.header("cookie"))[SESSION_COOKIE];
+    if (token) {
+      const row = findSession.get(sha256(token)) as any;
+      if (row) req.auth.user = { id: row.id, email: row.email, name: row.name, isSuperadmin: !!row.is_superadmin };
+      if (row) req.auth.sid = row.sid;
+    }
+    next();
+  };
+}
+
+/**
+ * CSRF: запросы, меняющие состояние и идущие с cookie, обязаны нести заголовок X-Nexus-Client.
+ * Кросс-доменная страница не может его поставить без CORS-preflight, который мы не разрешаем.
+ */
+export function csrfGuard(req: Request, res: Response, next: NextFunction) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+  if (!req.header("cookie")?.includes(`${SESSION_COOKIE}=`)) return next();
+  if (req.path.startsWith("/api/billing/webhook")) return next();
+  if (req.header("x-nexus-client")) return next();
+  res.status(403).json({ error: "csrf", message: "Запрос отклонён (нет заголовка клиента)" });
+}
+
+export const requireUser = (req: Request, res: Response, next: NextFunction) =>
+  req.auth.user ? next() : res.status(401).json({ error: "auth_required", message: "Войдите в аккаунт" });
+
+export const requireSuperadmin = (req: Request, res: Response, next: NextFunction) =>
+  req.auth.user?.isSuperadmin ? next() : res.status(403).json({ error: "superadmin_required", message: "Только для администратора платформы" });
 
 /** Простой in-memory лимитер (скользящее окно) — защищает платные вызовы ИИ от злоупотреблений. */
 export function rateLimit(opts: { windowMs: number; max: number; key?: (req: Request) => string }) {

@@ -153,7 +153,109 @@ export function migrate(db: DB) {
   addColumn(db, "sessions", "owner_hash", "owner_hash TEXT");
   addColumn(db, "sessions", "config", "config TEXT");
 
+  // ---------------- мультитенантность: аккаунты, пространства, биллинг ----------------
   db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      name TEXT NOT NULL DEFAULT '',
+      password_hash TEXT NOT NULL,
+      is_superadmin INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_login_at DATETIME
+    );
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      user_agent TEXT DEFAULT ''
+    );
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      ai_mode TEXT NOT NULL DEFAULT 'platform',
+      ai_provider TEXT,
+      ai_model TEXT,
+      ai_url TEXT,
+      ai_key_enc TEXT,
+      credits INTEGER NOT NULL DEFAULT 0,
+      plan TEXT NOT NULL DEFAULT 'free',
+      plan_expires_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS memberships (
+      workspace_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'gm',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (workspace_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS invites (
+      token_hash TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'gm',
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      expires_at DATETIME NOT NULL,
+      max_uses INTEGER NOT NULL DEFAULT 10,
+      uses INTEGER NOT NULL DEFAULT 0,
+      revoked INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id TEXT NOT NULL,
+      session_id TEXT,
+      user_id TEXT,
+      kind TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated INTEGER NOT NULL DEFAULT 0,
+      credits INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS credit_ledger (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id TEXT NOT NULL,
+      delta INTEGER NOT NULL,
+      balance_after INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      ref TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS payments (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      user_id TEXT,
+      provider TEXT NOT NULL,
+      external_id TEXT,
+      product_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'RUB',
+      credits INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      confirmation_url TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  addColumn(db, "sessions", "workspace_id", "workspace_id TEXT");
+  addColumn(db, "sessions", "created_by", "created_by TEXT");
+  addColumn(db, "logs", "workspace_id", "workspace_id TEXT");
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_ws ON sessions(workspace_id, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_auth_user ON auth_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_members_user ON memberships(user_id);
+    CREATE INDEX IF NOT EXISTS idx_usage_ws ON usage(workspace_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_ledger_ws ON credit_ledger(workspace_id, id);
+    CREATE INDEX IF NOT EXISTS idx_payments_ws ON payments(workspace_id, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_ext ON payments(provider, external_id) WHERE external_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_logs_ws ON logs(workspace_id, id);
     CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(owner_hash);
     CREATE INDEX IF NOT EXISTS idx_claims_session ON claims(session_id);
     CREATE INDEX IF NOT EXISTS idx_pending_session ON pending_actions(session_id);
@@ -166,6 +268,15 @@ export function migrate(db: DB) {
 }
 
 const SESSION_TABLES = ["claims", "pending_actions", "pacing", "searches", "idle", "expeditions", "engine_state", "bases", "collection", "fronts", "memorial", "logs"];
+
+export function deleteWorkspaceCascade(db: DB, workspaceId: string) {
+  const ids = (db.prepare("SELECT id FROM sessions WHERE workspace_id = ?").all(workspaceId) as { id: string }[]).map(r => r.id);
+  db.transaction(() => {
+    for (const id of ids) deleteSessionCascade(db, id);
+    for (const t of ["memberships", "invites", "usage", "credit_ledger", "payments"]) db.prepare(`DELETE FROM ${t} WHERE workspace_id = ?`).run(workspaceId);
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+  })();
+}
 
 export function deleteSessionCascade(db: DB, sessionId: string) {
   db.transaction(() => {

@@ -26,7 +26,9 @@ export interface StoredSession {
   archive: string;
   codex: CodexEntry[];
   config: SessionConfig;
-  owner_hash: string | null;
+  owner_hash?: string | null;
+  workspace_id: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
