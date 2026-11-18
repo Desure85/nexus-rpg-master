@@ -21,6 +21,7 @@ import { OraclePanel } from './components/OraclePanel';
 import { RichParagraphs, UserContent, renderInline } from './components/RichText';
 import { GuideButton } from './components/GuideModal';
 import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
+import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -504,6 +505,17 @@ export default function App() {
     const data = await api<{ text: string }>('/api/generate', { body: { prompt, workspaceId: workspace?.id } });
     return data.text || '';
   };
+
+  /** Готовый сценарий: без формы и без лишних запросов к ИИ — сразу в игру. */
+  const startScenario = (sc: Scenario) => handleStartAdventure({
+    title: sc.title,
+    setting: sc.setting,
+    plotHook: sc.plotHook,
+    style: sc.style,
+    mode: sc.mode,
+    characters: sc.heroes.slice(0, sc.mode === 'tale' ? 1 : 1).map((h, k) => ({ id: String(k), name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype })),
+    tale: sc.tale,
+  } as SetupData);
 
   const handleStartAdventure = async (setup: SetupData) => {
     try {
@@ -1180,6 +1192,52 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                      <button
+                        onClick={() => {
+                          if (confirmFinale) {
+                            sendMessage(`[FINALE] Вечерний финал. ЛОГИЧЕСКИ подведи сюжет к завершению за 2-4 хода (~10-30 мин). Если сюжет далеко от конца — сжимай естественно: сведи открытые линии ключевыми сценами-мостами, ускорь к кульминации (решающий бой/выбор/открытие), развяжи конфликты, дай эпилог-передышку. Финал должен ощущаться ЗАВЕРШЁННЫМ для этой партии. Заверши <session_summary> (итоги партии).`);
+                            setConfirmFinale(false);
+                          } else {
+                            setConfirmFinale(true);
+                            setTimeout(() => setConfirmFinale(false), 8000);
+                          }
+                        }}
+                        title="Вечерний финал (логическое завершение за 2-4 хода)"
+                        disabled={isLoading}
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-all disabled:opacity-30 ${confirmFinale ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/50 hover:text-amber-400'}`}
+                      >
+                        <Flag size={15} /> <span className="hidden sm:inline">{confirmFinale ? 'Точно? Нажмите ещё раз' : 'Финал вечера'}</span>
+                      </button>
+                      <button
+                        onClick={() => sendMessage(`[SESSION SUMMARY] Подведи итоги партии: <session_summary> — краткий пересказ приключения и итоги (чего добились герои, награды, XP, судьбы NPC, что запомнилось). Тёплый эпилог в стиле сессии.`)}
+                        title="Итоги партии"
+                        disabled={isLoading}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-white/5 text-white/50 hover:text-emerald-400 rounded-lg transition-all disabled:opacity-30"
+                      >
+                        <Award size={15} /> <span className="hidden sm:inline">Итоги</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (input.trim()) {
+                            sendMessage(`[CLARIFY] ${input}`);
+                            setInput('');
+                          }
+                        }}
+                        title="Уточнить детали (обновит Кодекс)"
+                        disabled={isLoading || !input.trim()}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-white/5 text-white/50 hover:text-emerald-400 rounded-lg transition-all disabled:opacity-30"
+                      >
+                        <HelpCircle size={15} /> <span className="hidden sm:inline">Уточнить</span>
+                      </button>
+                      <button
+                        onClick={() => setIsDiceTrayOpen(!isDiceTrayOpen)}
+                        title="Кубики: бросок за героя"
+                        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg transition-all ${isDiceTrayOpen ? 'bg-white text-black' : 'bg-white/5 text-white/50 hover:text-white'}`}
+                      >
+                        <Dices size={15} /> <span className="hidden sm:inline">Кубики</span>
+                      </button>
+                  </div>
                   <div className="relative">
                     <textarea
                       value={input}
@@ -1194,50 +1252,6 @@ export default function App() {
                       className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 lg:px-6 py-3 lg:py-4 text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20 lg:h-24 text-sm lg:text-base pr-12"
                     />
                     <div className="absolute bottom-3 right-3 lg:bottom-4 lg:right-4 flex gap-2">
-                      <button
-                        onClick={() => {
-                          if (confirmFinale) {
-                            sendMessage(`[FINALE] Вечерний финал. ЛОГИЧЕСКИ подведи сюжет к завершению за 2-4 хода (~10-30 мин). Если сюжет далеко от конца — сжимай естественно: сведи открытые линии ключевыми сценами-мостами, ускорь к кульминации (решающий бой/выбор/открытие), развяжи конфликты, дай эпилог-передышку. Финал должен ощущаться ЗАВЕРШЁННЫМ для этой партии. Заверши <session_summary> (итоги партии).`);
-                            setConfirmFinale(false);
-                          } else {
-                            setConfirmFinale(true);
-                            setTimeout(() => setConfirmFinale(false), 8000);
-                          }
-                        }}
-                        title="Вечерний финал (логическое завершение за 2-4 хода)"
-                        disabled={isLoading}
-                        className={`p-2 rounded-xl transition-all disabled:opacity-30 ${confirmFinale ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/40 hover:text-amber-400'}`}
-                      >
-                        <Flag size={18} />
-                      </button>
-                      <button
-                        onClick={() => sendMessage(`[SESSION SUMMARY] Подведи итоги партии: <session_summary> — краткий пересказ приключения и итоги (чего добились герои, награды, XP, судьбы NPC, что запомнилось). Тёплый эпилог в стиле сессии.`)}
-                        title="Итоги партии"
-                        disabled={isLoading}
-                        className="p-2 bg-white/5 text-white/40 hover:text-emerald-400 rounded-xl transition-all disabled:opacity-30"
-                      >
-                        <Award size={18} />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (input.trim()) {
-                            sendMessage(`[CLARIFY] ${input}`);
-                            setInput('');
-                          }
-                        }}
-                        title="Уточнить детали (обновит Кодекс)"
-                        disabled={isLoading || !input.trim()}
-                        className="p-2 bg-white/5 text-white/40 hover:text-emerald-400 rounded-xl transition-all disabled:opacity-30"
-                      >
-                        <HelpCircle size={18} />
-                      </button>
-                      <button
-                        onClick={() => setIsDiceTrayOpen(!isDiceTrayOpen)}
-                        title="Кубики: бросок за героя"
-                        className={`p-2 rounded-xl transition-all ${isDiceTrayOpen ? 'bg-white text-black' : 'bg-white/5 text-white/40 hover:text-white'}`}
-                      >
-                        <Dices size={18} />
-                      </button>
                       <button
                         onClick={() => sendMessage(input)}
                         disabled={isLoading || (!input.trim() && Object.keys(pendingRolls).length === 0 && currentSession.history[currentSession.history.length - 1]?.role !== 'user')}
@@ -1552,6 +1566,16 @@ export default function App() {
               </div>
             )}
 
+            <button
+              onClick={() => startScenario(quickScenario())}
+              disabled={isLoading}
+              className="group px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-lg shadow-lg shadow-orange-900/30 hover:scale-[1.02] active:scale-[0.99] transition-all disabled:opacity-50 flex items-center gap-3"
+              title="Случайный готовый сценарий и герой — сразу в игру"
+            >
+              ⚡ Быстрая игра
+              <span className="text-xs font-semibold text-black/60 group-hover:text-black/80">готовый сюжет, 1 клик</span>
+            </button>
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl px-4">
               <button
                 onClick={() => handleNewSession({ mode: 'short', multiplayer: false })}
@@ -1578,6 +1602,27 @@ export default function App() {
                 <p className="text-white/40 text-xs mt-2">Интерактивная сказка с выборами — для детей или взрослых. В конце получается книга.</p>
               </button>
             </div>
+            <div className="w-full max-w-4xl px-4 text-left space-y-3">
+              <h3 className="text-[10px] uppercase tracking-widest font-bold text-white/40">Готовые сценарии</h3>
+              <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
+                {SCENARIOS.map(sc => (
+                  <button
+                    key={sc.id}
+                    onClick={() => startScenario(sc)}
+                    disabled={isLoading}
+                    className="snap-start shrink-0 w-56 p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.07] hover:border-white/20 transition-all text-left disabled:opacity-50"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-2xl">{sc.icon}</span>
+                      <span className="text-[9px] uppercase tracking-wider font-bold text-white/30">{sc.mode === 'tale' ? 'сказка' : sc.mode === 'campaign' ? 'кампания' : 'на вечер'}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-bold text-white">{sc.title}</p>
+                    <p className="mt-1 text-[11px] text-white/45 leading-snug">{sc.teaser}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="flex items-center gap-6">
               <GuideButton audience="gm" className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2" />
               <button onClick={() => setIsSettingsOpen(true)} className="text-xs text-white/40 hover:text-white flex items-center gap-2">

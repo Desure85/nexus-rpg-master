@@ -117,7 +117,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
     const id = crypto.randomUUID();
-    const name = (mode === "tale" ? "Сказка: " : "") + (setting.split(/[.,;\n]/)[0].slice(0, 60) || "Новое приключение");
+    const title = str(setup.title, 80).trim();
+    const name = title ? (mode === "tale" ? `Сказка: ${title}` : title) : (mode === "tale" ? "Сказка: " : "") + (setting.split(/[.,;\n]/)[0].slice(0, 60) || "Новое приключение");
     const lore = mode === "tale" ? "" : `Сеттинг: ${setting}\nЗавязка: ${plotHook}\nСтиль: ${style}`;
     // В сказке нет игрового дашборда от ИИ — заводим героев сразу, чтобы друзья могли занять их по ссылке
     const initialHistory = mode === "tale"

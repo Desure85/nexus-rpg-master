@@ -3,6 +3,7 @@
 // и отдаёт нарратив + теги механик, чтобы в демо работали урон, лут, опыт, уровни и предметы.
 import type { LlmRequest } from "./llm";
 import { resolvedOutcomes, type Outcome } from "../shared/resolve";
+import { genreOf as sharedGenreOf } from "../shared/genre";
 
 let seed = Date.now() % 100000;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed % 100000) / 100000; };
@@ -45,13 +46,8 @@ const museOf = (text: string) => {
 type Genre = "fantasy" | "cyber" | "space" | "post" | "horror" | "west" | "tale";
 const genreOf = (text: string): Genre => {
   const t = text.toLowerCase();
-  if (/кибер|неон|корпорац|хакер|имплант/.test(t)) return "cyber";
-  if (/косм|звездол|станци|галакт|планет/.test(t)) return "space";
-  if (/постап|пустош|радиац|руин|бункер/.test(t)) return "post";
-  if (/виктори|хоррор|туман лондон|культ|оккульт/.test(t)) return "horror";
-  if (/запад|ковбо|револьвер|прерии|салун/.test(t)) return "west";
-  if (/сказк|зайч|ёжик|волшебн/.test(t)) return "tale";
-  return "fantasy";
+  if (/сказк|зайч|ёжик|волшебн/.test(t) && !/фэнтези/.test(t)) return "tale";
+  return sharedGenreOf(t) as Genre;
 };
 
 const WORLD: Record<Genre, { place: string[]; enemy: string[]; loot: string[]; npc: string[]; sense: string[]; weapon: string[] }> = {
