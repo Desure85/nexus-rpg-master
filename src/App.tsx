@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Routes, Route, useParams, useNavigate, Navigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
@@ -20,6 +20,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
 import { RichParagraphs, UserContent, renderInline } from './components/RichText';
 import { GuideButton } from './components/GuideModal';
+import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -122,6 +123,7 @@ export default function App() {
   currentIdRef.current = currentSession?.id || null;
 
   const isTale = currentSession?.mode === 'tale';
+  const dashBefore = useMemo(() => dashboardsBefore(currentSession?.history || []), [currentSession?.history]);
   const taleFinished = !!currentSession?.config?.tale?.finished;
 
   // Механики/промпт текущей сессии (снимок при создании) поверх глобальных настроек
@@ -953,7 +955,7 @@ export default function App() {
                   </div>
                 </div>
                 <GuideButton audience="gm" label="" className="shrink-0 p-1.5 rounded-lg text-white/40 hover:text-amber-300 hover:bg-white/5" />
-                <span className="shrink-0 hidden xl:inline text-[10px] uppercase tracking-widest font-bold text-white/30">
+                <span className="shrink-0 hidden 2xl:inline text-[10px] uppercase tracking-widest font-bold text-white/30">
                   {isTale
                     ? `📖 Глава ${currentSession.history.filter(m => m.role === 'assistant').length} из ${currentSession.config?.tale?.chapters ?? '?'}`
                     : currentSession.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Партия на вечер'}
@@ -1001,6 +1003,7 @@ export default function App() {
                           }}
                         >
                           <RichParagraphs text={msg.content || ''} />
+                          {!isTale && !isBookView && i > 0 && <TurnSummary prev={dashBefore[i]} next={msg.dashboard} />}
                           {isTale && msg.choices && msg.choices.length > 0 && i === currentSession.history.length - 1 && !taleFinished && (
                             <div className="pt-4 flex flex-col gap-2 not-italic">
                               <span className="text-[10px] uppercase tracking-widest font-bold text-amber-400/70 font-sans">Что дальше?</span>
