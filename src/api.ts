@@ -56,6 +56,7 @@ export type SocketEvent =
   | { type: 'turn_end'; sessionId: string; turnId: string; sessionSummary?: string | null; taleFinished?: boolean }
   | { type: 'turn_error'; sessionId: string; error: string; code?: string }
   | { type: 'level_up'; sessionId: string; leveled: string[] }
+  | { type: 'oracle'; sessionId: string; status: 'generating' | 'ready' | 'error'; mode: string; changed?: string[]; error?: string }
   | { type: 'update' | 'claims_changed' | 'actions_changed' | 'deleted'; sessionId: string };
 
 /** Подписка на комнату сессии с автопереподключением. */

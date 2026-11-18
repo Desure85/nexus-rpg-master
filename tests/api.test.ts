@@ -34,6 +34,7 @@ const account = async (email: string, extra: any = {}) => {
     get: (u: string) => agent.get(u),
     post: (u: string, b: any = {}) => h(agent.post(u)).send(b),
     patch: (u: string, b: any = {}) => h(agent.patch(u)).send(b),
+    put: (u: string, b: any = {}) => h(agent.put(u)).send(b),
     del: (u: string) => h(agent.delete(u)),
   };
 };
@@ -231,7 +232,7 @@ describe('ИИ пространства и биллинг', () => {
     const after = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
     expect(after).toBeLessThan(before);
     const billing = (await gm().get(`/api/workspaces/${gm().wid}/billing`)).body;
-    expect(billing.ledger[0].reason).toBe('usage:turn');
+    expect(billing.ledger.map((l: any) => l.reason)).toEqual(expect.arrayContaining(['usage:turn', 'usage:oracle']));
     // обнуляем баланс
     ctx.db.prepare('UPDATE workspaces SET credits = 0 WHERE id = ?').run(gm().wid);
     const blocked = await gm().post('/api/sessions', { setup: rpgSetup(), workspaceId: gm().wid });
@@ -557,5 +558,73 @@ describe('доработки механик', () => {
     expect((await u2.get('/api/auth/me')).status).toBe(401); // старая сессия разлогинена
     expect((await request(ctx.app).post('/api/auth/reset').send({ token, password: 'another12' })).status).toBe(400);
     expect((await request(ctx.app).post('/api/auth/login').send({ email: 'u2@example.com', password: 'newpassword1' })).status).toBe(200);
+  });
+});
+
+describe('оракул сессии', () => {
+  it('таблицы генерируются под сессию на старте и видны только мастеру', async () => {
+    const id = await createSession(rpgSetup());
+    const o = (await gm().get(`/api/sessions/${id}/oracle`)).body;
+    expect(o.tables.map((t: any) => [t.id, t.rows.length])).toEqual([['actions', 30], ['subjects', 30], ['complications', 20], ['npcs', 20], ['details', 20]]);
+    const other = await account('other@example.com');
+    expect((await other.get(`/api/sessions/${id}/oracle`)).status).toBe(403);
+    expect((await request(ctx.app).get(`/api/sessions/${id}/oracle`)).status).toBe(403);
+    // ход использует строки таблиц сессии, а не общий набор
+    for (let i = 0; i < 4; i++) { await gm().post(`/api/sessions/${id}/turn`, { content: `ход ${i}` }); await ctx.engine.whenIdle(id); }
+    const msgs = (await gm().get(`/api/sessions/${id}`)).body.history.filter((m: any) => m.role === 'user' && m.content.includes('[MUSE:'));
+    expect(msgs.length).toBeGreaterThan(0);
+    expect(msgs[0].content).toMatch(/\[MUSE: «[^»]+ #\d+ — [^»]+ #\d+»/);
+  });
+
+  it('колода без повторов и автодогенерация, когда строки на исходе', async () => {
+    const id = await createSession(rpgSetup());
+    const seen = new Set<string>();
+    for (let i = 0; i < 25; i++) {
+      const r = ctx.engine.oracle.draw(id, 'actions');
+      expect(seen.has(r!.value)).toBe(false);
+      seen.add(r!.value);
+    }
+    // осталось 5 из 30 — ниже порога 20%; движок дописывает при следующем броске через ход
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'проверка колоды' });
+    ctx.engine.scheduleOracle(id, 'extend', { tables: ['actions'] });
+    await ctx.engine.whenIdle(id);
+    const t = (await gm().get(`/api/sessions/${id}/oracle`)).body.tables.find((x: any) => x.id === 'actions');
+    expect(t.rows.length).toBeGreaterThan(30);
+    expect(new Set(t.rows).size).toBe(t.rows.length);
+    expect(t.remaining).toBeGreaterThan(20);
+  });
+
+  it('мастер догенерирует с пожеланием, перегенерирует и правит вручную', async () => {
+    const id = await createSession(rpgSetup());
+    expect((await gm().post(`/api/sessions/${id}/oracle/generate`, { mode: 'extend', tables: ['npcs'], hint: 'подземный город' })).status).toBe(202);
+    await ctx.engine.whenIdle(id);
+    let npcs = (await gm().get(`/api/sessions/${id}/oracle`)).body.tables.find((x: any) => x.id === 'npcs');
+    expect(npcs.rows.length).toBe(40);
+    expect(npcs.rows.slice(-20).every((r: string) => r.includes('подземный город'))).toBe(true);
+    await gm().post(`/api/sessions/${id}/oracle/generate`, { mode: 'replace', tables: ['npcs'], hint: 'пираты' });
+    await ctx.engine.whenIdle(id);
+    npcs = (await gm().get(`/api/sessions/${id}/oracle`)).body.tables.find((x: any) => x.id === 'npcs');
+    expect(npcs.rows.length).toBe(20);
+    expect(npcs.rows.every((r: string) => r.includes('пираты'))).toBe(true);
+    const put = await gm().put(`/api/sessions/${id}/oracle/details`, { rows: ['Запах дёгтя', 'запах дёгтя', '', 'Скрип мачт'] });
+    expect(put.body.rows).toEqual(['Запах дёгтя', 'Скрип мачт']);
+    const other = await account('other@example.com');
+    expect((await other.post(`/api/sessions/${id}/oracle/generate`, { mode: 'replace' })).status).toBe(403);
+  });
+
+  it('сказка получает свои таблицы; без таблиц — запасной набор и ленивая генерация', async () => {
+    const tid = await createSession({ setting: 'Лес', mode: 'tale', characters: [{ name: 'Ёжик', concept: 'храбрый' }], tale: { age: '6-8', chapters: 5 } });
+    const o = (await gm().get(`/api/sessions/${tid}/oracle`)).body;
+    expect(o.tables.map((t: any) => t.id)).toEqual(['helpers', 'wonders', 'trials']);
+    expect(o.tables.every((t: any) => t.rows.length === 15)).toBe(true);
+    // старая сессия без таблиц
+    const id = await createSession(rpgSetup());
+    ctx.db.prepare('DELETE FROM oracle_tables WHERE session_id = ?').run(id);
+    (ctx.engine as any).oracleAttempt.delete(id);
+    const r = ctx.engine.oracle.draw(id, 'actions');
+    expect(r?.source).toBe('default');
+    for (let i = 0; i < 3; i++) { await gm().post(`/api/sessions/${id}/turn`, { content: `ход ${i}` }); await ctx.engine.whenIdle(id); }
+    const after = (await gm().get(`/api/sessions/${id}/oracle`)).body.tables;
+    expect(after.find((t: any) => t.id === 'actions').rows.length).toBe(30);
   });
 });

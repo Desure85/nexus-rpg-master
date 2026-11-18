@@ -251,6 +251,15 @@ export function migrate(db: DB) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_news_session ON world_news(session_id, id);
+    CREATE TABLE IF NOT EXISTS oracle_tables (
+      session_id TEXT NOT NULL,
+      table_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      rows TEXT NOT NULL DEFAULT '[]',
+      used TEXT NOT NULL DEFAULT '[]',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (session_id, table_id)
+    );
     CREATE TABLE IF NOT EXISTS password_resets (
       token_hash TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -283,7 +292,7 @@ export function migrate(db: DB) {
   `);
 }
 
-const SESSION_TABLES = ["world_news", "claims", "pending_actions", "pacing", "searches", "idle", "expeditions", "engine_state", "bases", "collection", "fronts", "memorial", "logs"];
+const SESSION_TABLES = ["oracle_tables", "world_news", "claims", "pending_actions", "pacing", "searches", "idle", "expeditions", "engine_state", "bases", "collection", "fronts", "memorial", "logs"];
 
 export function deleteWorkspaceCascade(db: DB, workspaceId: string) {
   const ids = (db.prepare("SELECT id FROM sessions WHERE workspace_id = ?").all(workspaceId) as { id: string }[]).map(r => r.id);

@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
 import { Codex } from './Codex';
 import { isUsableItem } from './Dashboard';
+import { DisclaimerFooter } from './Disclaimer';
 import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 
@@ -230,6 +231,7 @@ export const CharacterView: React.FC = () => {
               <p className="text-xs text-white/30">Попроси Мастера освободить персонажа или выбери другого.</p>
             </div>
           )}
+          <DisclaimerFooter audience="player" className="pt-4" />
         </div>
       </div>
     );
@@ -699,6 +701,7 @@ export const CharacterView: React.FC = () => {
               <Codex entries={session.codex} />
             </motion.div>
           )}
+          <DisclaimerFooter audience="player" className="px-6 pb-6 pt-2" />
         </div>
       </div>
     </div>
