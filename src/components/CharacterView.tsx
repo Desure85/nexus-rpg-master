@@ -10,6 +10,7 @@ import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 import { RichParagraphs, UserContent } from './RichText';
 import { GuideButton } from './GuideModal';
+import { TurnSummary, dashboardsBefore, DeltaBadge } from './TurnSummary';
 import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
 import { levelFromXp } from '../../shared/rules';
 import { describeEffect } from '../../shared/items';
@@ -50,10 +51,25 @@ export const CharacterView: React.FC = () => {
   }, [rawCharName]);
 
   const isTale = session?.mode === 'tale';
+  const dashBefore = React.useMemo(() => dashboardsBefore(session?.history || []), [session?.history]);
+
+  const [pendingCount, setPendingCount] = useState(0);
+  const [answered, setAnswered] = useState<{ at: number } | null>(null);
+  const seenAssistant = React.useRef<number | null>(null);
+  // Мастер ответил, а игрок смотрит не на историю — покажем уведомление с итогом для его героя
+  useEffect(() => {
+    if (!session) return;
+    const n = session.history.filter(m => m.role === 'assistant').length;
+    if (seenAssistant.current !== null && n > seenAssistant.current && activeTab !== 'story') setAnswered({ at: Date.now() });
+    seenAssistant.current = n;
+  }, [session?.history.length]);
+
+  useEffect(() => { if (activeTab === 'story') setAnswered(null); }, [activeTab]);
 
   const fetchPending = async () => {
     try {
       const pending = await api<any[]>(`/api/sessions/${sessionId}/pending`);
+      setPendingCount(pending.length);
       const mine = pending.find((p: any) => p.char_name === charName);
       setMyPending(mine?.action_text ?? null);
       setMyPendingId(mine?.id ?? null);
@@ -335,6 +351,31 @@ export const CharacterView: React.FC = () => {
         </div>
       </div>
 
+      {claimState === 'approved' && session && (() => {
+        const h = session.history;
+        const lastIdx = h.length - 1;
+        const status = masterBusy
+          ? { cls: 'bg-sky-500/10 text-sky-200 border-sky-500/20', text: isTale ? '✍️ Сказочник пишет продолжение…' : '✍️ Мастер пишет ответ…', action: activeTab !== 'story' ? 'Смотреть' : null }
+          : answered && activeTab !== 'story'
+            ? { cls: 'bg-amber-400/10 text-amber-100 border-amber-400/30', text: isTale ? '📖 Новая глава готова' : '📜 Мастер ответил', action: 'Читать' }
+            : hasActed
+              ? { cls: 'bg-emerald-500/10 text-emerald-200 border-emerald-500/20', text: `✅ Ход принят. Готово ходов: ${pendingCount}. Ждём мастера.`, action: null }
+              : { cls: 'bg-white/5 text-white/70 border-white/10', text: isTale ? '💡 Предложи, что сделает герой' : '🎲 Твой ход — опиши действие внизу', action: null };
+        return (
+          <div className={`mx-3 mt-2 px-3 py-2 rounded-xl border text-xs flex items-center justify-between gap-3 ${status.cls}`} role="status" aria-live="polite">
+            <div className="min-w-0">
+              <span className={masterBusy ? 'animate-pulse' : ''}>{status.text}</span>
+              {!masterBusy && answered && activeTab !== 'story' && !isTale && (
+                <TurnSummary prev={dashBefore[lastIdx]} next={h[lastIdx]?.dashboard} focus={charName} />
+              )}
+            </div>
+            {status.action && (
+              <button onClick={() => { setActiveTab('story'); setAnswered(null); }} className="shrink-0 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 font-bold">{status.action}</button>
+            )}
+          </div>
+        );
+      })()}
+
       <div className="flex-1 overflow-y-auto p-4 lg:p-8" style={{ fontSize: `${fontSize}px` }}>
         <div className="max-w-2xl mx-auto space-y-8 pb-32">
           {activeTab === 'character' && (
@@ -349,7 +390,7 @@ export const CharacterView: React.FC = () => {
                     const need = 50 * lv * lv;
                     return (
                       <div className="flex flex-wrap gap-1.5 mt-2 text-[11px] font-mono">
-                        <span className="px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300/90">🪙 {character.gold ?? 0}</span>
+                        <span className="relative px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300/90">🪙 {character.gold ?? 0}<DeltaBadge value={Number(character.gold) || 0} /></span>
                         <span className="px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300/90" title="Каждый уровень: +2 к макс. HP и новая способность">Ур. {lv} · {character.xp ?? 0}/{need} опыта</span>
                       </div>
                     );
@@ -371,7 +412,7 @@ export const CharacterView: React.FC = () => {
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/40">
                       <span>Здоровье</span>
-                      <span className="text-emerald-400">{character.hp}</span>
+                      <span className="relative text-emerald-400">{character.hp}<DeltaBadge value={parseInt(String(character.hp)) || 0} /></span>
                     </div>
                     <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
@@ -385,7 +426,7 @@ export const CharacterView: React.FC = () => {
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/40">
                       <span>Стресс</span>
-                      <span className="text-orange-400">{character.stress}/10</span>
+                      <span className="relative text-orange-400">{character.stress}/10<DeltaBadge value={stressValue(character.stress)} invert /></span>
                     </div>
                     <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
@@ -757,9 +798,10 @@ export const CharacterView: React.FC = () => {
               </div>
               <div className="space-y-8">
                 {session.history
-                  .filter(msg => msg.role !== 'system')
-                  .filter(msg => !isBookView || msg.role === 'assistant')
-                  .map((msg, i) => (
+                  .map((msg, i) => ({ msg, i }))
+                  .filter(({ msg }) => msg.role !== 'system')
+                  .filter(({ msg }) => !isBookView || msg.role === 'assistant')
+                  .map(({ msg, i }) => (
                   <div key={i} className={`max-w-3xl mx-auto w-full ${msg.role === 'user' ? 'text-right' : ''}`}>
                     {msg.role === 'user' ? (
                       <div className={`inline-block px-4 py-3 border rounded-2xl font-medium text-sm ${
@@ -778,6 +820,7 @@ export const CharacterView: React.FC = () => {
                     ) : (
                       <div className={`narrative-text space-y-4 ${isBookView ? 'text-white/90' : 'text-white/80'} font-serif leading-relaxed`}>
                         <RichParagraphs text={msg.content || ''} />
+                        {!isTale && !isBookView && i > 0 && <TurnSummary prev={dashBefore[i]} next={msg.dashboard} focus={charName} />}
                       </div>
                     )}
                   </div>

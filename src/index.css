@@ -75,3 +75,13 @@ html {
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
 }
+
+/* всплывающая разница чисел (HP, золото, опыт) */
+@keyframes nexus-delta-float {
+  0% { opacity: 0; transform: translateY(6px) scale(0.9); }
+  15% { opacity: 1; transform: translateY(0) scale(1.1); }
+  80% { opacity: 1; transform: translateY(-8px) scale(1); }
+  100% { opacity: 0; transform: translateY(-14px); }
+}
+.nexus-delta { animation: nexus-delta-float 2.6s ease-out forwards; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
+@media (prefers-reduced-motion: reduce) { .nexus-delta { animation: none; } }

@@ -9,6 +9,7 @@ import { api, characterLink } from '../api';
 import { isConsumable, describeEffect } from '../../shared/items';
 import { levelFromXp } from '../../shared/rules';
 import { Portal } from './Portal';
+import { DeltaBadge } from './TurnSummary';
 
 interface DashboardProps {
   data: DashboardData;
@@ -349,7 +350,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       if (next !== null) updateChar(char.name, { gold: Math.max(0, parseInt(next) || 0) });
                     }}
                   >
-                    🪙 {char.gold ?? 0}
+                    🪙 {char.gold ?? 0}<span className="relative"><DeltaBadge value={Number(char.gold) || 0} /></span>
                   </span>
                   <span
                     className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300/90 cursor-pointer hover:text-sky-200 whitespace-nowrap"
@@ -362,7 +363,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       }
                     }}
                   >
-                    Ур. {levelFromXp(char.xp || 0)} · {char.xp ?? 0}/{50 * levelFromXp(char.xp || 0) ** 2} опыта
+                    Ур. {levelFromXp(char.xp || 0)} · {char.xp ?? 0}/{50 * levelFromXp(char.xp || 0) ** 2} опыта<span className="relative"><DeltaBadge value={Number(char.xp) || 0} /></span>
                   </span>
                   {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
                     <div className="flex gap-1">
@@ -416,7 +417,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   }}>
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/60">
                       <span>HP</span>
-                      <span className="group-hover/stat:text-emerald-400 transition-colors">{char.hp}</span>
+                      <span className="relative group-hover/stat:text-emerald-400 transition-colors">{char.hp}<DeltaBadge value={parseInt(String(char.hp)) || 0} /></span>
                     </div>
                     <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
