@@ -256,6 +256,10 @@ function turn(req: LlmRequest, user: string) {
   const firstClock = (dash.clocks || [])[0]?.name;
   for (const m of user.matchAll(/\[ECHO RETURN: «([^»]+)»\]/g)) parts.push(`Прошлое напоминает о себе: ${m[1].charAt(0).toLowerCase() + m[1].slice(1)} — и это меняет расклад.`);
   for (const m of user.matchAll(/\[CLOCK FILLED: «([^»]+)»\]/g)) parts.push(`Часы «${m[1]}» пробили. То, чего все боялись, случилось: ${pick(["ворота распахиваются", "в городе бьют тревогу", "враг выходит из тени", "мост рушится"])}.`);
+  for (const m of user.matchAll(/\[(ECONOMY|CAROUSE|TRAIN|BASE|EXPEDITION|IDLE|FRONT NEWS|PARTY|ITEM USED): ([^\]]+)\]/g)) {
+    const t = m[2].replace(/\s*—\s*придумай[^\]]*$/, "").trim();
+    parts.push(`${t.charAt(0).toUpperCase() + t.slice(1)}.`);
+  }
   for (const m of user.matchAll(/\[LOOT TAKEN: ([^\]]+)\]/g)) parts.push(`${m[1].replace(/забирает/, "прячет в сумку")}.`);
   const spent = [...user.matchAll(/\[TOKEN SPENT: ([^→\]]+)→ ([^\]:]+)(?::\s*([^\]]+))?\]/g)];
   for (const m of spent) parts.push(m[2].trim() === "флешбэк" ? `*Вспышка памяти.* ${m[1].trim()} вспоминает: ${m[3] || "подготовка не прошла даром"} — и сейчас это решает дело.` : m[2].trim() === "право на истину" ? `Оказывается, ${m[3] || "мир устроен чуть иначе, чем казалось"}.` : `${m[1].trim()} рывком поднимает союзника на ноги.`);

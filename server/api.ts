@@ -490,6 +490,11 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     if (!loc) return res.status(404).json({ error: "location_not_found", message: "Локация не найдена" });
     if (loc.status === "locked") return res.status(400).json({ error: "locked", message: "Путь закрыт — сначала нужно выполнить условие" });
     if (loc.id === dash.currentLocationId) return res.status(400).json({ error: "already_here", message: "Вы уже здесь" });
+    // Только по дорогам карты: если у текущей локации есть связи, цель должна быть среди них (или знать дорогу назад)
+    const here = dash.locations?.find(l => l.id === dash.currentLocationId);
+    if (here?.connections?.length && !here.connections.includes(loc.id) && !(loc.connections || []).includes(here.id)) {
+      return res.status(400).json({ error: "no_route", message: `Из «${here.name}» нет прямой дороги в «${loc.name}» — идите через соседние места` });
+    }
     const danger = Math.min(5, Math.max(1, Number(loc.dangerLevel) || 1));
     const kids = s.style === "fairytale";
     const r = Math.random();

@@ -801,3 +801,70 @@ describe('темп и драма: часы, добыча, эхо, отношен
   });
 });
 
+describe('кампания: магазин, поиск, кутёж, квесты', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const setDash = async (id: string, fn: (d: any) => void) => {
+    const d = await dashOf(id);
+    fn(d);
+    expect((await gm().post(`/api/sessions/${id}/dashboard`, { dashboard: d })).status).toBe(200);
+  };
+
+  it('магазин под жанр, Оружейная даёт скидку, покупка уходит вестью без хода ИИ', async () => {
+    const cyber = await createSession({ ...rpgSetup('campaign'), setting: 'Киберпанк-мегаполис под неоном' });
+    const items = (await gm().get(`/api/sessions/${cyber}/shop`)).body;
+    expect(items.some((i: any) => i.name.startsWith('Медпак'))).toBe(true);
+    expect(items.some((i: any) => i.name.startsWith('Зелье'))).toBe(false);
+    const fantasy = await createSession(rpgSetup('campaign'));
+    const before = (await gm().get(`/api/sessions/${fantasy}/shop`)).body.find((i: any) => i.name.startsWith('Зелье лечения')).cost;
+    await setDash(fantasy, d => { d.characters.forEach((c: any) => { c.gold = 100; }); d.locations[0].name = 'Приречье'; });
+    await gm().post(`/api/sessions/${fantasy}/base/claim`, { name: 'Приречье' });
+    expect((await gm().post(`/api/sessions/${fantasy}/base-upgrade`, { building: 'armory' })).status).toBe(200);
+    const after = (await gm().get(`/api/sessions/${fantasy}/shop`)).body.find((i: any) => i.name.startsWith('Зелье лечения')).cost;
+    expect(after).toBe(Math.round(before * 0.85));
+    const buy = await gm().post(`/api/sessions/${fantasy}/economy`, { action: 'buy', charName: 'Арн', item: (await gm().get(`/api/sessions/${fantasy}/shop`)).body[0].name });
+    expect(buy.status).toBe(200);
+    expect(ctx.engine['game'].peekNews(fantasy).some((t: string) => t.startsWith('[ECONOMY:'))).toBe(true);
+  });
+
+  it('обыск кладёт находки на сцену, деньги делит между героями', async () => {
+    const id = await createSession(rpgSetup());
+    let found: any = null;
+    for (let i = 0; i < 30 && !found?.found; i++) {
+      found = (await gm().post(`/api/sessions/${id}/search`, { target: 'body', targetName: `Враг ${i}`, dangerLevel: 5 })).body;
+    }
+    expect(found.found).toBe(true);
+    const d = await dashOf(id);
+    const goods = found.loot.filter((l: string) => !/^\d+ /.test(l));
+    for (const g of goods) expect(d.sceneLoot).toContain(g);
+  });
+
+  it('кутёж только в таверне; квест закрывается тегом', async () => {
+    const id = await createSession(rpgSetup('campaign'));
+    await setDash(id, d => { d.locations[0].services = []; d.characters[0].gold = 50; d.quests = [{ id: 'q1', title: 'Найти мельника', desc: '', status: 'active' }]; });
+    expect((await gm().post(`/api/sessions/${id}/carouse`, { charName: 'Арн' })).status).toBe(400);
+    await setDash(id, d => { d.locations[0].services = ['tavern']; });
+    expect((await gm().post(`/api/sessions/${id}/carouse`, { charName: 'Арн' })).status).toBe(200);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Нашли мельника #questdone' });
+    await ctx.engine.whenIdle(id);
+    expect((await dashOf(id)).quests[0].status).toBe('done');
+  });
+
+  it('прибытие фиксирует движок; без дороги путь закрыт', async () => {
+    const id = await createSession(rpgSetup());
+    const d0 = await dashOf(id);
+    const from = d0.currentLocationId;
+    const target = d0.locations.find((l: any) => l.id !== from);
+    await setDash(id, d => { d.locations.push({ id: 'far', name: 'Дальний край', description: '', status: 'known', connections: [] }); });
+    expect((await gm().post(`/api/sessions/${id}/travel`, { locationId: 'far' })).status).toBe(400);
+    for (let i = 0; i < 20; i++) {
+      const r = await gm().post(`/api/sessions/${id}/travel`, { locationId: target.id });
+      await ctx.engine.whenIdle(id);
+      const d = await dashOf(id);
+      if (r.body.type === 'encounter') { expect(d.currentLocationId).toBe(from); continue; }
+      expect(d.currentLocationId).toBe(target.id);
+      expect(d.locations.find((l: any) => l.id === target.id).status).toBe('visited');
+      return;
+    }
+  });
+});
+

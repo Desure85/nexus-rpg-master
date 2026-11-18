@@ -73,7 +73,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   let data: any = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (res.status === 401 && unauthorizedHandler && !path.startsWith('/api/auth/')) unauthorizedHandler();
-  if (!res.ok) throw new ApiError(data?.message || data?.error || `HTTP ${res.status}`, res.status, data?.error);
+  if (!res.ok) throw new ApiError(data?.message || data?.tag || data?.error || `HTTP ${res.status}`, res.status, data?.error);
   return data as T;
 }
 

@@ -381,7 +381,7 @@ export default function App() {
     try {
       return await sessionPost(path, body);
     } catch (e) {
-      alert((e instanceof Error ? e.message : 'Ошибка').replace(new RegExp(`^\\[${tagPrefix}: |\\]$`, 'g'), ''));
+      showToast((e instanceof Error ? e.message : 'Ошибка').replace(new RegExp(`^\\[${tagPrefix}: |\\]$`, 'g'), ''));
       return null;
     }
   };
@@ -409,19 +409,19 @@ export default function App() {
   const handleSearchLocation = async () => {
     const loc = currentDashboard.locations?.find((l: any) => l.id === currentDashboard.currentLocationId);
     const data = await serviceCall('/search', { target: 'location', dangerLevel: loc?.dangerLevel || 1 }, 'LOOT');
-    if (data) sendMessage(`[SEARCH] ${data.tag || ''}\nПерсонажи обыскивают локацию (${loc?.name || 'текущую'}). Опиши, что они нашли, и добавь найденное в sceneLoot или в inventory персонажей.`);
+    if (data) sendMessage(`[SEARCH] ${data.tag || ''}\nПерсонажи обыскивают локацию (${loc?.name || 'текущую'}). Опиши находки (они уже лежат в sceneLoot) коротко и атмосферно.`);
   };
 
   const handleSearchBody = async (threatName: string) => {
     const data = await serviceCall('/search', { target: 'body', targetName: threatName, dangerLevel: 1 }, 'LOOT');
-    if (data) sendMessage(`[SEARCH BODY] ${data.tag || ''}\nПерсонажи обыскивают тело ${threatName}. Опиши, что нашли, добавь в sceneLoot или inventory.`);
+    if (data) sendMessage(`[SEARCH BODY] ${data.tag || ''}\nПерсонажи обыскивают тело ${threatName}. Опиши находки (они уже в sceneLoot).`);
   };
 
   const handleParty = (charName: string, status: string) => serviceCall('/party', { charName, status }, 'PARTY');
   const handleClaimBase = (name: string) => serviceCall('/base/claim', { name }, 'BASE');
-  const handleUpgradeBase = (building: string) => serviceCall('/base-upgrade', { building }, 'BASE');
-  const handleTrain = (charName: string) => serviceCall('/train', { charName }, 'TRAIN');
-  const handleHire = (charName: string, tier: string) => serviceCall('/expedition', { charName, tier }, 'EXPEDITION');
+  const handleUpgradeBase = async (building: string) => newsToast((await serviceCall('/base-upgrade', { building }, 'BASE'))?.tag);
+  const handleTrain = async (charName: string) => newsToast((await serviceCall('/train', { charName }, 'TRAIN'))?.tag);
+  const handleHire = async (charName: string, tier: string) => newsToast((await serviceCall('/expedition', { charName, tier }, 'EXPEDITION'))?.tag);
 
   const handleClaimExpeditions = async () => {
     const d = await serviceCall('/expeditions/claim', {}, 'EXPEDITION');
@@ -430,16 +430,19 @@ export default function App() {
   };
 
   const handleAcceptQuest = (title: string) =>
-    sendMessage(`[ACCEPT QUEST] Партия принимает квест «${title}». Отметь его status 'active' в quests (dashboard_json) и начни сцену.`);
+    sendMessage(`[ACCEPT QUEST] Партия принимает квест «${title}». Статус квеста движок уже отметил — начни сцену.`);
+
+  // Хозяйственные действия не тратят отдельный ход ИИ: числа меняет движок, мастер расскажет в следующем ходе
+  const newsToast = (tag?: string) => { if (tag) showToast(`${tag.replace(/^\[[A-Z ]+: |\]$/g, '')}. Мастер вплетёт это в следующий ход.`); };
 
   const handleCarouse = async (charName: string) => {
     const d = await serviceCall('/carouse', { charName }, 'CAROUSE');
-    if (d?.tag) sendMessage(`[CAROUSE] ${d.tag} — опиши этот вечер и его последствия (2-3 предложения).`);
+    newsToast(d?.tag);
   };
 
   const handleEconomy = async (action: string, charName: string, item?: string) => {
     const data = await serviceCall('/economy', { action, charName, item }, 'ECONOMY');
-    if (data) sendMessage(`[ECONOMY] ${data.tag || ''} — опиши это коротко и атмосферно (1-2 предложения).`);
+    newsToast(data?.tag);
   };
 
   const submitGmAction = async (charName: string) => {
@@ -724,8 +727,7 @@ export default function App() {
   const exportSkillFormat = async () => {
     if (!currentSession) return;
     try {
-      const res = await fetch(`/api/sessions/${currentSession.id}/export`);
-      const data = await res.json();
+      const data = await api<any>(`/api/sessions/${currentSession.id}/export`);
       if (data.status !== 'ok') throw new Error(data.error || 'export failed');
       const download = (name: string, content: string, type: string) => {
         const blob = new Blob([content], { type });
