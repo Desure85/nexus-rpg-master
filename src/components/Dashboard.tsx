@@ -1085,7 +1085,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <AlertTriangle size={12} /> Doom
+                    <AlertTriangle size={12} /> Пул Рока
                   </h3>
                   {data.doomPool > 0 && (
                     <div className="flex gap-2">
@@ -1119,7 +1119,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   ))}
                 </div>
                 <p className="text-[9px] text-white/25 italic">
-                  При 5 — непредсказуемое мировое событие (благо / нейтраль / угроза)
+                  +1 за каждый провал броска и дубль Хаоса. При 5 — мировое событие (благо, знамение или угроза), после него пул обнуляется.
                 </p>
                 {data.doomPool >= 5 && (
                   <p className="text-[9px] text-red-400/80 font-bold animate-pulse">Пул Рока сработает на следующем ходу!</p>

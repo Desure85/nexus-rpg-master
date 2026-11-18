@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { GameSession, Character, DashboardData, MechanicConfig, stressValue, itemName, slotLabel } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
+import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type , Gem } from 'lucide-react';
 import { Codex } from './Codex';
 import { isUsableItem } from './Dashboard';
 import { DisclaimerFooter } from './Disclaimer';
@@ -644,10 +644,10 @@ export const CharacterView: React.FC = () => {
                 {isMechanicEnabled('doom_pool') && (
                   <div className="space-y-2">
                     <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                      <AlertTriangle size={12} /> Doom
+                      <AlertTriangle size={12} /> Пул Рока · {dashboard.doomPool}/5
                     </h3>
                     <div className="flex gap-2">
-                      {Array.from({ length: 10 }).map((_, i) => (
+                      {Array.from({ length: 5 }).map((_, i) => (
                         <div 
                           key={i} 
                           className={`h-3 flex-1 rounded-sm transition-all ${
@@ -656,6 +656,7 @@ export const CharacterView: React.FC = () => {
                         />
                       ))}
                     </div>
+                    <p className="text-[11px] text-white/35">Растёт от провалов. На 5 случится что-то неожиданное.</p>
                   </div>
                 )}
                 
@@ -671,6 +672,30 @@ export const CharacterView: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {isMechanicEnabled('loot') && (dashboard.sceneLoot || []).length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
+                    <Gem size={12} /> Добыча на сцене
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {(dashboard.sceneLoot || []).map((item, i) => (
+                      <button
+                        key={i}
+                        disabled={claimState !== 'approved'}
+                        onClick={async () => {
+                          try { await api(`/api/sessions/${sessionId}/loot/take`, { body: { charName, item } }); fetchData(); }
+                          catch (e) { alert(e instanceof Error ? e.message : 'Не получилось'); }
+                        }}
+                        className="px-3 py-2 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-100 text-sm hover:bg-amber-400/20 disabled:opacity-40"
+                        title="Забрать себе"
+                      >
+                        {item} <span className="text-amber-300/70 text-xs">· забрать</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {isMechanicEnabled('clocks') && dashboard.clocks && dashboard.clocks.length > 0 && (
                 <div className="space-y-4">

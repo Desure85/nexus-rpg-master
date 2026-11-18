@@ -79,7 +79,11 @@ function rpgReply(req: LlmRequest): string {
   if (/#hurt/.test(user) && names[0]) body += ` [DAMAGE: ${names[0]} -3]`;
   if (/#hit/.test(user)) body += ` [HIT: Мародёр -${user.match(/#hit(\d+)/)?.[1] || 5}]`;
   if (/#potion/.test(user) && names[0]) body += ` [USE: ${names[0]}|Зелье лечения]`;
+  if (/#clock/.test(user)) body += ` [CLOCK: Тревога +${user.match(/#clock(\d+)/)?.[1] || 1}]`;
+  if (/#take/.test(user) && names[0]) body += ` [TAKE: ${names[0]}|Ключ]`;
   const dash: any = { atmosphere: "Напряжение растёт" };
+  // модель «пытается» переписать прогресс часов — движок не даст
+  if (/#clock/.test(user)) dash.clocks = [{ name: "Тревога", progress: 0, total: 4 }];
   // угроза: при [ENCOUNTER] или по тестовому триггеру; модель «пытается» переписать HP — движок не даст
   if ((/\[ENCOUNTER:/.test(user) && !/тишина/.test(user)) || /#enemy|#hit/.test(user)) dash.threats = [{ name: "Мародёр", hp: "10/10", features: ["Ржавый тесак"] }];
   let tail = `\n\n<dashboard_json>${JSON.stringify(dash)}</dashboard_json>`;
