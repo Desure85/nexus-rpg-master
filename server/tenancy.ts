@@ -7,6 +7,8 @@ import { requireUser, rateLimit, setSessionCookie, clearSessionCookie, SESSION_D
 import { effectivePlan, PLANS, paymentsProvider, type Billing } from "./billing";
 import { completeWithUsage, describeProvider, PROVIDERS, type LlmSettings, type Provider } from "./llm";
 import { readSettings } from "./store";
+import { sendMail, mailConfigured } from "./mailer";
+import { requireSuperadmin } from "./security";
 
 export type Role = "owner" | "admin" | "gm";
 const ROLE_RANK: Record<Role, number> = { gm: 1, admin: 2, owner: 3 };
@@ -192,6 +194,46 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
     // разлогиниваем остальные устройства
     db.prepare("DELETE FROM auth_sessions WHERE user_id = ? AND id != ?").run(user.id, req.auth.sid);
     res.json({ ok: true });
+  });
+
+  // ------------------------------- восстановление пароля -------------------------------
+  const appUrl = (req: Request) => (process.env.APP_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
+  const createResetToken = (userId: string, hours: number) => {
+    const token = randomToken(24);
+    db.prepare("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES (?, ?, datetime('now', ?))").run(sha256(token), userId, `+${hours} hours`);
+    return token;
+  };
+
+  app.post("/api/auth/forgot", authLimiter, async (req, res) => {
+    const email = str(req.body?.email, 200).trim().toLowerCase();
+    const user = db.prepare("SELECT id, email FROM users WHERE email = ?").get(email) as any;
+    if (user && mailConfigured()) {
+      const link = `${appUrl(req)}/reset/${createResetToken(user.id, 1)}`;
+      await sendMail(user.email, "Восстановление пароля — Nexus RPG", `Чтобы задать новый пароль, откройте ссылку (действует 1 час):\n${link}\n\nЕсли вы не запрашивали сброс — просто проигнорируйте письмо.`);
+    }
+    // Ответ одинаковый для любых email — нельзя узнать, кто зарегистрирован
+    res.json({ ok: true, mail: mailConfigured() });
+  });
+
+  app.post("/api/auth/reset", authLimiter, async (req, res) => {
+    const token = str(req.body?.token, 200);
+    const password = str(req.body?.password, 200);
+    if (password.length < 8) return res.status(400).json({ error: "weak_password", message: "Пароль — минимум 8 символов" });
+    const row = db.prepare("SELECT * FROM password_resets WHERE token_hash = ? AND used = 0 AND expires_at > datetime('now')").get(sha256(token)) as any;
+    if (!row) return res.status(400).json({ error: "bad_token", message: "Ссылка недействительна или устарела" });
+    db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(await hashPassword(password), row.user_id);
+    db.prepare("UPDATE password_resets SET used = 1 WHERE user_id = ?").run(row.user_id);
+    db.prepare("DELETE FROM auth_sessions WHERE user_id = ?").run(row.user_id);
+    t.startSession(req, res, row.user_id);
+    res.json({ ok: true });
+  });
+
+  // Без почты: админ платформы выдаёт ссылку сброса вручную
+  app.post("/api/admin/users/reset-link", requireUser, requireSuperadmin, (req, res) => {
+    const email = str(req.body?.email, 200).trim().toLowerCase();
+    const user = db.prepare("SELECT id FROM users WHERE email = ?").get(email) as any;
+    if (!user) return res.status(404).json({ error: "user_not_found", message: "Пользователь не найден" });
+    res.json({ link: `${appUrl(req)}/reset/${createResetToken(user.id, 24)}` });
   });
 
   // ------------------------------- пространства -------------------------------

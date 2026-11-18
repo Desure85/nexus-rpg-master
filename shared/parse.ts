@@ -166,11 +166,29 @@ export const parseStateTags = (text: string): { clean: string; changes: StateCha
       changes.push({ field: STATE_FIELDS[kind], name, delta });
       return '';
     })
+    .replace(/\[(HIT|USE):[^\]]*\]/gi, '')
     .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi, '')
     .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/[ \t]{2,}/g, ' ');
   return { clean, changes };
+};
+
+/** Урон по врагам [HIT: Враг -N] и использование расходников [USE: Герой|Предмет]. */
+export const parseCombatTags = (text: string): { hits: { name: string; delta: number }[]; uses: { name: string; item: string }[] } => {
+  const hits: { name: string; delta: number }[] = [];
+  const uses: { name: string; item: string }[] = [];
+  for (const m of text.matchAll(/\[HIT:\s*([^\]\d]+?)\s*[,:]?\s*([+\-−–]?)\s*(\d+)[^\]]*\]/gi)) {
+    const name = m[1].replace(/[\s,:+\-−–]+$/, '').trim();
+    const n = parseInt(m[3], 10);
+    if (name && n) hits.push({ name, delta: m[2] === '+' ? n : -n });
+  }
+  for (const m of text.matchAll(/\[USE:\s*([^\]|]+)\|([^\]]+)\]/gi)) {
+    const name = m[1].trim();
+    const item = m[2].trim();
+    if (name && item) uses.push({ name, item });
+  }
+  return { hits, uses };
 };
 
 /** Стресс из меток бросков ([ROLL: ... | Stress: +2 ...]) и дубли Хаоса — применяет движок, а не модель. */
@@ -245,7 +263,7 @@ export const parseTale = (raw: string): TaleParse => {
 };
 
 const HIDDEN_BLOCK_RE = /<(dashboard_json|codex_json|lore_update|final_draft|session_summary|choices_json|tale_title|tale_moral)[\s\S]*$/i;
-const ENGINE_TAG_RE = /\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|TROPHY|FRONT|MEMORIAL):[^\]]*\]?/gi;
+const ENGINE_TAG_RE = /\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|TROPHY|FRONT|MEMORIAL|HIT|USE):[^\]]*\]?/gi;
 
 /** Очищает частично полученный стрим для показа игрокам: прячет JSON-блоки и движковые теги. */
 export const cleanStreamForDisplay = (text: string): string =>
@@ -261,8 +279,14 @@ export const displayUserContent = (content: string): string => {
   return c
     .replace(/^\[TALE_CHOICE\]\s*/, '✦ ')
     .replace(/^\[ROUND\][\s\S]*/, '⚔ Ход раунда')
+    .replace(/^\[TRAVEL[^\]]*\][^«]*«([^»]+)»[\s\S]*/, '🧭 В путь: «$1»')
+    .replace(/^\[EXPLORE\][^«]*«([^»]+)»[\s\S]*/, '🔎 Исследуем «$1»')
+    .replace(/^\[SAVE_CHAPTER\][\s\S]*/, '💾 Сохранить главу')
+    .replace(/^\[FINALE\][\s\S]*/, '🏁 Финал вечера')
+    .replace(/^\[SESSION SUMMARY\][\s\S]*/, '🏆 Итоги партии')
     .replace(/^\[LEVEL UP\]([^.]*)\.[\s\S]*/, '⬆ Новый уровень:$1')
     .replace(/\n*\[(STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS)[^\]]*\]/g, '')
+    .replace(/\n*\[WORLD NEWS\][\s\S]*?\[\/WORLD NEWS\]/g, '')
     .trim();
 };
 

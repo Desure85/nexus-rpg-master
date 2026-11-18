@@ -141,3 +141,21 @@ describe('миграция промптов', () => {
     expect(merged.some(m => m.id === 'equipment' && m.enabled)).toBe(true);
   });
 });
+
+describe('теги боя и расходников', () => {
+  it('разбирает [HIT] и [USE] и прячет их из текста', async () => {
+    const { parseCombatTags } = await import('../shared/parse');
+    const r = parseCombatTags('Удар! [HIT: Мародёр −4] [HIT: Волк, +2] [USE: Арн|Зелье лечения]');
+    expect(r.hits).toEqual([{ name: 'Мародёр', delta: -4 }, { name: 'Волк', delta: 2 }]);
+    expect(r.uses).toEqual([{ name: 'Арн', item: 'Зелье лечения' }]);
+    expect(parseStateTags('Удар! [HIT: Мародёр -4] [USE: Арн|Зелье]').clean.trim()).toBe('Удар!');
+  });
+});
+
+describe('отображение служебных команд', () => {
+  it('сворачивает длинные команды мастера', () => {
+    expect(displayUserContent('[TRAVEL DISCOVERY] По пути в «Шепчущий лес» партия...\n1. ...')).toBe('🧭 В путь: «Шепчущий лес»');
+    expect(displayUserContent('[EXPLORE] Партия исследует «Приречье».\n1. ...')).toBe('🔎 Исследуем «Приречье»');
+    expect(displayUserContent('[SAVE_CHAPTER] Сохрани главу...')).toBe('💾 Сохранить главу');
+  });
+});

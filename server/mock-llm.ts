@@ -76,7 +76,12 @@ function rpgReply(req: LlmRequest): string {
     : `Мастер отвечает: «${user.split("\n")[0].slice(0, 120)}». Ветер доносит запах дыма.`;
   if (/#xp/.test(user) && names[0]) body += ` [XP: ${names[0]} +60]`;
   if (/#hurt/.test(user) && names[0]) body += ` [DAMAGE: ${names[0]} -3]`;
-  let tail = `\n\n<dashboard_json>${JSON.stringify({ atmosphere: "Напряжение растёт" })}</dashboard_json>`;
+  if (/#hit/.test(user)) body += ` [HIT: Мародёр -${user.match(/#hit(\d+)/)?.[1] || 5}]`;
+  if (/#potion/.test(user) && names[0]) body += ` [USE: ${names[0]}|Зелье лечения]`;
+  const dash: any = { atmosphere: "Напряжение растёт" };
+  // угроза: при [ENCOUNTER] или по тестовому триггеру; модель «пытается» переписать HP — движок не даст
+  if ((/\[ENCOUNTER:/.test(user) && !/тишина/.test(user)) || /#enemy|#hit/.test(user)) dash.threats = [{ name: "Мародёр", hp: "10/10", features: ["Ржавый тесак"] }];
+  let tail = `\n\n<dashboard_json>${JSON.stringify(dash)}</dashboard_json>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user)) tail += `\n<session_summary>Герои прошли через туман и раскрыли тайну записки.</session_summary>`;
   if (/\[SAVE_CHAPTER\]/.test(user)) tail += `\n<lore_update>Архив: герои раскрыли тайну записки.</lore_update>\n<final_draft>Глава о тумане и записке.</final_draft>`;
   return body + tail;

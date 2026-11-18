@@ -12,6 +12,7 @@ import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, s
 import { initSecret } from "./crypto";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
+import { mailConfigured } from "./mailer";
 import {
   loadSession, saveSession, publicSession, sessionSummary, lastDashboard, readSettings, settingsForClient, writeSettings, mergeMechanics,
   type SessionConfig, type StoredSession,
@@ -105,6 +106,7 @@ export async function createApp(opts: AppOptions = {}) {
   app.get("/api/config", (req, res) => {
     res.json({
       registration: registrationMode(),
+      mail: mailConfigured(),
       payments: paymentsProvider(),
       llm: describeProvider(readSettings(db).llm),
       taleAges: TALE_AGES,
@@ -213,8 +215,8 @@ export async function createApp(opts: AppOptions = {}) {
   //  GET — по ссылке (UUID сессии — секрет приглашения);
   //  claim/actions/roll — игрок (секрет устройства);
   //  всё остальное — только мастер, и изменения истории идут через очередь сессии.
-  const PLAYER_ROUTES = /^\/(claim|actions)\/?$/;
-  const UNLOCKED_ROUTES = /^\/(turn|commit)\/?$/;
+  const PLAYER_ROUTES = /^\/(claim|actions|use)\/?$/;
+  const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore)\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
     const row = db.prepare("SELECT workspace_id, created_by FROM sessions WHERE id = ?").get(id) as { workspace_id: string | null; created_by: string | null } | undefined;
@@ -371,6 +373,9 @@ export async function createApp(opts: AppOptions = {}) {
     if (!deviceId || !charName || !action) return res.status(400).json({ error: "charName/action required" });
     const claim = db.prepare("SELECT * FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, charName, deviceId) as any;
     if (!claim) return res.status(403).json({ error: "not_your_character", message: "Персонаж не закреплён за этим устройством" });
+    if (gameApi.ensureEngineState(req.params.id)[charName]?.status === "downed") {
+      return res.status(409).json({ error: "downed", message: "Герой повержен и не может действовать, пока союзники его не стабилизируют" });
+    }
     const existing = db.prepare("SELECT 1 FROM pending_actions WHERE session_id = ? AND char_name = ?").get(req.params.id, charName);
     if (existing) return res.status(409).json({ error: "already_acted", message: "Действие уже отправлено, ждём мастера" });
     const s = loadSession(db, req.params.id)!;
@@ -392,6 +397,64 @@ export async function createApp(opts: AppOptions = {}) {
     db.prepare("DELETE FROM pending_actions WHERE id = ? AND session_id = ?").run(req.params.aid, req.params.id);
     broadcast(req.params.id, { type: "actions_changed", sessionId: req.params.id });
     res.json({ status: "ok" });
+  });
+
+  // Использовать расходник: мастер — за любого героя, игрок — только за своего. ИИ узнает в следующем ходе.
+  app.post("/api/sessions/:id/use", (req, res) => {
+    const charName = str(req.body?.charName, 60);
+    const item = str(req.body?.item, 200);
+    if (!charName || !item) return res.status(400).json({ error: "charName/item required" });
+    if (!(req as any).isOwner) {
+      const claim = req.auth.deviceId && db.prepare("SELECT 1 FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, charName, req.auth.deviceId);
+      if (!claim) return res.status(403).json({ error: "not_your_character", message: "Персонаж не закреплён за этим устройством" });
+    }
+    engine.withLock(req.params.id, () => {
+      const r = gameApi.useItem(req.params.id, charName, item);
+      if (!r.ok) return res.status(400).json({ error: "cannot_use", message: r.tag.replace(/^\[ITEM: |\]$/g, "") || "Нельзя использовать" });
+      gameApi.queueNews(req.params.id, r.tag);
+      broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+      res.json({ status: "ok", tag: r.tag });
+    });
+  });
+
+  // Путешествие: исход дороги бросает сервер (раньше — Math.random в браузере мастера)
+  app.post("/api/sessions/:id/travel", llmLimiter, (req, res) => {
+    const s = loadSession(db, req.params.id)!;
+    const dash = lastDashboard(s.history);
+    const loc = dash.locations?.find(l => l.id === req.body?.locationId);
+    if (!loc) return res.status(404).json({ error: "location_not_found", message: "Локация не найдена" });
+    if (loc.status === "locked") return res.status(400).json({ error: "locked", message: "Путь закрыт — сначала нужно выполнить условие" });
+    if (loc.id === dash.currentLocationId) return res.status(400).json({ error: "already_here", message: "Вы уже здесь" });
+    const danger = Math.min(5, Math.max(1, Number(loc.dangerLevel) || 1));
+    const kids = s.style === "fairytale";
+    const r = Math.random();
+    const encounterChance = kids ? 0.2 : 0.12 + 0.07 * danger;
+    const type: "encounter" | "discovery" | "safe" = r < encounterChance ? "encounter" : r < encounterChance + 0.3 ? "discovery" : "safe";
+    const prompt = type === "encounter"
+      ? `[TRAVEL ENCOUNTER] Партия отправляется в «${loc.name}», но в пути их перехватывают${kids ? " (забавное препятствие или загадка, без опасности)" : ""}.
+1. Опиши дорогу и событие, подходящее сеттингу и уровню опасности ${danger}/5.
+2. Партия ещё НЕ прибыла в «${loc.name}»: currentLocationId не меняй.
+3. Останови сцену в момент выбора.`
+      : type === "discovery"
+        ? `[TRAVEL DISCOVERY] По пути в «${loc.name}» партия замечает что-то в стороне от дороги.
+1. Опиши путь и находку — НОВУЮ локацию: добавь её в locations (status "known", dangerLevel по стилю игры, coordinates рядом, connections с текущей локацией и с "${loc.id}").
+2. Затем опиши прибытие в «${loc.name}»: status "visited", currentLocationId = "${loc.id}".`
+        : `[TRAVEL] Партия спокойно добирается до «${loc.name}».
+1. Коротко опиши дорогу и смену пейзажа.
+2. Опиши прибытие и первое впечатление: status "visited", currentLocationId = "${loc.id}".`;
+    engine.enqueueTurn(s.id, prompt);
+    res.status(202).json({ type, locationName: loc.name });
+  });
+
+  app.post("/api/sessions/:id/explore", llmLimiter, (req, res) => {
+    const s = loadSession(db, req.params.id)!;
+    const dash = lastDashboard(s.history);
+    const loc = dash.locations?.find(l => l.id === (req.body?.locationId || dash.currentLocationId));
+    if (!loc) return res.status(404).json({ error: "location_not_found", message: "Локация не найдена" });
+    engine.enqueueTurn(s.id, `[EXPLORE] Партия исследует «${loc.name}».
+1. Опиши, что они находят: детали, следы, NPC.
+2. Открой 1–2 НОВЫЕ локации: добавь в locations (уникальный id, name, description, dangerLevel по стилю игры, status "known", coordinates рядом с текущей, connections ["${loc.id}"]) и допиши их id в connections «${loc.name}».`);
+    res.status(202).json({ status: "queued" });
   });
 
   // ГМ вписывает ход за персонажа (соло / игрок не успел)

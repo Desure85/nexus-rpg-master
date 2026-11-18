@@ -87,15 +87,6 @@ describe('соло', () => {
     expect(state.characters['Арн'].hp_cur).toBe(9);
   });
 
-  it('повышение уровня запускает отдельный ход со способностями', async () => {
-    const id = await createSession(rpgSetup());
-    await gm().post(`/api/sessions/${id}/turn`, { content: 'Тренируюсь #xp' });
-    await ctx.engine.whenIdle(id);
-    const s = (await gm().get(`/api/sessions/${id}`)).body;
-    expect(s.history.some((m: any) => m.role === 'user' && m.content.startsWith('[LEVEL UP] Арн → уровень 2'))).toBe(true);
-    expect(s.history[s.history.length - 1].role).toBe('assistant');
-  });
-
   it('итоги партии попадают в архив', async () => {
     const id = await createSession(rpgSetup());
     await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
@@ -435,5 +426,136 @@ describe('сказка', () => {
     await ctx.engine.whenIdle(id);
     const s = (await gm().get(`/api/sessions/${id}`)).body;
     expect(s.config.tale.finished).toBe(true);
+  });
+});
+
+describe('доработки механик', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const setDash = async (id: string, fn: (d: any) => void) => {
+    const d = await dashOf(id);
+    fn(d);
+    expect((await gm().post(`/api/sessions/${id}/dashboard`, { dashboard: d })).status).toBe(200);
+  };
+
+  it('idle и экспедиции не делают отдельного хода ИИ: вести уходят со следующим ходом', async () => {
+    const id = await createSession(rpgSetup('campaign'));
+    ctx.db.prepare("INSERT INTO idle (session_id, last_seen) VALUES (?, datetime('now','-3 hours')) ON CONFLICT(session_id) DO UPDATE SET last_seen = datetime('now','-3 hours')").run(id);
+    const usageBefore = (ctx.db.prepare('SELECT COUNT(*) n FROM usage').get() as any).n;
+    const idle = (await gm().post(`/api/sessions/${id}/idle`)).body;
+    expect(idle.idleGold).toBeGreaterThan(0);
+    expect(idle.queued).toBe(true);
+    await ctx.engine.whenIdle(id);
+    expect((ctx.db.prepare('SELECT COUNT(*) n FROM usage').get() as any).n).toBe(usageBefore);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Идём на рынок' });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const userMsg = s.history.find((m: any) => m.content.startsWith('Идём на рынок')).content;
+    expect(userMsg).toContain('[WORLD NEWS]');
+    expect(userMsg).toContain('[IDLE:');
+    expect(ctx.db.prepare('SELECT COUNT(*) n FROM world_news WHERE session_id = ?').get(id)).toMatchObject({ n: 0 });
+  });
+
+  it('новый уровень: без отдельного хода, [LEVEL UP] приходит со следующим', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Тренируюсь #xp' });
+    await ctx.engine.whenIdle(id);
+    let s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.filter((m: any) => m.role === 'assistant').length).toBe(2);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Дальше' });
+    await ctx.engine.whenIdle(id);
+    s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.find((m: any) => m.content.startsWith('Дальше')).content).toContain('[LEVEL UP] Арн → уровень 2');
+  });
+
+  it('путешествие: исход бросает сервер, закрытые и текущие локации отклоняются', async () => {
+    const id = await createSession(rpgSetup());
+    expect((await gm().post(`/api/sessions/${id}/travel`, { locationId: 'loc-town' })).status).toBe(400);
+    const r = await gm().post(`/api/sessions/${id}/travel`, { locationId: 'loc-woods' });
+    expect(r.status).toBe(202);
+    expect(['encounter', 'discovery', 'safe']).toContain(r.body.type);
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.some((m: any) => /^\[TRAVEL/.test(m.content) && m.content.includes('Шепчущий лес'))).toBe(true);
+    await setDash(id, d => { d.locations[1].status = 'locked'; });
+    expect((await gm().post(`/api/sessions/${id}/travel`, { locationId: 'loc-woods' })).status).toBe(400);
+    expect((await gm().post(`/api/sessions/${id}/explore`, {})).status).toBe(202);
+    await ctx.engine.whenIdle(id);
+  });
+
+  it('HP врагов хранит движок: [HIT] уменьшает, модель не перезаписывает, при 0 враг уходит', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Из кустов выходит враг #enemy' });
+    await ctx.engine.whenIdle(id);
+    expect((await dashOf(id)).threats).toEqual([expect.objectContaining({ name: 'Мародёр', hp: '10/10' })]);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт #hit4' });
+    await ctx.engine.whenIdle(id);
+    expect((await dashOf(id)).threats[0].hp).toBe('6/10'); // мок снова прислал 10/10 — движок не принял
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Добиваем #hit9' });
+    await ctx.engine.whenIdle(id);
+    expect((await dashOf(id)).threats).toEqual([]);
+  });
+
+  it('расходники: эффект из названия, предмет исчезает; игрок — только за своего героя', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.characters[0].hp = '4/12'; d.characters[0].inventory = ['Факел', 'Зелье лечения (восстанавливает 5 HP)']; });
+    expect((await gm().post(`/api/sessions/${id}/use`, { charName: 'Арн', item: 'Факел' })).status).toBe(400);
+    const r = await gm().post(`/api/sessions/${id}/use`, { charName: 'Арн', item: 'Зелье лечения' });
+    expect(r.status).toBe(200);
+    expect(r.body.tag).toContain('HP 4→9');
+    const d = await dashOf(id);
+    expect(d.characters[0].inventory).toEqual(['Факел']);
+    expect(d.characters[0].hp).toBe('9/12');
+    // игрок с телефона
+    await player(DEV_A).post(`/api/sessions/${id}/claim`, { charName: 'Лиса', playerName: 'Аня' });
+    const cid = (await request(ctx.app).get(`/api/sessions/${id}/claims`)).body[0].id;
+    await gm().post(`/api/sessions/${id}/claims/${cid}/approve`);
+    await setDash(id, dd => { dd.characters[1].inventory = ['Отвар мяты (снимает 2 Стресса)']; dd.characters[1].stress = 3; });
+    expect((await player(DEV_A).post(`/api/sessions/${id}/use`, { charName: 'Арн', item: 'Факел' })).status).toBe(403);
+    const pr = await player(DEV_A).post(`/api/sessions/${id}/use`, { charName: 'Лиса', item: 'Отвар мяты' });
+    expect(pr.status).toBe(200);
+    expect((await gm().get(`/api/sessions/${id}/state`)).body.characters['Лиса'].stress).toBe(1);
+  });
+
+  it('[USE] от модели тоже применяется движком', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.characters[0].hp = '3/12'; d.characters[0].inventory = ['Зелье лечения (восстанавливает 5 HP)']; });
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн пьёт зелье #potion' });
+    await ctx.engine.whenIdle(id);
+    const st = (await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'];
+    expect(st.hp_cur).toBe(8);
+    expect((await dashOf(id)).characters[0].inventory).toEqual([]);
+  });
+
+  it('«Повержен»: 0 HP блокирует ходы игрока, лечение возвращает в строй', async () => {
+    const id = await createSession(rpgSetup());
+    await player(DEV_A).post(`/api/sessions/${id}/claim`, { charName: 'Арн', playerName: 'Петя' });
+    const cid = (await request(ctx.app).get(`/api/sessions/${id}/claims`)).body[0].id;
+    await gm().post(`/api/sessions/${id}/claims/${cid}/approve`);
+    await setDash(id, d => { d.characters[0].hp = '2/12'; d.characters[0].inventory = ['Зелье лечения (восстанавливает 5 HP)']; });
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Удар по Арну #hurt' });
+    await ctx.engine.whenIdle(id);
+    expect((await dashOf(id)).characters[0].status).toBe('downed');
+    const blocked = await player(DEV_A).post(`/api/sessions/${id}/actions`, { charName: 'Арн', action: 'встаю' });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error).toBe('downed');
+    await gm().post(`/api/sessions/${id}/use`, { charName: 'Арн', item: 'Зелье' });
+    expect((await dashOf(id)).characters[0].status).toBe('active');
+    expect((await player(DEV_A).post(`/api/sessions/${id}/actions`, { charName: 'Арн', action: 'встаю' })).status).toBe(200);
+  });
+
+  it('сброс пароля: ссылка от суперадмина, старые сессии выходят, ссылка одноразовая', async () => {
+    const u2 = await account('u2@example.com');
+    const forgot = await request(ctx.app).post('/api/auth/forgot').send({ email: 'u2@example.com' });
+    expect(forgot.body).toEqual({ ok: true, mail: false });
+    expect((await u2.post('/api/admin/users/reset-link', { email: 'gm@example.com' })).status).toBe(403);
+    const { link } = (await gm().post('/api/admin/users/reset-link', { email: 'u2@example.com' })).body;
+    const token = link.split('/reset/')[1];
+    const agent = request.agent(ctx.app);
+    expect((await agent.post('/api/auth/reset').set('x-nexus-client', '1').send({ token, password: 'short' })).status).toBe(400);
+    expect((await agent.post('/api/auth/reset').set('x-nexus-client', '1').send({ token, password: 'newpassword1' })).status).toBe(200);
+    expect((await agent.get('/api/auth/me')).body.user.email).toBe('u2@example.com');
+    expect((await u2.get('/api/auth/me')).status).toBe(401); // старая сессия разлогинена
+    expect((await request(ctx.app).post('/api/auth/reset').send({ token, password: 'another12' })).status).toBe(400);
+    expect((await request(ctx.app).post('/api/auth/login').send({ email: 'u2@example.com', password: 'newpassword1' })).status).toBe(200);
   });
 });

@@ -9,7 +9,7 @@ import {
   CLARIFY_SYSTEM_PROMPT, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
-import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects } from "../shared/parse";
+import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags } from "../shared/parse";
 import { museTag, actionSlotsTag, taleIdea } from "../shared/oracle";
 import type { DashboardData, Message, MechanicConfig } from "../src/types";
 
@@ -183,6 +183,13 @@ export class Engine {
         const stateTag = this.game.stateToTag(chars);
         if (stateTag) finalContent += `\n\n[STATE: ${stateTag}]`;
       }
+      // Вести мира (idle, экспедиции, фронты, новые уровни) — одним блоком в этот же ход
+      if (!isTale && !finalContent.startsWith("[CLARIFY]")) {
+        const news = this.game.takeNews(sessionId);
+        if (news.length) {
+          finalContent += `\n\n[WORLD NEWS]\n${news.join("\n")}\nЧисла уже применены движком. Коротко вплети эти вести в ответ (1–3 предложения на все), [LEVEL UP] выполни полностью.\n[/WORLD NEWS]`;
+        }
+      }
       // Слоты действий выбирает движок (модель «случайно» выбирает одно и то же)
       if (!isTale && !finalContent.startsWith("[CLARIFY]") && this.isEnabled(cfg.mechanics, "actions")) {
         const active = (lastDashboard(s.history).characters || []).filter(c => c.status !== "base").map(c => c.name);
@@ -251,7 +258,21 @@ export class Engine {
       const auto = rollFx.stress
         .map(r => ({ field: "stress" as const, name: this.game.resolveName(chars, r.name) || r.name, delta: r.delta }))
         .filter(r => chars[r.name] && !aiStress.has(r.name));
-      const applied = this.game.applyStateChanges(chars, [...changes, ...auto]);
+      // Расходники [USE: Герой|Предмет]: убираем из инвентаря, эффект применяет движок
+      const useChanges: { field: "hp" | "stress"; name: string; delta: number }[] = [];
+      for (const u of parseCombatTags(aiContent).uses) {
+        const name = this.game.resolveName(chars, u.name);
+        const ch = (dashboard.characters || []).find(c => c.name === name);
+        if (!name || !ch) continue;
+        const q = u.item.toLowerCase();
+        const idx = (ch.inventory || []).findIndex(i => i.toLowerCase().includes(q) || q.includes(i.toLowerCase().split("(")[0].trim()));
+        if (idx < 0) continue;
+        const effects = this.game.itemEffect(ch.inventory![idx]);
+        if (!effects.length) continue;
+        ch.inventory = ch.inventory!.filter((_, i) => i !== idx);
+        for (const e of effects) useChanges.push({ ...e, name });
+      }
+      const applied = this.game.applyStateChanges(chars, [...changes, ...auto, ...useChanges]);
       // Повышение уровня: +2 max HP за уровень — детерминированно, движком
       for (const [n, c] of Object.entries(chars) as [string, any][]) {
         const gained = levelFromXp(c.xp || 0) - (prevLevels[n] ?? levelFromXp(c.xp || 0));
@@ -263,6 +284,33 @@ export class Engine {
       }
       if (added || applied.length || leveled.length) this.game.saveEngineState(sessionId, chars);
       dashboard = this.game.mergeStateIntoDashboard(dashboard, chars);
+
+      // HP врагов принадлежит движку: у известных угроз берём прежнее значение, меняем только тегами [HIT]
+      if (dashboard.threats?.length || currentDashboard.threats?.length) {
+        const norm = (n: string) => String(n || "").toLowerCase().replace(/ё/g, "е").trim();
+        const hpRe = /(\d+)\s*\/\s*(\d+)/;
+        const prev = currentDashboard.threats || [];
+        let threats = (dashboard.threats || []).map(t => {
+          const p = prev.find(x => norm(x.name) === norm(t.name));
+          return p && hpRe.test(String(p.hp)) ? { ...t, hp: p.hp } : t;
+        });
+        for (const h of parseCombatTags(aiContent).hits) {
+          let i = threats.findIndex(t => norm(t.name) === norm(h.name));
+          if (i < 0) {
+            const partial = threats.map((t, k) => [t, k] as const).filter(([t]) => norm(t.name).includes(norm(h.name)) || norm(h.name).includes(norm(t.name)));
+            if (partial.length === 1) i = partial[0][1];
+          }
+          if (i < 0) continue;
+          const m = String(threats[i].hp).match(hpRe);
+          if (!m) continue;
+          const max = +m[2];
+          const cur = Math.max(0, Math.min(max, +m[1] + h.delta));
+          threats[i] = { ...threats[i], hp: `${cur}/${max}` };
+        }
+        // побеждённые угрозы уходят со сцены
+        threats = threats.filter(t => { const m = String(t.hp).match(hpRe); return !m || +m[1] > 0; });
+        dashboard.threats = threats;
+      }
 
       // Пул Рока: обнуление после мирового события и дубли Хаоса — движком
       if (this.isEnabled(mechanics, "doom_pool")) {
@@ -295,7 +343,9 @@ export class Engine {
     // Повышение уровня → ИИ придумывает уникальные способности (отдельный ход)
     if (!opts.followUp && !isClarify && this.isEnabled(mechanics, "abilities")) {
       if (leveled.length) {
-        this.enqueueTurn(sessionId, `[LEVEL UP] ${leveled.join(", ")}. Для КАЖДОГО придумай УНИКАЛЬНУЮ способность, отражающую путь героя. Тип — любой: boon (бонус), curse (шрам/проклятие от пережитого), flavor (особенность без механики) или mechanical (конкретное правило). Добавь в abilities (с полем type) в dashboard_json, старые способности сохрани. Max HP уже повышен движком.`, { followUp: true });
+        // Без отдельного платного хода: способности ИИ выдаст в следующем ответе
+        this.broadcast(sessionId, { type: "level_up", sessionId, leveled });
+        this.game.queueNews(sessionId, `[LEVEL UP] ${leveled.join(", ")}. Для КАЖДОГО придумай УНИКАЛЬНУЮ способность, отражающую путь героя. Тип — любой: boon (бонус), curse (шрам/проклятие от пережитого), flavor (особенность без механики) или mechanical (конкретное правило). Добавь в abilities (с полем type) в dashboard_json, старые способности сохрани. Max HP уже повышен движком.`);
       }
     }
   }

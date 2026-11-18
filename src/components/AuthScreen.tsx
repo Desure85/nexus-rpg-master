@@ -14,7 +14,8 @@ const inputCls = 'w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl
 /** Вход и регистрация мастеров. Игрокам по ссылке на героя аккаунт не нужен. */
 export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone }) => {
   const canRegister = registration === 'open' || !!inviteToken;
-  const [mode, setMode] = useState<'login' | 'register'>(inviteToken ? 'register' : 'login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(inviteToken ? 'register' : 'login');
+  const [info, setInfo] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -32,8 +33,16 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setInfo('');
     setBusy(true);
     try {
+      if (mode === 'forgot') {
+        const r = await api<{ mail: boolean }>('/api/auth/forgot', { body: { email } });
+        setInfo(r.mail
+          ? 'Если такой email зарегистрирован, мы отправили на него ссылку для сброса пароля (действует 1 час).'
+          : 'Почта на этом сервере не настроена. Попросите администратора платформы выдать вам ссылку для сброса пароля.');
+        return;
+      }
       if (mode === 'login') {
         await api('/api/auth/login', { body: { email, password } });
         if (inviteToken) await api(`/api/invites/${inviteToken}/accept`, { body: {} }).catch(() => undefined);
@@ -77,17 +86,22 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
           </div>
         )}
 
+        {mode === 'forgot' && <p className="text-xs text-white/50">Введите email — пришлём ссылку для нового пароля.</p>}
         {mode === 'register' && (
           <input value={name} onChange={e => setName(e.target.value)} placeholder="Как вас называть" autoComplete="nickname" className={inputCls} />
         )}
         <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" autoComplete="email" className={inputCls} />
-        <input type="password" required minLength={mode === 'register' ? 8 : undefined} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'Пароль (от 8 символов)' : 'Пароль'} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} className={inputCls} />
+        {mode !== 'forgot' && <input type="password" required minLength={mode === 'register' ? 8 : undefined} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'Пароль (от 8 символов)' : 'Пароль'} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} className={inputCls} />}
 
         {error && <p className="text-xs text-red-400">{error}</p>}
+        {info && <p className="text-xs text-emerald-300">{info}</p>}
 
         <button type="submit" disabled={busy} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 disabled:opacity-50">
-          {busy ? <Loader2 size={16} className="animate-spin" /> : mode === 'login' ? <LogIn size={16} /> : <UserPlus size={16} />}
-          {mode === 'login' ? 'Войти' : 'Создать аккаунт'}
+          {busy ? <Loader2 size={16} className="animate-spin" /> : mode === 'register' ? <UserPlus size={16} /> : <LogIn size={16} />}
+          {mode === 'login' ? 'Войти' : mode === 'forgot' ? 'Отправить ссылку' : 'Создать аккаунт'}
+        </button>
+        <button type="button" onClick={() => { setMode(mode === 'forgot' ? 'login' : 'forgot'); setError(''); setInfo(''); }} className="w-full text-[11px] text-white/40 hover:text-white">
+          {mode === 'forgot' ? '← Ко входу' : 'Забыли пароль?'}
         </button>
 
         {!canRegister && (
@@ -97,6 +111,36 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
         )}
         <p className="text-[10px] text-white/30 text-center">Игрокам аккаунт не нужен — достаточно ссылки на героя от мастера.</p>
       </motion.form>
+    </div>
+  );
+};
+
+/** Новый пароль по ссылке /reset/:token */
+export const ResetPasswordScreen: React.FC<{ token: string; onDone: () => void }> = ({ token, onDone }) => {
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await api('/api/auth/reset', { body: { token, password } });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="min-h-[100dvh] flex items-center justify-center p-4 bg-[#0a0502]">
+      <form onSubmit={submit} className="w-full max-w-sm bg-[#14100d] border border-white/10 rounded-2xl p-6 space-y-4">
+        <h1 className="font-display text-2xl font-bold text-white text-center">Новый пароль</h1>
+        <input type="password" required minLength={8} autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Новый пароль (от 8 символов)" className={inputCls} />
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <button type="submit" disabled={busy} className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl disabled:opacity-50">Сохранить и войти</button>
+      </form>
     </div>
   );
 };

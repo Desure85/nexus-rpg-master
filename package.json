@@ -16,10 +16,11 @@
     "eval:prompts": "tsx scripts/eval-prompts.ts"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
+    "@google/genai": "^1.52.0",
     "better-sqlite3": "^12.4.1",
     "dotenv": "^17.2.3",
-    "express": "^4.21.2",
+    "express": "^4.22.3",
+    "nodemailer": "^10.6.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
@@ -27,6 +28,7 @@
     "@types/d3": "^7.4.3",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/nodemailer": "^8.0.2",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -52,5 +54,9 @@
   "description": "Онлайн-НРИ с ИИ-мастером: соло, мультиплеер и режим сказки",
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "brace-expansion@2": "^2.1.8",
+    "proxy-addr": "^2.0.8"
   }
 }
