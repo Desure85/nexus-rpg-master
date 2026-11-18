@@ -1,8 +1,16 @@
 // Жанр сессии по описанию сеттинга: от него зависят магазин и добыча (зелья в киберпанке не продают).
 export type Genre = 'fantasy' | 'cyber' | 'space' | 'post' | 'horror' | 'west';
 
+const EXPLICIT: [RegExp, Genre][] = [
+  [/киберпанк|cyberpunk/, 'cyber'], [/космоопер|научная фантаст|space opera/, 'space'], [/постапокалип/, 'post'],
+  [/хоррор|викториан|готическ/, 'horror'], [/дикий запад|вестерн/, 'west'], [/фэнтези|fantasy/, 'fantasy'],
+];
+
 export const genreOf = (text: string): Genre => {
   const t = (text || '').toLowerCase();
+  // явное название жанра важнее случайных слов в завязке («станция» в вестерне — это вокзал)
+  const explicit = EXPLICIT.map(([re, g]) => ({ g, i: t.search(re) })).filter(x => x.i >= 0).sort((a, b) => a.i - b.i)[0];
+  if (explicit) return explicit.g;
   if (/кибер|неон|корпорац|хакер|имплант|мегапол|нетран/.test(t)) return 'cyber';
   if (/косм|звездол|станци|галакт|планет|звёздн|звездн/.test(t)) return 'space';
   if (/постап|пустош|радиац|бункер|апокалип|после войны/.test(t)) return 'post';

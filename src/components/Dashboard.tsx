@@ -129,6 +129,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
     copyQrLink();
   };
 
+  const [showAll, setShowAll] = useState(() => { try { return localStorage.getItem('nexus_dash_full') === '1'; } catch { return false; } });
   const isMechanicEnabled = (id: string) => {
     if (!enabledMechanics) return true;
     const mech = enabledMechanics.find(m => m.id === id);
@@ -728,6 +729,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       </section>
 
       {/* Locations */}
+      {(showAll || isCampaign) && (<>
+
       <section>
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-4">
@@ -917,6 +920,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         </div>
         )}
       </section>
+      </>)}
 
       {/* Threats & Clocks */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -1504,7 +1508,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           {/* Караузинг */}
           {onCarouse && (
             <div className="p-3 bg-white/5 border border-white/10 rounded-xl space-y-1.5">
-              <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">🍻 Караузинг (золото → XP, риск)</h3>
+              <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">🍻 Кутёж (золото → опыт, риск)</h3>
               {(data.characters || []).map((c: any) => (
                 <button key={c.name} onClick={() => onCarouse(c.name)} className="w-full py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded text-[9px] font-bold uppercase tracking-widest">
                   {c.name} прокутить (🪙{(c as any).gold ?? 0})
@@ -1527,6 +1531,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       )}
 
       {/* Decision Tree (Древо Решений) */}
+      {showAll && (<>
+
       {(data.decisionTree && data.decisionTree.length > 0) && (
         <section className="space-y-4">
           <div className="p-4 bg-white/5 border border-amber-500/10 rounded-xl space-y-3">
@@ -1612,8 +1618,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           </div>
         </section>
       )}
+      </>)}
 
       {/* Echoes & Atmosphere */}
+      {showAll ? (<>
+
       <section className="space-y-4">
         {data.echoes && data.echoes.length > 0 && (
           <div className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-3">
@@ -1684,6 +1693,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           </p>
         </div>
       </section>
+      </>) : null}
+
+      <button
+        onClick={() => { const v = !showAll; setShowAll(v); try { localStorage.setItem('nexus_dash_full', v ? '1' : '0'); } catch { /* */ } }}
+        className="w-full py-2.5 rounded-xl border border-dashed border-white/10 text-[11px] text-white/45 hover:text-white hover:border-white/30 transition-all"
+      >
+        {showAll ? 'Простая панель — только главное' : (isCampaign ? 'Подробнее: древо решений, эхо, атмосфера' : 'Подробнее: карта, древо решений, эхо, атмосфера')}
+      </button>
 
       {shopOpen && (
         <Portal>
