@@ -4,6 +4,7 @@
 import type { LlmRequest } from "./llm";
 import { resolvedOutcomes, type Outcome } from "../shared/resolve";
 import { genreOf as sharedGenreOf } from "../shared/genre";
+import { BALANCE, ENEMY_TIERS } from "../shared/balance";
 
 let seed = Date.now() % 100000;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed % 100000) / 100000; };
@@ -275,12 +276,13 @@ function turn(req: LlmRequest, user: string) {
       parts.push(`**${a.who}**: ${pick(OUT[rolled.outcome])}`);
       if (!good) {
         if (firstClock) tags.push(`[CLOCK: ${firstClock} +1]`);
-        tags.push(`[DAMAGE: ${a.who} -${rolled.outcome === "critfail" ? between(3, 5) : between(1, 3)}]`);
+        const tier = ENEMY_TIERS.regular;
+        tags.push(`[DAMAGE: ${a.who} -${between(tier.dmg[0], tier.dmg[1]) + (rolled.outcome === "critfail" ? 1 : 0)}]`);
         if (chance(0.5)) tags.push(`[STRESS: ${a.who} +1]`);
         tags.push(`[XP: ${a.who} +${between(5, 10)}]`);
         continue;
       }
-      if (rolled.outcome === "partial") tags.push(chance(0.5) ? `[STRESS: ${a.who} +1]` : `[DAMAGE: ${a.who} -1]`);
+      if (rolled.outcome === "partial") tags.push(chance(0.5) ? `[STRESS: ${a.who} +1]` : `[DAMAGE: ${a.who} -${between(BALANCE.costDamage[0], BALANCE.costDamage[1])}]`);
       if (rolled.outcome === "crit") newEchoes.push(`${a.who} совершил то, о чём будут говорить`);
     }
     const clean = a.text.replace(/#\w+/g, "").replace(/\s+/g, " ").trim();
@@ -290,8 +292,8 @@ function turn(req: LlmRequest, user: string) {
     else parts.push(pick(NARR[kind]));
     if (kind === "fight") {
       let target = threats[0] || newThreats[0];
-      if (!target) { target = { name: pick(W.enemy), hp: "10/10", features: [pick(["Быстрый", "Бронированный", "Хитрый"])] }; newThreats.push(target); }
-      tags.push(`[HIT: ${target.name} -${between(2, 5)}]`);
+      if (!target) { const hp = between(ENEMY_TIERS.regular.hp[0], ENEMY_TIERS.regular.hp[1]); target = { name: pick(W.enemy), hp: `${hp}/${hp}`, features: [pick(["Быстрый", "Бронированный", "Хитрый"])] }; newThreats.push(target); }
+      tags.push(`[HIT: ${target.name} -${rolled ? BALANCE.hit[rolled.outcome === "crit" ? "crit" : rolled.outcome === "partial" ? "partial" : "success"] : BALANCE.hit.success}]`);
       if (!rolled && chance(0.5)) { tags.push(`[DAMAGE: ${a.who} -${between(1, 3)}]`); parts.push(`${target.name} огрызается и задевает героя.`); }
     } else if (kind === "search") {
       if (chance(0.5)) { tags.push(`[GOLD: ${a.who} +${between(3, 12)}]`); parts.push("В пыли блестят монеты."); }
@@ -317,7 +319,8 @@ function turn(req: LlmRequest, user: string) {
 
   const encounter = /\[ENCOUNTER:/.test(user) && !/тишина/.test(user);
   if (encounter && !threats.length && !newThreats.length) {
-    const e = { name: pick(W.enemy), hp: "8/8", features: [pick(["Засада", "Ядовитый укус", "Не знает страха"])] };
+    const ehp = between(ENEMY_TIERS.regular.hp[0], ENEMY_TIERS.regular.hp[1]);
+    const e = { name: pick(W.enemy), hp: `${ehp}/${ehp}`, features: [pick(["Засада", "Ядовитый укус", "Не знает страха"])] };
     newThreats.push(e);
     parts.push(`Внезапно из-за поворота появляется ${e.name.toLowerCase()} — бой неизбежен!`);
   }
