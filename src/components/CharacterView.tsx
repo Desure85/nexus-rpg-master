@@ -9,6 +9,7 @@ import { DisclaimerFooter } from './Disclaimer';
 import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 import { RichParagraphs, UserContent } from './RichText';
+import { GuideButton } from './GuideModal';
 import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
 import { levelFromXp } from '../../shared/rules';
 import { describeEffect } from '../../shared/items';
@@ -288,34 +289,35 @@ export const CharacterView: React.FC = () => {
           onClick={() => setActiveTab('character')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'character' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <User size={14} /> {isTale ? 'Герой' : 'Персонаж'}
+          <User size={14} /> <span className="hidden sm:inline">{isTale ? 'Герой' : 'Персонаж'}</span>
         </button>
         {!isTale && <button 
           onClick={() => setActiveTab('scene')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'scene' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <LayoutDashboard size={14} /> Сцена
+          <LayoutDashboard size={14} /> <span className="hidden sm:inline">Сцена</span>
         </button>}
         <button 
           onClick={() => setActiveTab('story')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'story' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <BookOpen size={14} /> {isTale ? 'Сказка' : 'История'}
+          <BookOpen size={14} /> <span className="hidden sm:inline">{isTale ? 'Сказка' : 'История'}</span>
           {masterBusy && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
         </button>
         <button 
           onClick={() => setActiveTab('lore')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'lore' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <History size={14} /> {isTale ? 'Память' : 'Летопись'}
+          <History size={14} /> <span className="hidden sm:inline">{isTale ? 'Память' : 'Летопись'}</span>
         </button>
         {!isTale && <button 
           onClick={() => setActiveTab('codex')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'codex' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <Library size={14} /> Кодекс
+          <Library size={14} /> <span className="hidden sm:inline">Кодекс</span>
         </button>}
-        <div className="flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
+        <GuideButton audience="player" label="" className="flex items-center justify-center p-3 rounded-xl text-amber-300/70 hover:text-amber-200 bg-white/5 hover:bg-white/10" />
+        <div className="hidden sm:flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
           <button 
             onClick={() => setFontSize(Math.max(12, fontSize - 2))}
             className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"

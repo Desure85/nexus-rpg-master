@@ -8,6 +8,7 @@ import { LocationMap } from './LocationMap';
 import { api, characterLink } from '../api';
 import { isConsumable, describeEffect } from '../../shared/items';
 import { levelFromXp } from '../../shared/rules';
+import { Portal } from './Portal';
 
 interface DashboardProps {
   data: DashboardData;
@@ -1684,6 +1685,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       </section>
 
       {shopOpen && (
+        <Portal>
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShopOpen(false)}>
           <div className="bg-[#14100d] border border-white/10 rounded-2xl p-6 max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center">
@@ -1733,9 +1735,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             <p className="text-[9px] text-white/25 italic text-center">Товар попадёт в инвентарь персонажа.</p>
           </div>
         </div>
+        </Portal>
       )}
 
       {qrData && (
+        <Portal>
         <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setQrData(null)}>
           <div className="bg-[#14100d] border border-white/10 rounded-2xl p-6 max-w-xs w-full text-center space-y-4" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-white">Подключить игрока: {qrData.char}</h3>
@@ -1768,6 +1772,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             </button>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );

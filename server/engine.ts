@@ -608,7 +608,14 @@ export class Engine {
 
     const fresh = loadSession(this.db, sessionId) || s;
     const t = parseTale(raw);
-    fresh.history = [...fresh.history, { role: "assistant", content: t.text, ...(isFinal ? {} : { choices: t.choices }) } as Message];
+    // Развилка обязательна: без вариантов слушатели застрянут — даём запасные, близкие к стилю сказки
+    let choices = (t.choices || []).map(c => String(c).replace(/^\s*[\d.)-]+\s*/, "").trim().slice(0, 90)).filter(Boolean);
+    choices = [...new Set(choices)].slice(0, 3);
+    if (!isFinal && choices.length < 2) {
+      const extra = ["Пойти дальше и посмотреть, что будет", "Позвать на помощь друзей", "Остановиться и хорошенько подумать"];
+      choices = [...choices, ...extra.filter(e => !choices.includes(e))].slice(0, 3);
+    }
+    fresh.history = [...fresh.history, { role: "assistant", content: t.text, ...(isFinal ? {} : { choices }) } as Message];
     if (t.lore) fresh.lore = t.lore;
     if (isFinal) {
       const title = t.title || fresh.name;
