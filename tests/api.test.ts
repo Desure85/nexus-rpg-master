@@ -628,3 +628,52 @@ describe('оракул сессии', () => {
     expect(after.find((t: any) => t.id === 'actions').rows.length).toBe(30);
   });
 });
+
+describe('ядро боя: исход бросков считает движок', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const setDash = async (id: string, fn: (d: any) => void) => {
+    const d = await dashOf(id);
+    fn(d);
+    expect((await gm().post(`/api/sessions/${id}/dashboard`, { dashboard: d })).status).toBe(200);
+  };
+  it('итог с DC мастера и снаряжением, провал поднимает Doom, броня режет урон', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => {
+      d.suggestedRoll = { type: 'classic', reason: 'Удар по стражнику', dc: 15 };
+      d.characters[0].equipment = [{ slot: 'main-hand', item: { name: 'Секира', bonus: '+2 к атаке' } }, { slot: 'body', item: { name: 'Кираса', bonus: '+2 к защите' } }];
+      d.doomPool = 0;
+    });
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн рубит стражника #hurt', rolls: ['**Арн** performs *рубит секирой*: [ROLL: 1d20 = 6]'] });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const msg = s.history.find((m: any) => m.content.startsWith('Арн рубит')).content;
+    expect(msg).toContain('Итог: 8 = 6 (d20) +2 Секира против DC 15 → ПРОВАЛ');
+    expect(lastDash(s).doomPool).toBe(1);
+    // mock даёт [DAMAGE: Арн -3], кираса +2 к защите → -1
+    expect((await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'].hp_cur).toBe(11);
+  });
+
+  it('спасбросок поверженного героя: успех возвращает 1 HP', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.characters[1].hp = '0/12'; });
+    expect((await gm().get(`/api/sessions/${id}/state`)).body.characters['Лиса'].status).toBe('downed');
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Спасбросок', rolls: ['**Лиса** performs *спасбросок*: [ROLL: 1d20 = 13]'] });
+    await ctx.engine.whenIdle(id);
+    const st = (await gm().get(`/api/sessions/${id}/state`)).body.characters['Лиса'];
+    expect(st.hp_cur).toBe(1);
+    expect(st.status).toBe('active');
+  });
+
+  it('поверженный игрок может только бросить спасбросок', async () => {
+    const id = await createSession(rpgSetup());
+    await player('dev-death-save-0001').post(`/api/sessions/${id}/claim`, { charName: 'Лиса', playerName: 'Аня' });
+    const cid = (await request(ctx.app).get(`/api/sessions/${id}/claims`)).body[0].id;
+    await gm().post(`/api/sessions/${id}/claims/${cid}/approve`);
+    expect((await player('dev-death-save-0001').post(`/api/sessions/${id}/actions`, { charName: 'Лиса', deathSave: true })).status).toBe(409);
+    await setDash(id, d => { d.characters[1].hp = '0/12'; });
+    expect((await player('dev-death-save-0001').post(`/api/sessions/${id}/actions`, { charName: 'Лиса', action: 'Бегу' })).status).toBe(409);
+    const r = await player('dev-death-save-0001').post(`/api/sessions/${id}/actions`, { charName: 'Лиса', deathSave: true });
+    expect(r.status).toBe(200);
+    expect(r.body.action).toMatch(/^Спасбросок смерти\n\[ROLL: 1d20 = \d+\]$/);
+  });
+});

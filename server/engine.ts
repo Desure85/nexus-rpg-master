@@ -10,6 +10,7 @@ import {
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
 import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags } from "../shared/parse";
+import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
 import { actionSlotsTag } from "../shared/oracle";
 import { createOracleStore, tablesFor, buildOraclePrompt, parseOracleResponse, type OracleStore, type OracleTableDef } from "./oracle";
 import { BillingError } from "./billing";
@@ -291,10 +292,28 @@ export class Engine {
 
     if (isTale) return this.runTaleTurn(s, cfg, finalContent);
 
-    const userText = s.history[s.history.length - 1].content;
     // Всё, что пришло от игроков с прошлого ответа мастера (для эффектов бросков)
     let lastAssistantIdx = -1;
     for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].role === "assistant") { lastAssistantIdx = i; break; }
+    // Исход бросков считает движок: дописываем «Итог … → УСПЕХ/ПРОВАЛ» до того, как модель увидит ход
+    {
+      const engineChars = this.game.ensureEngineState(sessionId);
+      const ctx = {
+        characters: lastDashboard(s.history).characters || [],
+        status: Object.fromEntries(Object.entries(engineChars).map(([n, c]: [string, any]) => [n, c.status])),
+        gearEnabled: this.isEnabled(cfg.mechanics, "equipment"),
+        dc: (lastDashboard(s.history).suggestedRoll as any)?.dc,
+      };
+      let changed = false;
+      for (let i = lastAssistantIdx + 1; i < s.history.length; i++) {
+        const m = s.history[i];
+        if (m.role !== "user" || !m.content.includes("[ROLL:")) continue;
+        const r = resolveRolls(m.content, ctx);
+        if (r.text !== m.content) { s.history[i] = { ...m, content: r.text }; changed = true; }
+      }
+      if (changed) saveSession(this.db, s);
+    }
+    const userText = s.history[s.history.length - 1].content;
     const turnUserText = s.history.slice(lastAssistantIdx + 1).filter(m => m.role === "user").map(m => m.content).join("\n");
     const isClarify = userText.startsWith("[CLARIFY]");
     const currentDashboard = lastDashboard(s.history);
@@ -358,7 +377,23 @@ export class Engine {
         ch.inventory = ch.inventory!.filter((_, i) => i !== idx);
         for (const e of effects) useChanges.push({ ...e, name });
       }
-      const applied = this.game.applyStateChanges(chars, [...changes, ...auto, ...useChanges]);
+      // Броня снижает входящий урон из тегов модели (минимум 1 урона проходит)
+      const armored = changes.map(c => {
+        if (c.field !== "hp" || c.delta >= 0 || !this.isEnabled(mechanics, "equipment")) return c;
+        const name = this.game.resolveName(chars, c.name);
+        const armor = armorOf((dashboard.characters || []).find(x => x.name === name));
+        return armor ? { ...c, delta: Math.min(-1, c.delta + armor) } : c;
+      });
+      // Спасбросок смерти: успех — герой стабилизирован с 1 HP
+      const outcomes = resolvedOutcomes(turnUserText);
+      const deathChanges = outcomes.filter(o => o.deathSave === "stabilized")
+        .map(o => ({ field: "hp" as const, name: this.game.resolveName(chars, o.actor) || o.actor, delta: 1 }))
+        .filter(c => chars[c.name]?.status === "downed");
+      const applied = this.game.applyStateChanges(chars, [...armored, ...auto, ...useChanges, ...deathChanges]);
+      for (const o of outcomes.filter(o => o.deathSave === "failed")) {
+        const ch = (dashboard.characters || []).find(c => c.name === (this.game.resolveName(chars, o.actor) || o.actor));
+        if (ch) ch.condition = "💀 При смерти: без помощи союзника погибнет в конце следующего хода";
+      }
       // Повышение уровня: +2 max HP за уровень — детерминированно, движком
       for (const [n, c] of Object.entries(chars) as [string, any][]) {
         const gained = levelFromXp(c.xp || 0) - (prevLevels[n] ?? levelFromXp(c.xp || 0));
@@ -404,7 +439,9 @@ export class Engine {
         const worldEvent = /\[WORLD EVENT/.test(turnUserText);
         let doom = Number(dashboard.doomPool) || 0;
         if (worldEvent && doom >= prevDoom) doom = 0;
-        doom = Math.max(doom, (worldEvent ? 0 : prevDoom) + rollFx.doomDoubles);
+        // +1 за каждый провал броска и каждый дубль Хаоса — даже если модель забыла поднять пул
+        const fails = resolvedOutcomes(turnUserText).filter(o => o.outcome === "fail" || o.outcome === "critfail").length;
+        doom = Math.max(doom, (worldEvent ? 0 : prevDoom) + rollFx.doomDoubles + fails);
         dashboard.doomPool = Math.max(0, Math.min(10, doom));
       }
     }

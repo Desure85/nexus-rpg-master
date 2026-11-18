@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Dices, RotateCcw, Zap, ShieldAlert, Binary, User, Activity, Plus, Star, Flame, Users, Ghost, CheckCircle2, Info, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Character, MechanicConfig, stressValue } from '../types';
+import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
 
 export type RollType = 'classic' | 'triple' | 'shifted' | 'taint';
 
@@ -158,7 +159,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
             <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40 font-bold">
-              Nexus.Dice_Engine v4.8
+              Кубики
             </h3>
           </div>
           <div className="flex items-center gap-2">
@@ -362,8 +363,8 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           )}
           {isMechanicEnabled('classic') && (
             <RollButton 
-              label="Classic Flow" 
-              sub="1d20 + Mod"
+              label="Обычный" 
+              sub="1d20 — простые риски"
               icon={<Binary size={14} />}
               onClick={() => rollDice('classic')}
               disabled={isRolling || !selectedChar || !selectedAction || (selectedAction === 'Custom Action' && !customActionInput.trim())}
@@ -372,8 +373,8 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           )}
           {isMechanicEnabled('triple') && (
             <RollButton 
-              label="Stress Resonance" 
-              sub="3d20 [Min/Mid/Max]"
+              label="Резонанс стресса" 
+              sub="3d20: кубик по уровню стресса"
               icon={<Zap size={14} />}
               onClick={() => rollDice('triple')}
               disabled={isRolling || !selectedChar || !selectedAction || (selectedAction === 'Custom Action' && !customActionInput.trim())}
@@ -382,8 +383,8 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           )}
           {isMechanicEnabled('shifted') && (
             <RollButton 
-              label="Fate Shift" 
-              sub="Triple + 1d6 Shift"
+              label="Сдвиг судьбы" 
+              sub="Резонанс + d6 (−1…+1)"
               icon={<Dices size={14} />}
               onClick={() => rollDice('shifted')}
               disabled={isRolling || !selectedChar || !selectedAction || (selectedAction === 'Custom Action' && !customActionInput.trim())}
@@ -392,8 +393,8 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
           )}
           {isMechanicEnabled('taint') && (
             <RollButton 
-              label="Chaos Roll" 
-              sub="2d20 + Doom Check"
+              label="Хаос" 
+              sub="больший из 2d20, дубль → Doom"
               icon={<ShieldAlert size={14} />}
               onClick={() => rollDice('taint')}
               disabled={isRolling || !selectedChar || !selectedAction || (selectedAction === 'Custom Action' && !customActionInput.trim())}
@@ -411,9 +412,16 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
             <div className="flex items-center gap-2 text-[9px] text-emerald-400 font-bold uppercase tracking-widest">
               <Zap size={10} /> Совет мастера
             </div>
-            <p className="text-[10px] text-emerald-200/60 italic mt-1">{suggested.reason}</p>
+            <p className="text-[10px] text-emerald-200/60 italic mt-1">{suggested.reason}{' · '}<b className="not-italic">DC {(suggested as any).dc ?? DEFAULT_DC}</b></p>
           </motion.div>
         )}
+
+        {currentChar && selectedAction && (() => {
+          const gear = gearBonus(currentChar as any, selectedAction === 'Custom Action' ? customActionInput : selectedAction);
+          return gear.total ? (
+            <p className="text-[10px] text-sky-300/80">Снаряжение даст {gear.total > 0 ? '+' : ''}{gear.total}: {gear.parts.join(', ')}</p>
+          ) : null;
+        })()}
 
         <div className="relative h-24 bg-black/60 rounded-xl border border-dashed border-white/10 flex items-center justify-center overflow-hidden">
           <AnimatePresence mode="wait">

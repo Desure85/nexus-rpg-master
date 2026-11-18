@@ -18,7 +18,7 @@ import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
-import { RichParagraphs, renderInline } from './components/RichText';
+import { RichParagraphs, UserContent, renderInline } from './components/RichText';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -983,10 +983,10 @@ export default function App() {
                           {(msg.content || '').includes('[PLAYER ACTION:') ? (
                             <div className="flex flex-col gap-1">
                               <span className="text-[8px] uppercase tracking-widest font-bold opacity-60">Ход игрока</span>
-                              <span>{(msg.content || '').replace(/\[PLAYER ACTION:.*?\]/, '').trim()}</span>
+                              <span className="whitespace-pre-wrap"><UserContent text={(msg.content || '').replace(/\[PLAYER ACTION:.*?\]/, '').trim()} /></span>
                               <span className="text-[8px] italic opacity-40">— {(msg.content || '').match(/\[PLAYER ACTION: (.*?)\]/)?.[1]}</span>
                             </div>
-                          ) : <span className="whitespace-pre-wrap">{displayUserContent(msg.content)}</span>}
+                          ) : <span className="whitespace-pre-wrap"><UserContent text={displayUserContent(msg.content)} /></span>}
                         </div>
                       ) : (
                         <div 
@@ -1226,6 +1226,7 @@ export default function App() {
                       </button>
                       <button
                         onClick={() => setIsDiceTrayOpen(!isDiceTrayOpen)}
+                        title="Кубики: бросок за героя"
                         className={`p-2 rounded-xl transition-all ${isDiceTrayOpen ? 'bg-white text-black' : 'bg-white/5 text-white/40 hover:text-white'}`}
                       >
                         <Dices size={18} />

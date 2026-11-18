@@ -220,6 +220,10 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
         hp_cur: m ? +m[1] : prev.hp_cur ?? 0, hp_max: m ? +m[2] : prev.hp_max ?? 0,
         stress: parseInt(String(c.stress)) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0,
       };
+      // ручная правка HP тоже меняет «Повержен»: 0 HP в партии — выбыл, выше 0 — в строю
+      const e = chars[c.name];
+      if (e.hp_cur === 0 && e.status !== "base") e.status = "downed";
+      else if (e.hp_cur > 0 && e.status === "downed") e.status = "active";
     }
     for (const name of Object.keys(chars)) if (!dash.characters.some((c: any) => c.name === name)) delete chars[name];
     gameApi.saveEngineState(s.id, chars);
@@ -310,23 +314,26 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   app.post("/api/sessions/:id/actions", rateLimit({ windowMs: 60_000, max: 20 }), (req, res) => {
     const deviceId = req.auth.deviceId;
     const charName = str(req.body?.charName, 60);
-    let action = str(req.body?.action, 2000).trim();
+    const deathSave = req.body?.deathSave === true;
+    let action = deathSave ? "Спасбросок смерти" : str(req.body?.action, 2000).trim();
     if (!deviceId || !charName || !action) return res.status(400).json({ error: "charName/action required" });
     const claim = db.prepare("SELECT * FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, charName, deviceId) as any;
     if (!claim) return res.status(403).json({ error: "not_your_character", message: "Персонаж не закреплён за этим устройством" });
-    if (gameApi.ensureEngineState(req.params.id)[charName]?.status === "downed") {
-      return res.status(409).json({ error: "downed", message: "Герой повержен и не может действовать, пока союзники его не стабилизируют" });
+    const isDowned = gameApi.ensureEngineState(req.params.id)[charName]?.status === "downed";
+    if (isDowned && !deathSave) {
+      return res.status(409).json({ error: "downed", message: "Герой повержен: можно только бросить спасбросок или ждать помощи союзников" });
     }
+    if (deathSave && !isDowned) return res.status(409).json({ error: "not_downed", message: "Спасбросок нужен только поверженному герою" });
     const existing = db.prepare("SELECT 1 FROM pending_actions WHERE session_id = ? AND char_name = ?").get(req.params.id, charName);
     if (existing) return res.status(409).json({ error: "already_acted", message: "Действие уже отправлено, ждём мастера" });
     const s = loadSession(db, req.params.id)!;
-    const roll = req.body?.roll as RollType | undefined;
+    const roll = (deathSave ? "classic" : req.body?.roll) as RollType | undefined;
     if (roll && ROLL_TYPES.includes(roll) && s.mode !== "tale") {
       const dash = lastDashboard(s.history);
       const ch = dash.characters?.find(c => c.name === charName);
       const mech = s.config.mechanics || readSettings(db).mechanics;
       const enabled = (mid: string) => mech.find(m => m.id === mid)?.enabled ?? true;
-      action += `\n${rollTag({ type: roll, bare: true, charName, actionName: action.slice(0, 80), stress: ch?.stress, threatLevel: dash.threatLevel, stressEnabled: enabled("stress"), threatEnabled: enabled("threat") })}`;
+      action += `\n${rollTag({ type: roll, bare: true, charName, actionName: action.slice(0, 80), stress: ch?.stress, threatLevel: deathSave ? 0 : dash.threatLevel, stressEnabled: enabled("stress"), threatEnabled: enabled("threat") })}`;
     }
     const id = crypto.randomUUID();
     db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text) VALUES (?,?,?,?,?)").run(id, req.params.id, charName, claim.player_name, action);
