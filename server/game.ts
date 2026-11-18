@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import crypto from "crypto";
+import { itemEffect } from "../shared/items";
 import type { DB } from "./db";
 
 export interface EncounterResult {
@@ -747,15 +748,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
 
 
   // --- Расходники: эффект зашит в название («восстанавливает 5 HP», «снимает 2 Стресса») и применяется движком ---
-  const itemEffect = (item: string): { field: "hp" | "stress"; delta: number }[] => {
-    const out: { field: "hp" | "stress"; delta: number }[] = [];
-    const heal = item.match(/(?:восстанавливает|лечит|\+)\s*(\d+)\s*(?:HP|ОЗ|здоровья)/i) || item.match(/(\d+)\s*HP/i);
-    const calm = item.match(/(?:снимает|сброс|-)\s*(\d+)\s*стресс/i);
-    if (heal) out.push({ field: "hp", delta: parseInt(heal[1], 10) });
-    if (calm) out.push({ field: "stress", delta: -parseInt(calm[1], 10) });
-    return out;
-  };
-  const isConsumable = (item: string) => itemEffect(item).length > 0 && /зелье|эликсир|отвар|бинт|аптечк|стимулятор|расходник|сердце|еда|пирог|настой|мазь|potion|medkit/i.test(item);
+  const isConsumable = (item: string) => itemEffect(item).length > 0; // эффекты — shared/items.ts
 
   /** Использовать предмет: убрать из инвентаря героя в последнем дашборде и применить эффект. */
   const useItem = (sessionId: string, charName: string, itemQuery: string): { ok: boolean; tag: string; item?: string } => {

@@ -252,7 +252,11 @@ function turn(req: LlmRequest, user: string) {
     fail: ["Не вышло: в последний миг всё идёт наперекосяк.", "Расчёт оказался неверным, и мир отвечает жёстко."],
     critfail: ["Хуже некуда: ошибка оборачивается новой бедой.", "Провал настолько громкий, что его услышали все вокруг."],
   };
+  const spent = [...user.matchAll(/\[TOKEN SPENT: ([^→\]]+)→ ([^\]:]+)(?::\s*([^\]]+))?\]/g)];
+  for (const m of spent) parts.push(m[2].trim() === "флешбэк" ? `*Вспышка памяти.* ${m[1].trim()} вспоминает: ${m[3] || "подготовка не прошла даром"} — и сейчас это решает дело.` : m[2].trim() === "право на истину" ? `Оказывается, ${m[3] || "мир устроен чуть иначе, чем казалось"}.` : `${m[1].trim()} рывком поднимает союзника на ноги.`);
   for (const a of acts) {
+    if (/\[FLASHBACK/.test(a.text)) { parts.push(`*Вспышка памяти.* **${a.who}** ${a.text.replace(/\[[^\]]*\]\s*/g, "").replace(/^./, c => c.toLowerCase())} — и вот теперь это пригодилось.`); tags.push(`[XP: ${a.who} +10]`); continue; }
+    if (/\[NARRATIVE RIGHT/.test(a.text)) { parts.push(`Мир послушно меняется: ${a.text.replace(/\[[^\]]*\]\s*/g, "").replace(/^./, c => c.toLowerCase())}. **${a.who}** знал это с самого начала.`); continue; }
     const kind = reaction(a.text);
     const rolled = outcomes.find(o => o.actor === a.who) || (acts.length === 1 ? outcomes[0] : undefined);
     const good = !rolled || rolled.outcome === "crit" || rolled.outcome === "success" || rolled.outcome === "partial";

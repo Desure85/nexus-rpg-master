@@ -1370,7 +1370,7 @@ export default function App() {
                             <p className="text-[9px] uppercase tracking-widest text-amber-400/70 font-bold">
                               {a.char_name}{a.player_name ? ` · ${a.player_name}` : ''}
                             </p>
-                            <p className="text-xs text-white/80 mt-1 leading-relaxed">{a.action_text}</p>
+                            <p className="text-xs text-white/80 mt-1 leading-relaxed whitespace-pre-wrap"><UserContent text={a.action_text} /></p>
                             <button onClick={() => removeAction(a.id)} className="mt-2 text-[9px] uppercase tracking-widest font-bold text-red-400/60 hover:text-red-400 transition-all">Удалить</button>
                           </div>
                         ))}

@@ -339,7 +339,7 @@ describe('мультиплеер', () => {
 
     const act = await player(DEV_A).post(`/api/sessions/${id}/actions`, { charName: 'Арн', action: 'Иду к мельнице', roll: 'classic' });
     expect(act.status).toBe(200);
-    expect(act.body.action).toMatch(/\[ROLL: 1d20 = \d+\]/);
+    expect(act.body.action).toMatch(/\[ROLL: 1d20 = \d+ \| Итог: \d+ = .* против DC \d+ → /);
     expect((await player(DEV_A).post(`/api/sessions/${id}/actions`, { charName: 'Арн', action: 'ещё' })).status).toBe(409);
 
     await gm().post(`/api/sessions/${id}/gm-action`, { charName: 'Лиса', action: 'Прячусь в тени' });
@@ -674,6 +674,77 @@ describe('ядро боя: исход бросков считает движок
     expect((await player('dev-death-save-0001').post(`/api/sessions/${id}/actions`, { charName: 'Лиса', action: 'Бегу' })).status).toBe(409);
     const r = await player('dev-death-save-0001').post(`/api/sessions/${id}/actions`, { charName: 'Лиса', deathSave: true });
     expect(r.status).toBe(200);
-    expect(r.body.action).toMatch(/^Спасбросок смерти\n\[ROLL: 1d20 = \d+\]$/);
+    expect(r.body.action).toMatch(/^Спасбросок смерти\n\[ROLL: 1d20 = \d+ \| Итог: .* против DC 10 → .* \| Спасбросок: (стабилизирован \(HP 1\)|не удался)\]$/);
   });
 });
+
+describe('ресурсы: жетоны, расходники', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const setDash = async (id: string, fn: (d: any) => void) => {
+    const d = await dashOf(id);
+    fn(d);
+    expect((await gm().post(`/api/sessions/${id}/dashboard`, { dashboard: d })).status).toBe(200);
+  };
+  const DEV = 'dev-tokens-000000001';
+  const claimLisa = async (id: string) => {
+    await player(DEV).post(`/api/sessions/${id}/claim`, { charName: 'Лиса', playerName: 'Аня' });
+    const cid = (await request(ctx.app).get(`/api/sessions/${id}/claims`)).body[0].id;
+    await gm().post(`/api/sessions/${id}/claims/${cid}/approve`);
+  };
+  const tokens = async (id: string, name: string) => (await gm().get(`/api/sessions/${id}/state`)).body.characters[name].tokens;
+
+  it('флешбэк списывает жетон, отмена хода возвращает его; без жетонов — 409', async () => {
+    const id = await createSession(rpgSetup());
+    await claimLisa(id);
+    await setDash(id, d => { d.characters[1].tokens = 1; });
+    const r = await player(DEV).post(`/api/sessions/${id}/actions`, { charName: 'Лиса', action: 'Я заранее подпилила засов', kind: 'flashback' });
+    expect(r.status).toBe(200);
+    expect(r.body.action).toMatch(/^\[FLASHBACK — жетон потрачен\] Я заранее/);
+    expect(await tokens(id, 'Лиса')).toBe(0);
+    expect((await dashOf(id)).characters[1].tokens).toBe(0);
+    await gm().del(`/api/sessions/${id}/actions/${r.body.id}`);
+    expect(await tokens(id, 'Лиса')).toBe(1);
+    await setDash(id, d => { d.characters[1].tokens = 0; });
+    expect((await player(DEV).post(`/api/sessions/${id}/actions`, { charName: 'Лиса', action: 'x', kind: 'narrative' })).status).toBe(409);
+  });
+
+  it('переброс за жетон заменяет бросок и пересчитывает исход', async () => {
+    const id = await createSession(rpgSetup());
+    await claimLisa(id);
+    await setDash(id, d => { d.characters[1].tokens = 2; });
+    const r = await player(DEV).post(`/api/sessions/${id}/actions`, { charName: 'Лиса', action: 'Прыгаю через пропасть', roll: 'classic' });
+    const rr = await player(DEV).post(`/api/sessions/${id}/actions/${r.body.id}/reroll`, {});
+    expect(rr.status).toBe(200);
+    expect(rr.body.action.match(/\[ROLL:/g)).toHaveLength(1);
+    expect(rr.body.action).toMatch(/→ [^\]]+\] \(переброс за жетон\)$/);
+    expect(await tokens(id, 'Лиса')).toBe(1);
+    // чужое устройство не может
+    expect((await player('dev-someone-else-00001').post(`/api/sessions/${id}/actions/${r.body.id}/reroll`, {})).status).toBe(403);
+  });
+
+  it('мастер тратит жетон: флешбэк уходит ИИ, стабилизация поднимает союзника', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.characters[0].tokens = 2; d.characters[1].hp = '0/12'; });
+    expect((await gm().post(`/api/sessions/${id}/tokens`, { charName: 'Арн', kind: 'flashback', note: 'взял верёвку' })).status).toBe(200);
+    expect((await gm().post(`/api/sessions/${id}/tokens`, { charName: 'Арн', kind: 'stabilize', note: 'Лиса' })).status).toBe(200);
+    const st = (await gm().get(`/api/sessions/${id}/state`)).body.characters;
+    expect(st['Арн'].tokens).toBe(0);
+    expect(st['Лиса']).toMatchObject({ hp_cur: 1, status: 'active' });
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Идём дальше' });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.find((m: any) => m.content.startsWith('Идём дальше')).content).toContain('[TOKEN SPENT: Арн → флешбэк: взял верёвку]');
+  });
+
+  it('крит даёт жетон автоматически; зелье без числа лечит по умолчанию', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.characters[0].tokens = 0; d.characters[0].hp = '5/12'; d.characters[0].inventory = ['Зелье лечения']; });
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт', rolls: ['**Арн** performs *удар*: [ROLL: 1d20 = 20]'] });
+    await ctx.engine.whenIdle(id);
+    expect(await tokens(id, 'Арн')).toBe(1);
+    const u = await gm().post(`/api/sessions/${id}/use`, { charName: 'Арн', item: 'Зелье лечения' });
+    expect(u.status).toBe(200);
+    expect(u.body.tag).toContain('HP 5→10');
+  });
+});
+
