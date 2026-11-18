@@ -15,7 +15,8 @@
     "clean": "rm -rf dist dist-server",
     "eval:prompts": "tsx scripts/eval-prompts.ts",
     "build:demo": "vite build --mode demo && cp dist-demo/index.html dist-demo/404.html",
-    "dev:demo": "vite --mode demo"
+    "dev:demo": "vite --mode demo",
+    "balance": "tsx scripts/balance.ts"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
