@@ -631,6 +631,23 @@ export class Engine {
     choices = [...new Set(choices)].slice(0, 3);
     if (!isFinal && choices.length < 2) {
       console.warn(`[tale] модель не дала вариантов, хвост ответа: ${JSON.stringify(raw.slice(-400))}`);
+      // ответ оборвался (провайдер закрыл поток): срезаем недописанную фразу и коротким запросом просим концовку и развилку
+      const cut = t.text.search(/[^.!?…»]*$/);
+      const broken = !/[.!?…»"]\s*$/.test(t.text) && cut > t.text.length * 0.5;
+      if (broken) t.text = t.text.slice(0, cut).trimEnd();
+      try {
+        const fix = await this.callLlm(s, cfg, {
+          system: "Ты сказочник. Отвечай строго в заданном формате, без пояснений.",
+          messages: [{ role: "user", content: `Конец главы сказки:\n«…${t.text.slice(-1200)}»\n\n${broken ? "Допиши одно-два коротких предложения, которыми глава закончится на интересном месте. " : ""}Предложи 3 варианта, что герои сделают дальше (до 8 слов каждый).\nФормат:\n${broken ? "<ending>концовка главы</ending>\n" : ""}<choices_json>["…","…","…"]</choices_json>` }],
+          temperature: 0.7, maxTokens: 4096,
+        }, "tale", () => undefined);
+        const ending = fix.match(/<ending>([\s\S]*?)<\/ending>/i)?.[1]?.trim();
+        if (broken && ending) t.text = `${t.text} ${ending}`;
+        const more = parseTale(fix.replace(/<ending>[\s\S]*?<\/ending>/i, "")).choices.map(c => c.slice(0, 90));
+        if (more.length >= 2) choices = more.slice(0, 3);
+      } catch (e) { console.warn("[tale] не удалось дозапросить варианты:", (e as Error).message); }
+    }
+    if (!isFinal && choices.length < 2) {
       const extra = ["Пойти дальше и посмотреть, что будет", "Позвать на помощь друзей", "Остановиться и хорошенько подумать"];
       choices = [...choices, ...extra.filter(e => !choices.includes(e))].slice(0, 3);
     }
