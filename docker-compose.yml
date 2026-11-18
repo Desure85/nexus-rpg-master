@@ -1,0 +1,15 @@
+services:
+  nexus:
+    build: .
+    image: nexus-rpg:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file: .env
+    environment:
+      TRUST_PROXY: "true"
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      # локальная модель (Ollama/LM Studio) на хосте: http://host.docker.internal:11434/v1
+      - "host.docker.internal:host-gateway"

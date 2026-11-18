@@ -1,105 +1,90 @@
-# Nexus RPG Engine
+# Nexus RPG — онлайн-НРИ с ИИ-мастером
 
-A modern, AI-powered Tabletop RPG platform designed for solo and group play.
+Настольная ролевая игра в браузере, где мастером выступает ИИ. Есть три режима:
 
-## Features
+| Режим | Для чего |
+|---|---|
+| **Соло** | Вы и ИИ-мастер: один герой или целая партия, которой вы управляете сами. |
+| **С друзьями (онлайн)** | Каждый игрок заходит по ссылке со своего телефона, занимает героя и шлёт ходы (с честным серверным броском). Мастер подтверждает раунд, и ИИ отвечает всем сразу. Текст стримится всем в реальном времени. |
+| **Сказка** | Интерактивная сказка с выборами без кубиков и цифр. Можно выбрать возраст (3–5, 6–8, 9–12, взрослые), число глав и мораль. Друзья и дети предлагают продолжения со своих устройств, а в конце получается книга (Markdown / печать в PDF). |
 
-- **AI Game Master**: Powered by Google Gemini or Local LLMs (Ollama, LM Studio).
-- **Dynamic Dashboard**: Real-time tracking of characters, inventory, and game state.
-- **Dice Roller**: Integrated 3D dice rolling with physics.
-- **Lore Management**: Automatic lore generation and tracking.
-- **Multiplayer Support**: Real-time updates for multiple players via WebSockets.
+Для RPG-режимов можно выбрать формат «партия на вечер» или «кампания» (идл-доход, логово, экспедиции, фронты) и стиль: Narrative, Balanced, Combat или детская сказка.
 
-## Prerequisites
+## Быстрый старт
 
-- **Node.js**: Version 18 or higher.
-- **npm**: Version 9 or higher.
-- **Google Gemini API Key**: Get one from [Google AI Studio](https://aistudio.google.com/).
-- **(Optional) Local LLM**: Ollama or LM Studio for local AI processing.
+### Docker (рекомендуется)
 
-## Installation
+```bash
+cp .env.example .env      # впишите ключ ИИ и ADMIN_TOKEN
+docker compose up -d --build
+# http://localhost:3000
+```
 
-1.  **Clone the repository**:
-    ```bash
-    git clone <repository-url>
-    cd nexus-rpg
-    ```
+База SQLite лежит в `./data/game.db`. Для бэкапа достаточно скопировать этот файл, лучше при остановленном контейнере или через `sqlite3 game.db ".backup backup.db"`.
 
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
+### Без Docker
 
-3.  **Configure Environment Variables**:
-    Copy the example environment file:
-    ```bash
-    cp .env.example .env
-    ```
-    Open `.env` and add your Gemini API Key:
-    ```env
-    GEMINI_API_KEY=your_api_key_here
-    ```
+```bash
+npm ci
+cp .env.example .env
+npm run build
+npm start            # production: http://localhost:3000
+```
 
-## Running Locally
+Режим разработки с hot reload: `npm run dev`.
 
-1.  **Start the development server**:
-    ```bash
-    npm run dev
-    ```
+Попробовать без ключей ИИ: `LLM_PROVIDER=mock npm run dev`. Демо-провайдер отвечает заготовками, и на нём видно весь интерфейс и мультиплеер.
 
-2.  **Open the application**:
-    Visit `http://localhost:3000` in your browser.
+## ИИ-провайдеры
 
-## Running with Local LLM (Ollama / LM Studio)
+Все запросы к ИИ идут **с сервера**, ключи в браузер не попадают.
 
-1.  **Start your local model server**:
-    - **Ollama**: `ollama serve` (default port 11434)
-    - **LM Studio**: Start the local server (default port 1234)
+| Провайдер | Переменные |
+|---|---|
+| Gemini | `GEMINI_API_KEY`, `GEMINI_MODEL` |
+| OpenRouter | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| OpenCode (подписка) | `OPENCODE_API_KEY`, `OPENCODE_MODEL` |
+| Локальная / любая OpenAI-совместимая (Ollama, LM Studio, vLLM) | `LOCAL_MODEL_URL`, `LOCAL_MODEL_KEY`, `LOCAL_MODEL_NAME` |
+| Демо без ИИ | `LLM_PROVIDER=mock` |
 
-2.  **Configure in App**:
-    - Go to **Settings** -> **Model & Provider**.
-    - Select **Local Model**.
-    - Enter your model URL (e.g., `http://localhost:11434/v1` for Ollama).
-    - Enter the model name (e.g., `llama3`).
+Провайдера и модель администратор выбирает в «Настройки → Модель». Переменная `LLM_PROVIDER` жёстко фиксирует провайдера.
+Если модель запущена на той же машине, что и Docker, укажите адрес `http://host.docker.internal:11434/v1`.
 
-## Running with Docker
+## Безопасность и доступ
 
-1.  **Build the Docker image**:
-    ```bash
-    docker build -t nexus-rpg .
-    ```
+- **Ключ мастера.** Браузер мастера автоматически генерирует секретный ключ, и сервер показывает ему только его сессии. Чтобы вести игры с другого устройства, перенесите ключ в «Настройки → Доступ».
+- **Игроки** заходят по ссылке на героя. UUID сессии работает как приглашение. За устройством закрепляется персонаж; ходить за чужого героя или подсмотреть секрет устройства нельзя.
+- **`ADMIN_TOKEN`.** Без него любой посетитель может менять модель ИИ и читать логи. **На публичном сервере обязателен.**
+- **`GM_ACCESS_CODE`.** Если задан, создавать игры (и тратить ИИ-бюджет) можно только с кодом. Игрокам код не нужен.
+- Лимиты запросов к ИИ по IP настраиваются через `RATE_LIMIT_PER_MIN` и `SESSIONS_PER_HOUR`. За реверс-прокси включите `TRUST_PROXY=true`.
+- Ключи провайдеров хранятся только на сервере, API отдаёт их маской `••••1234`.
 
-2.  **Run the container**:
-    ```bash
-    # Linux / Mac
-    docker run -p 3000:3000 -v $(pwd)/data:/app/data nexus-rpg
+Сессии, созданные до появления ключей мастера, достаются первому мастеру, который откроет список (в локальном режиме без `ADMIN_TOKEN`), либо администратору.
 
-    # Windows (PowerShell)
-    docker run -p 3000:3000 -v ${PWD}/data:/app/data nexus-rpg
-    ```
-    - The `-v` flag mounts a `data` directory from your host to `/app/data` in the container.
-    - **Note:** Docker will automatically create the `data` directory on your host if it doesn't exist. The `game.db` file will be created inside it.
+## Как это устроено
 
-3.  **Accessing Local LLM (Ollama/LM Studio) from Docker**:
-    - **Windows / Mac**: Use `host.docker.internal` instead of `localhost`.
-      - Example: `http://host.docker.internal:11434/v1`
-    - **Linux**: Add `--network="host"` to the `docker run` command and use `localhost`.
-      - Example: `docker run --network="host" ...`
+```
+браузер мастера ─┐                        ┌─ LLM (Gemini/OpenRouter/OpenCode/локальная)
+телефоны игроков ┼─ REST + WebSocket ─ сервер ┤
+                 │   (стрим, события)        └─ SQLite (сессии, состояние движка)
+```
 
-## Troubleshooting
+- `server/engine.ts`: игровой ход целиком на сервере. У каждой сессии своя очередь ходов, поэтому одновременные действия не затирают историю. Движок собирает промпт, добавляет честную проверку встречи и `[STATE]`, стримит ответ всем в комнате, разбирает JSON-блоки, применяет урон, золото и XP (State Authority), а при повышении уровня запускает отдельный ход со способностями.
+- `server/game.ts`: экономика, лут, база, экспедиции, фронты, мемориал, idle.
+- `server/llm.ts`: провайдеры со стримингом и таймаутами, `server/mock-llm.ts` — демо и тесты.
+- `shared/`: правила и промпты, парсеры ответов модели, серверные броски. Этот код общий для клиента и сервера.
+- `src/`: React-клиент: экран мастера (`App.tsx`) и экран игрока (`components/CharacterView.tsx`).
 
-- **Mixed Content Error**: If running the app on HTTPS (e.g., Cloud Run) and the model on HTTP (localhost), use `ngrok` to tunnel your local model:
-  ```bash
-  ngrok http 11434
-  ```
-  Use the provided HTTPS URL in the app settings.
+## Разработка
 
-- **Database Issues**: If you encounter database errors, delete the `game.db` file to reset the database:
-  ```bash
-  rm game.db
-  npm run dev
-  ```
+```bash
+npm run lint     # tsc --noEmit
+npm test         # vitest: парсеры + e2e API (соло, мультиплеер, сказка, права доступа)
+npm run build    # vite (клиент) + esbuild (сервер) → dist/, dist-server/
+```
 
-## License
+CI в GitHub Actions прогоняет lint, тесты, сборку, smoke-тест production-сборки и сборку Docker-образа.
+
+## Лицензия
 
 MIT

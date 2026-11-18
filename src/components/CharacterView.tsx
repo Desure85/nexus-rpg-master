@@ -1,55 +1,65 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { GameSession, Character, DashboardData, MechanicConfig } from '../types';
+import { GameSession, Character, DashboardData, MechanicConfig, stressValue, itemName } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
 import { Codex } from './Codex';
+import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
+import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 
 export const CharacterView: React.FC = () => {
   const { sessionId, charName: rawCharName } = useParams<{ sessionId: string; charName: string }>();
   const [session, setSession] = useState<GameSession | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [character, setCharacter] = useState<Character | null>(null);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [mechanics, setMechanics] = useState<MechanicConfig[]>([]);
-  const [ws, setWs] = useState<WebSocket | null>(null);
   const [actionInput, setActionInput] = useState('');
+  const [rollType, setRollType] = useState<'' | 'classic' | 'triple' | 'shifted' | 'taint'>('');
   const [isSending, setIsSending] = useState(false);
   const [activeTab, setActiveTab] = useState<'character' | 'scene' | 'story' | 'lore' | 'codex'>('character');
   const [isBookView, setIsBookView] = useState(false);
   const [fontSize, setFontSize] = useState(16);
+  const [streamingText, setStreamingText] = useState<string | null>(null);
+  const [masterBusy, setMasterBusy] = useState(false);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
 
   // --- Multiplayer: claim (закрепление персонажа за игроком) ---
-  const deviceId = React.useMemo(() => {
-    let id = localStorage.getItem('nexus_device_id');
-    if (!id) { id = crypto.randomUUID(); localStorage.setItem('nexus_device_id', id); }
-    return id;
-  }, []);
   const [claimState, setClaimState] = useState<'loading' | 'unclaimed' | 'pending' | 'approved' | 'rejected' | 'other'>('loading');
   const [claimOwner, setClaimOwner] = useState('');
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('nexus_player_name') || '');
-  const [myPending, setMyPending] = useState(false);
+  const [myPending, setMyPending] = useState<string | null>(null);
+
+  // Decode character name safely (handle both Base64 and legacy URI encoded)
+  const charName = React.useMemo(() => {
+    if (!rawCharName) return '';
+    try {
+      return decodeURIComponent(escape(atob(decodeURIComponent(rawCharName))));
+    } catch (e) {
+      return decodeURIComponent(rawCharName);
+    }
+  }, [rawCharName]);
+
+  const isTale = session?.mode === 'tale';
 
   const fetchPending = async () => {
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/pending`);
-      const pending = await res.json();
-      setMyPending(pending.some((p: any) => p.char_name === charName));
+      const pending = await api<any[]>(`/api/sessions/${sessionId}/pending`);
+      setMyPending(pending.find((p: any) => p.char_name === charName)?.action_text ?? null);
     } catch (e) { console.error("Pending fetch error", e); }
   };
 
   const fetchClaims = async () => {
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/claims`);
-      const claims = await res.json();
-      const mine = claims.filter((c: any) => c.char_name === charName).sort((a: any, b: any) => a.created_at.localeCompare(b.created_at));
-      const mineByDevice = mine.find((c: any) => c.device_id === deviceId);
-      const others = mine.filter((c: any) => c.device_id !== deviceId && c.status === 'approved');
-      if (mineByDevice?.status === 'approved') { setClaimState('approved'); }
-      else if (mineByDevice?.status === 'pending') { setClaimState('pending'); }
-      else if (mineByDevice?.status === 'rejected') { setClaimState('rejected'); }
-      else if (others.length > 0) { setClaimState('other'); setClaimOwner(others[0].player_name); }
-      else { setClaimState('unclaimed'); }
+      const claims = await api<any[]>(`/api/sessions/${sessionId}/claims`);
+      const forChar = claims.filter((c: any) => c.char_name === charName);
+      const mine = forChar.filter((c: any) => c.mine).sort((a: any, b: any) => String(b.created_at).localeCompare(String(a.created_at)))[0];
+      const other = forChar.find((c: any) => !c.mine && c.status === 'approved');
+      if (mine?.status === 'approved') setClaimState('approved');
+      else if (other) { setClaimState('other'); setClaimOwner(other.player_name); }
+      else if (mine?.status === 'pending') setClaimState('pending');
+      else if (mine?.status === 'rejected') setClaimState('rejected');
+      else setClaimState('unclaimed');
     } catch (e) { console.error("Claims fetch error", e); }
   };
 
@@ -58,61 +68,42 @@ export const CharacterView: React.FC = () => {
     if (!name) return;
     localStorage.setItem('nexus_player_name', name);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/claim`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ charName, playerName: name, deviceId })
-      });
-      const data = await res.json();
-      if (data.status === 'pending' || data.status === 'approved') { setClaimState(data.status); }
-    } catch (e) { console.error("Claim error", e); }
-  };
-
-  // Decode character name safely (handle both Base64 and legacy URI encoded)
-  const charName = React.useMemo(() => {
-    if (!rawCharName) return '';
-    try {
-      // Try Base64 decode first
-      return decodeURIComponent(escape(atob(rawCharName)));
+      const data = await api<any>(`/api/sessions/${sessionId}/claim`, { body: { charName, playerName: name } });
+      if (data.status === 'pending' || data.status === 'approved') setClaimState(data.status);
     } catch (e) {
-      // Fallback to standard URI decode (for legacy links)
-      return decodeURIComponent(rawCharName);
+      if (e instanceof ApiError && e.code === 'claimed_by_other') fetchClaims();
+      else alert(`Не удалось занять персонажа: ${e instanceof Error ? e.message : e}`);
     }
-  }, [rawCharName]);
-
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch('/api/settings');
-      const data = await res.json();
-      if (data.mechanics) {
-        setMechanics(JSON.parse(data.mechanics));
-      }
-    } catch (e) {
-      console.error("Fetch settings error", e);
-    }
-  };
-
-  const isMechanicEnabled = (id: string) => {
-    if (mechanics.length === 0) return true; // Default to true if not loaded yet
-    const mech = mechanics.find(m => m.id === id);
-    return mech ? mech.enabled : true;
   };
 
   const fetchData = async () => {
     try {
-      const res = await fetch(`/api/sessions/${sessionId}`);
-      const data = await res.json();
-      if (data) {
-        const history = JSON.parse(data.history);
-        const lastDashboard = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
-        setSession({ ...data, history, codex: JSON.parse(data.codex) });
-        setDashboard(lastDashboard);
-        const char = lastDashboard?.characters?.find((c: any) => c.name === charName);
-        setCharacter(char || null);
-      }
+      const data = await api<GameSession>(`/api/sessions/${sessionId}`);
+      const history = data.history || [];
+      const lastDashboard = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard || null;
+      setSession(data);
+      setMasterBusy(!!data.busy);
+      setDashboard(lastDashboard);
+      setCharacter(lastDashboard?.characters?.find((c: any) => c.name === charName) || null);
+      if (data.config?.mechanics) setMechanics(data.config.mechanics);
+      setLoadError('');
     } catch (e) {
-      console.error("Fetch error", e);
+      setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить сессию');
     }
+  };
+
+  const fetchSettings = async () => {
+    if (mechanics.length) return;
+    try {
+      const data = await api<any>('/api/settings');
+      if (Array.isArray(data.mechanics)) setMechanics(prev => prev.length ? prev : data.mechanics);
+    } catch (e) { console.error("Fetch settings error", e); }
+  };
+
+  const isMechanicEnabled = (id: string) => {
+    if (mechanics.length === 0) return true;
+    const mech = mechanics.find(m => m.id === id);
+    return mech ? mech.enabled : true;
   };
 
   useEffect(() => {
@@ -120,103 +111,73 @@ export const CharacterView: React.FC = () => {
     fetchSettings();
     fetchClaims();
     fetchPending();
-
-    let socket: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout;
-
-    const connect = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      socket = new WebSocket(`${protocol}//${window.location.host}`);
-      
-      socket.onopen = () => {
-        console.log('CharacterView WebSocket Connected');
-        socket.send(JSON.stringify({ type: 'join', sessionId }));
-      };
-
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'update') {
-          console.log('CharacterView received update');
-          fetchData();
-        }
-        if (data.type === 'claims_changed' || data.type === 'actions_changed') {
-          fetchClaims();
-          fetchPending();
-        }
-      };
-
-      socket.onclose = () => {
-        console.log('CharacterView WebSocket Disconnected. Reconnecting in 3s...');
-        reconnectTimeout = setTimeout(connect, 3000);
-      };
-
-      setWs(socket);
-    };
-
-    connect();
-
-    return () => {
-      if (socket) {
-        socket.onclose = null; // Prevent reconnect on unmount
-        socket.close();
-      }
-      clearTimeout(reconnectTimeout);
-    };
   }, [sessionId, charName]);
 
-  const handleManualRefresh = () => {
-    fetchData();
-    fetchSettings();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'join', sessionId }));
-    } else {
-      // Try to reconnect if closed
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const socket = new WebSocket(`${protocol}//${window.location.host}`);
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'join', sessionId }));
-      };
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === 'update') fetchData();
-      };
-      setWs(socket);
-    }
-  };
+  useEffect(() => { if (isTale) setActiveTab(t => (t === 'character' ? 'story' : t)); }, [isTale]);
 
-  const hasActed = React.useMemo(() => myPending, [myPending]);
+  useSessionSocket(sessionId, (ev: SocketEvent) => {
+    switch (ev.type) {
+      case 'joined':
+      case 'busy':
+        setMasterBusy(ev.busy);
+        if (!ev.busy) setStreamingText(null);
+        break;
+      case 'turn_start': setStreamingText(''); break;
+      case 'delta': setStreamingText(prev => (prev ?? '') + ev.text); break;
+      case 'turn_end':
+      case 'turn_error': setStreamingText(null); break;
+      case 'update': fetchData(); break;
+      case 'claims_changed':
+      case 'actions_changed': fetchClaims(); fetchPending(); break;
+    }
+  }, () => { fetchData(); fetchClaims(); fetchPending(); });
+
+  useEffect(() => {
+    if (activeTab === 'story') chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [session?.history.length, activeTab, streamingText === null]);
+
+  const handleManualRefresh = () => { fetchData(); fetchClaims(); fetchPending(); };
+
+  const hasActed = myPending !== null;
 
   const sendAction = async (actionText: string = actionInput) => {
     if (!actionText.trim() || !session || isSending || hasActed || claimState !== 'approved') return;
     setIsSending(true);
     try {
-      const res = await fetch(`/api/sessions/${sessionId}/actions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ charName, deviceId, action: actionText })
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'action rejected');
-      }
+      await api(`/api/sessions/${sessionId}/actions`, { body: { charName, action: actionText.trim(), roll: !isTale && rollType ? rollType : undefined } });
       setActionInput('');
+      fetchPending();
     } catch (e) {
-      console.error("Send error", e);
       alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
   };
 
+  const lastAssistant = session?.history.slice().reverse().find(m => m.role === 'assistant');
+  const taleChoices = isTale && !session?.config?.tale?.finished ? (lastAssistant?.choices || []) : [];
+
   if (!character || !dashboard || !session) {
+    const others = dashboard?.characters?.map(c => c.name).filter(n => n !== charName) || [];
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-[#0a0502] text-white font-sans space-y-4">
-        {!session ? (
+      <div className="flex flex-col items-center justify-center h-screen bg-[#0a0502] text-white font-sans space-y-4 p-6 text-center">
+        {!session && !loadError ? (
           <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-amber-400"></div>
         ) : null}
         <p className="text-white/60 italic">
-          {session ? `Character "${charName}" not found in this session.` : "Loading character data..."}
+          {loadError ? loadError : session ? `Персонажа «${charName}» пока нет в этой сессии.` : 'Загружаем...'}
         </p>
+        {session && others.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-white/40">Другие герои этой сессии:</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {others.map(n => (
+                <a key={n} href={characterLink(session.id, n)} className="px-3 py-1.5 bg-white/10 rounded-lg text-sm hover:bg-white/20">{n}</a>
+              ))}
+            </div>
+          </div>
+        )}
+        {session && <button onClick={handleManualRefresh} className="text-xs text-amber-400">Обновить</button>}
       </div>
     );
   }
@@ -276,7 +237,7 @@ export const CharacterView: React.FC = () => {
   return (
     <div className="flex flex-col h-screen h-[100dvh] bg-[#0a0502] text-white font-sans overflow-hidden">
       {/* Top Navigation */}
-      <div className="flex border-b border-white/5 p-2 bg-black/40 backdrop-blur-md shrink-0 gap-2">
+      <div className="flex border-b border-white/5 p-2 bg-black/40 backdrop-blur-md shrink-0 gap-2 overflow-x-auto">
         <button 
           onClick={handleManualRefresh}
           className="flex items-center justify-center p-3 rounded-xl text-white/40 hover:text-white bg-white/5 hover:bg-white/10 transition-all"
@@ -288,32 +249,33 @@ export const CharacterView: React.FC = () => {
           onClick={() => setActiveTab('character')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'character' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <User size={14} /> Character
+          <User size={14} /> {isTale ? 'Герой' : 'Персонаж'}
         </button>
-        <button 
+        {!isTale && <button 
           onClick={() => setActiveTab('scene')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'scene' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <LayoutDashboard size={14} /> Scene
-        </button>
+          <LayoutDashboard size={14} /> Сцена
+        </button>}
         <button 
           onClick={() => setActiveTab('story')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'story' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <BookOpen size={14} /> Story
+          <BookOpen size={14} /> {isTale ? 'Сказка' : 'История'}
+          {masterBusy && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />}
         </button>
         <button 
           onClick={() => setActiveTab('lore')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'lore' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <History size={14} /> Lore
+          <History size={14} /> {isTale ? 'Память' : 'Лор'}
         </button>
-        <button 
+        {!isTale && <button 
           onClick={() => setActiveTab('codex')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'codex' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <Library size={14} /> Codex
-        </button>
+          <Library size={14} /> Кодекс
+        </button>}
         <div className="flex items-center gap-1 border-l border-white/10 pl-2 ml-2">
           <button 
             onClick={() => setFontSize(Math.max(12, fontSize - 2))}
@@ -343,9 +305,9 @@ export const CharacterView: React.FC = () => {
                   <p className="text-amber-400/60 uppercase tracking-widest text-[10px] font-bold mt-1">{character.goal}</p>
                 </div>
                 <div className="text-right">
-                  {isMechanicEnabled('condition') && (
+                  {!isTale && isMechanicEnabled('condition') && (
                     <>
-                      <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-1">Condition</p>
+                      <p className="text-[10px] uppercase tracking-widest text-white/20 font-bold mb-1">Состояние</p>
                       <p className="text-sm italic text-orange-300">{character.condition}</p>
                     </>
                   )}
@@ -353,17 +315,17 @@ export const CharacterView: React.FC = () => {
               </header>
 
               {/* Stats */}
-              <div className="grid grid-cols-2 gap-6">
+              {!isTale && <div className="grid grid-cols-2 gap-6">
                 {isMechanicEnabled('hp') && (
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/40">
-                      <span>Health Points</span>
+                      <span>Здоровье</span>
                       <span className="text-emerald-400">{character.hp}</span>
                     </div>
                     <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-emerald-500 transition-all duration-500" 
-                        style={{ width: `${(parseInt(character.hp.split('/')[0]) / parseInt(character.hp.split('/')[1])) * 100}%` }}
+                        style={{ width: `${Math.max(0, Math.min(100, ((parseInt(String(character.hp).split('/')[0]) || 0) / (parseInt(String(character.hp).split('/')[1]) || 1)) * 100))}%` }}
                       />
                     </div>
                   </div>
@@ -371,23 +333,23 @@ export const CharacterView: React.FC = () => {
                 {isMechanicEnabled('stress') && (
                   <div className="p-4 bg-white/5 border border-white/10 rounded-2xl space-y-2">
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/40">
-                      <span>Stress Level</span>
+                      <span>Стресс</span>
                       <span className="text-orange-400">{character.stress}/10</span>
                     </div>
                     <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-orange-500 transition-all duration-500" 
-                        style={{ width: `${(character.stress / 10) * 100}%` }}
+                        style={{ width: `${Math.min(100, (stressValue(character.stress) / 10) * 100)}%` }}
                       />
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Tokens */}
-              {isMechanicEnabled('tokens') && (
+              {!isTale && isMechanicEnabled('tokens') && (
                 <div className="p-4 bg-amber-400/5 border border-amber-400/20 rounded-2xl flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-widest text-amber-400/60 font-bold">Fate Tokens</span>
+                  <span className="text-[10px] uppercase tracking-widest text-amber-400/60 font-bold">Жетоны судьбы</span>
                   <div className="flex gap-3">
                     {Array.from({ length: 3 }).map((_, i) => (
                       <div 
@@ -403,16 +365,34 @@ export const CharacterView: React.FC = () => {
                 </div>
               )}
 
+              {masterBusy && (
+                <div className="p-3 bg-amber-400/5 border border-amber-400/20 rounded-xl text-xs text-amber-200 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" /> {isTale ? 'Сказочник пишет новую главу...' : 'Мастер обдумывает ход...'}
+                  <button onClick={() => setActiveTab('story')} className="ml-auto underline">Читать</button>
+                </div>
+              )}
+
+              {taleChoices.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold">Что предложишь?</h3>
+                  {taleChoices.map((c, i) => (
+                    <button key={i} onClick={() => sendAction(c)} disabled={hasActed || isSending} className="w-full text-left p-3 bg-amber-400/5 border border-amber-400/20 rounded-xl text-sm text-amber-100 hover:bg-amber-400/15 disabled:opacity-40 transition-all">
+                      {c}
+                    </button>
+                  ))}
+                </section>
+              )}
+
               {/* Custom Action */}
               <section className="space-y-4">
                 <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                  <MessageSquarePlus size={12} /> Custom Action
+                  <MessageSquarePlus size={12} /> {isTale ? 'Свой вариант' : 'Своё действие'}
                 </h3>
                 <div className="flex gap-2">
                   <textarea
                     value={actionInput}
                     onChange={(e) => setActionInput(e.target.value)}
-                    placeholder="Describe your action..."
+                    placeholder={isTale ? 'Что сделает твой герой?' : 'Опиши действие...'}
                     disabled={hasActed || isSending}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20"
                   />
@@ -422,16 +402,30 @@ export const CharacterView: React.FC = () => {
                     className="px-4 bg-white text-black rounded-xl font-bold hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex flex-col items-center justify-center gap-1"
                   >
                     <Send size={16} />
-                    <span className="text-[10px] uppercase tracking-widest">Act</span>
+                    <span className="text-[10px] uppercase tracking-widest">{isTale ? 'Ок' : 'Ход'}</span>
                   </button>
                 </div>
+                {!isTale && (
+                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-white/40 font-bold">
+                    <span>Бросок:</span>
+                    {([['', 'нет'], ['classic', 'd20'], ['triple', '3d20'], ['shifted', 'Сдвиг'], ['taint', 'Хаос']] as const)
+                      .filter(([id]) => id === '' || id === 'classic' || isMechanicEnabled(id))
+                      .map(([id, label]) => (
+                        <button key={id} onClick={() => setRollType(id)} className={`px-2 py-1 rounded-md ${rollType === id ? 'bg-white text-black' : 'bg-white/5 hover:bg-white/10'} ${dashboard.suggestedRoll?.type === id ? 'ring-1 ring-amber-400/60' : ''}`}>
+                          {label}
+                        </button>
+                      ))}
+                  </div>
+                )}
                 {hasActed && (
-                  <p className="text-xs text-emerald-400 text-center animate-pulse">
-                    Действие отправлено Мастеру. Ждём его решения...
-                  </p>
+                  <div className="text-xs text-emerald-400 text-center space-y-1">
+                    <p className="animate-pulse">{isTale ? 'Твоя идея у сказочника. Ждём продолжения...' : 'Действие отправлено Мастеру. Ждём его решения...'}</p>
+                    <p className="text-white/40 italic whitespace-pre-wrap">«{myPending}»</p>
+                  </div>
                 )}
               </section>
 
+              {!isTale && <>
               {/* Unique Abilities */}
               {character.abilities && character.abilities.length > 0 && (
                 <section className="space-y-4">
@@ -466,13 +460,13 @@ export const CharacterView: React.FC = () => {
               {isMechanicEnabled('actions') && (
                 <section className="space-y-4">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <Zap size={12} /> Available Actions
+                    <Zap size={12} /> Варианты действий
                   </h3>
                   <div className="grid grid-cols-1 gap-3">
                     {character.actions?.map((action, idx) => (
                       <button 
                         key={idx} 
-                        onClick={() => sendAction(`I perform ${action.name}: ${action.description}`)}
+                        onClick={() => sendAction(`${action.name}: ${action.description}`)}
                         disabled={hasActed || isSending}
                         className="w-full text-left p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-white/10 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
                       >
@@ -497,7 +491,7 @@ export const CharacterView: React.FC = () => {
               {/* Inventory */}
               <section className="space-y-4">
                 <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                  <Shield size={12} /> Inventory
+                  <Shield size={12} /> Инвентарь
                 </h3>
                 <div className="flex flex-wrap gap-2">
                   {character.inventory?.map((item, idx) => (
@@ -506,7 +500,7 @@ export const CharacterView: React.FC = () => {
                     </span>
                   ))}
                   {(!character.inventory || character.inventory.length === 0) && (
-                    <span className="text-sm text-white/20 italic">No items carried.</span>
+                    <span className="text-sm text-white/20 italic">Пусто.</span>
                   )}
                 </div>
               </section>
@@ -515,14 +509,14 @@ export const CharacterView: React.FC = () => {
               {isMechanicEnabled('inventory') && character.equipment && character.equipment.length > 0 && (
                 <section className="space-y-4">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <Shield size={12} /> Equipment
+                    <Shield size={12} /> Снаряжение
                   </h3>
                   <div className="grid grid-cols-2 gap-2">
                     {character.equipment.map((eq, idx) => (
                       <div key={idx} className="bg-black/40 border border-white/10 rounded-lg p-2.5 flex flex-col gap-1">
                         <span className="text-[8px] uppercase tracking-widest text-white/40 font-bold">{eq.slot}</span>
-                        <span className={`text-xs ${eq.item === 'Пусто' ? 'text-white/20 italic' : 'text-emerald-400'}`}>
-                          {eq.item}
+                        <span className={`text-xs ${!itemName(eq.item) || itemName(eq.item) === 'Пусто' ? 'text-white/20 italic' : 'text-emerald-400'}`}>
+                          {itemName(eq.item) || 'Пусто'}
                         </span>
                       </div>
                     ))}
@@ -531,12 +525,13 @@ export const CharacterView: React.FC = () => {
               )}
 
 
+              </>}
             </motion.div>
           )}
 
           {activeTab === 'scene' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-              <h2 className="text-2xl font-display font-bold tracking-tighter border-b border-white/10 pb-4">Scene Status</h2>
+              <h2 className="text-2xl font-display font-bold tracking-tighter border-b border-white/10 pb-4">Сцена</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {isMechanicEnabled('doom_pool') && (
@@ -618,12 +613,12 @@ export const CharacterView: React.FC = () => {
           {activeTab === 'story' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8 flex flex-col h-full">
               <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                <h2 className="text-2xl font-display font-bold tracking-tighter">The Chronicle</h2>
+                <h2 className="text-2xl font-display font-bold tracking-tighter">Хроника</h2>
                 <button 
                   onClick={() => setIsBookView(!isBookView)}
                   className={`flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold transition-all ${isBookView ? 'text-emerald-400' : 'text-white/40 hover:text-white'}`}
                 >
-                  <Library size={12} /> {isBookView ? 'Book Mode Active' : 'Switch to Book Mode'}
+                  <Library size={12} /> {isBookView ? 'Режим книги' : 'Книга'}
                 </button>
               </div>
               <div className="space-y-8">
@@ -640,11 +635,11 @@ export const CharacterView: React.FC = () => {
                       }`}>
                         {(msg.content || '').includes('[PLAYER ACTION:') ? (
                           <div className="flex flex-col gap-1 text-left">
-                            <span className="text-[8px] uppercase tracking-widest font-bold opacity-60">Player Action</span>
+                            <span className="text-[8px] uppercase tracking-widest font-bold opacity-60">Ход игрока</span>
                             <span>{(msg.content || '').replace(/\[PLAYER ACTION:.*?\]/, '').trim()}</span>
                             <span className="text-[8px] italic opacity-40">— {(msg.content || '').match(/\[PLAYER ACTION: (.*?)\]/)?.[1]}</span>
                           </div>
-                        ) : msg.content}
+                        ) : <span className="whitespace-pre-wrap">{displayUserContent(msg.content)}</span>}
                       </div>
                     ) : (
                       <div className={`narrative-text space-y-4 ${isBookView ? 'text-white/90' : 'text-white/80'} font-serif leading-relaxed`}>
@@ -655,6 +650,15 @@ export const CharacterView: React.FC = () => {
                     )}
                   </div>
                 ))}
+                {streamingText !== null && (
+                  <div className="max-w-3xl mx-auto w-full narrative-text text-white/80 font-serif leading-relaxed whitespace-pre-wrap">
+                    {cleanStreamForDisplay(streamingText)}
+                    <span className="inline-block w-1.5 h-4 bg-white/50 animate-pulse ml-0.5 align-middle rounded-sm" />
+                  </div>
+                )}
+                {masterBusy && streamingText === null && (
+                  <p className="text-center text-xs text-white/40 italic animate-pulse">{isTale ? 'Сказочник подбирает слова...' : 'Мастер думает...'}</p>
+                )}
                 <div ref={chatEndRef} />
               </div>
             </motion.div>
@@ -663,10 +667,10 @@ export const CharacterView: React.FC = () => {
           {activeTab === 'lore' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
               <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2 border-b border-white/10 pb-4">
-                <History size={12} /> Story Archive
+                <History size={12} /> {isTale && session.config?.tale?.finished ? 'Книга сказки' : 'Архив истории'}
               </h3>
               <div className="text-sm text-white/80 font-serif leading-relaxed whitespace-pre-wrap">
-                {session.lore || "No lore recorded yet. The story is just beginning."}
+                {(isTale && session.config?.tale?.finished ? session.archive : session.lore) || 'Пока пусто — история только начинается.'}
               </div>
             </motion.div>
           )}

@@ -1,8 +1,11 @@
 node_modules
 dist
+dist-server
 data
 exports
-game.db
+game.db*
 .git
+.github
 .env
 *.log
+coverage

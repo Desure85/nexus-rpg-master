@@ -25,9 +25,12 @@ export interface Item {
 }
 
 export interface EquipmentSlot {
-  slot: 'head' | 'body' | 'main-hand' | 'off-hand' | 'accessory';
+  slot: string; // head | body | main-hand | off-hand | accessory | динамические слоты сеттинга
   item: Item | string | null;
 }
+
+export const stressValue = (s: number | string | undefined): number => (typeof s === 'number' ? s : parseInt(String(s ?? '0')) || 0);
+export const itemName = (item: Item | string | null | undefined): string => (!item ? '' : typeof item === 'string' ? item : item.name || '');
 
 export interface Character {
   name: string;
@@ -110,6 +113,8 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   dashboard?: DashboardData;
+  /** Режим «Сказка»: варианты продолжения, предложенные сказочником */
+  choices?: string[];
 }
 
 export interface CodexEntry {
@@ -126,13 +131,24 @@ export interface GameSession {
   genre: string;
   setting: string;
   style: string;
-  mode?: 'short' | 'campaign';
+  mode?: 'short' | 'campaign' | 'tale';
   snapshot: string;
   history: Message[];
   lore: string;
   archive: string;
   codex: CodexEntry[];
   updated_at: string;
+  config?: SessionConfig;
+  isOwner?: boolean;
+  busy?: boolean;
+}
+
+export interface SessionConfig {
+  mechanics?: MechanicConfig[];
+  systemPrompt?: string;
+  idlePlayerAction?: 'random' | 'skip' | 'gm';
+  autoApprove?: boolean;
+  tale?: { age: '3-5' | '6-8' | '9-12' | 'adult'; chapters: number; moral?: string; finished?: boolean; title?: string };
 }
 
 export interface MechanicConfig {
@@ -143,7 +159,7 @@ export interface MechanicConfig {
 }
 
 export interface AppSettings {
-  provider: 'local' | 'gemini' | 'openrouter' | 'opencode';
+  provider: 'local' | 'gemini' | 'openrouter' | 'opencode' | 'mock';
   modelUrl: string;
   apiKey: string;
   modelName: string;

@@ -1,0 +1,708 @@
+import type { Express } from "express";
+import crypto from "crypto";
+import type { DB } from "./db";
+
+export interface EncounterResult {
+  roll: number;
+  result: "encounter" | "none" | "silence" | "world";
+  reason: string;
+  worldType?: "positive" | "neutral" | "negative";
+  partyLevel?: number;
+  threatBudget?: { hp: number; features: number };
+  tag: string;
+}
+
+export interface GameCtx {
+  db: DB;
+  broadcast: (roomId: string, data: any) => void;
+}
+
+/** Числовое состояние персонажей (State Authority) и игровые сервисы: экономика, база, экспедиции, фронты. */
+export function registerGameRoutes(app: Express, ctx: GameCtx) {
+  const { db, broadcast } = ctx;
+
+  // --- Pacing: реальная проверка эскалации (заменяет «мысленный d6») ---
+  // Прогрессия: XP → уровень (level = floor(sqrt(xp/50))+1; золото = XP)
+  const levelFromXp = (xp: number) => Math.floor(Math.sqrt(Math.max(0, xp) / 50)) + 1;
+  const partyLevel = (dash: any) => {
+    const chars = dash?.characters || [];
+    if (chars.length === 0) return 1;
+    const total = chars.reduce((s: number, c: any) => s + levelFromXp(Number(c.xp || 0)), 0);
+    return Math.max(1, Math.round(total / chars.length));
+  };
+  const threatBudget = (level: number, danger: number) => ({
+    hp: 8 + level * 3 + danger * 2,
+    features: 1 + Math.floor(level / 2),
+  });
+
+  const PACING_STYLES: Record<string, { limit: number; safeDelay: number; threshold: number; failedBonus: number }> = {
+    narrative: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
+    fairytale: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
+    balanced: { limit: 2, safeDelay: 2, threshold: 5, failedBonus: 1 },
+    combat: { limit: 3, safeDelay: 0, threshold: 3, failedBonus: 1 },
+  };
+
+  const encounterCheck = (sessionId: string, style = "balanced", playerFailed = false): EncounterResult => {
+    const row: any = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
+    if (!row) return { roll: 0, result: "none", reason: "session not found", tag: "" };
+    const history = JSON.parse(row.history || "[]");
+    const round = history.filter((m: any) => m.role === "assistant").length;
+    const lastDash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
+    const threatsActive = Array.isArray(lastDash?.threats) ? lastDash.threats.length : 0;
+    const cfg = PACING_STYLES[style] || PACING_STYLES.balanced;
+
+    let p = db.prepare("SELECT * FROM pacing WHERE session_id = ?").get(sessionId) as any;
+    if (!p) { db.prepare("INSERT INTO pacing (session_id) VALUES (?)").run(sessionId); p = { round: 0, last_threat_round: -99, safe_until: 0 }; }
+
+    const roll = Math.floor(Math.random() * 6) + 1;
+    const effectiveRoll = roll + (playerFailed ? cfg.failedBonus : 0);
+    let result: "encounter" | "none" | "silence" | "world" = "none";
+    let reason = "";
+    let worldType: "positive" | "neutral" | "negative" = "neutral";
+
+    const doomPool = Number(lastDash?.doomPool || 0);
+    if (doomPool >= 5) {
+      // Пул Рока сработал: непредсказуемое мировое событие (полярность случайна)
+      result = "world";
+      const typeRoll = Math.floor(Math.random() * 6) + 1;
+      worldType = typeRoll <= 2 ? "positive" : typeRoll <= 4 ? "neutral" : "negative";
+      reason = `doom=${doomPool} ≥ 5, полярность d6=${typeRoll} → ${worldType}`;
+      db.prepare("UPDATE pacing SET round = ?, last_threat_round = ?, safe_until = ? WHERE session_id = ?")
+        .run(round, worldType === "negative" ? round : (p.last_threat_round ?? -99), round + (worldType === "negative" ? cfg.safeDelay : 0), sessionId);
+    } else if (round < p.safe_until && style !== "combat") {
+      reason = `safe_haven (до хода ${p.safe_until})`;
+    } else if (threatsActive >= cfg.limit) {
+      reason = `лимит угроз (${threatsActive}/${cfg.limit})`;
+    } else if (round - (p.last_threat_round ?? -99) >= 5) {
+      result = "silence";
+      reason = "тишина 5+ ходов — авто-событие";
+    } else if (effectiveRoll >= cfg.threshold) {
+      result = "encounter";
+      reason = `d6=${roll} (порог ${cfg.threshold})`;
+    } else {
+      reason = `d6=${roll} < ${cfg.threshold}`;
+    }
+
+    if (result === "encounter" || result === "silence") {
+      db.prepare("UPDATE pacing SET round = ?, last_threat_round = ?, safe_until = ? WHERE session_id = ?")
+        .run(round, round, round + cfg.safeDelay, sessionId);
+    }
+    const typeLabel = worldType === "positive" ? "благосклонность судьбы" : worldType === "neutral" ? "нейтральное знамение" : "опасность";
+    const pl = partyLevel(lastDash);
+    const budget = threatBudget(pl, Number(lastDash?.locations?.find((l: any) => l.id === lastDash?.currentLocationId)?.dangerLevel || 1));
+    const tag = result === "world"
+      ? `[WORLD EVENT: ${worldType} (${typeLabel})] Пул Рока разрядился — произойдёт НЕОЖИДАННОЕ событие ${worldType === "positive" ? "в пользу героев (союзник, находка, удача)" : worldType === "neutral" ? "— знамение, встреча, деталь мира" : "— угроза, засада, ухудшение"}. Опиши его живо и ОБНУЛИ doomPool до 0 в следующем dashboard_json.`
+      : result === "encounter"
+        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие. Партия уровня ${pl}: враг должен иметь HP ~${budget.hp}, особенностей ${budget.features} (автоскейл)]`
+        : result === "silence"
+          ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
+          : "";
+    return { roll, result, reason, worldType: result === "world" ? worldType : undefined, partyLevel: pl, threatBudget: result === "encounter" ? budget : undefined, tag };
+  };
+
+  app.post("/api/sessions/:id/encounter-check", (req, res) => {
+    const { style = "balanced", playerFailed = false } = req.body || {};
+    res.json(encounterCheck(req.params.id, style, playerFailed));
+  });
+
+  // --- Loot: детерминированный поиск (локация / тело) ---
+  const LOOT_POOLS: Record<string, string[]> = {
+    common: ["12 золотых монет", "Зелье лечения (восстанавливает 5 HP)", "Старый железный кинжал", "Связка верёвки (10 м)", "Потертая карта окрестностей", "Пустая склянка"],
+    uncommon: ["30 золотых монет", "Зелье стабильности (снимает 2 Стресса)", "Кинжал гнева (+1 урон)", "Малый ключ", "Письмо с чужой печатью", "Фляга крепкого вина"],
+    rare: ["75 золотых монет", "Зелье великого лечения (восстанавливает 10 HP)", "Меч из лунного серебра (+2 урон, светится в темноте)", "Свиток с шифром", "Амулет старой гильдии", "Линза истины (видит невидимое)"],
+    epic: ["150 золотых монет", "Сердце Вельдегара (расходник: 20 HP или сброс 5 Стресса, 1 раз)", "Ключ от башни Инквизитора", "Дневник Варго (знание слабости врага)", "Печать Нексуса"],
+  };
+
+  const pickLoot = (pool: keyof typeof LOOT_POOLS, count: number, used: string[] = []) => {
+    const available = LOOT_POOLS[pool].filter(i => !used.includes(i));
+    const picked: string[] = [];
+    for (let i = 0; i < count && available.length > 0; i++) {
+      const idx = Math.floor(Math.random() * available.length);
+      picked.push(available.splice(idx, 1)[0]);
+    }
+    return picked;
+  };
+
+  const tierFor = (roll: number, danger: number): keyof typeof LOOT_POOLS | null => {
+    if (roll < 5) return null;
+    if (roll <= 14) return "common";
+    if (roll <= 19) return danger <= 2 ? "common" : "uncommon";
+    return danger <= 2 ? "uncommon" : danger <= 4 ? "rare" : "epic";
+  };
+
+  app.post("/api/sessions/:id/search", (req, res) => {
+    const { target = "location", targetName = "", dangerLevel = 1 } = req.body || {};
+    const key = target === "body" ? `body:${targetName}` : "location";
+    let s = db.prepare("SELECT * FROM searches WHERE session_id = ? AND target = ?").get(req.params.id, key) as any;
+    if (s && s.count >= 1) {
+      return res.json({ roll: 0, found: false, loot: [], tag: `[LOOT: уже обыскано]`, repeat: true });
+    }
+    const roll = Math.floor(Math.random() * 20) + 1;
+    const tier = tierFor(roll, dangerLevel);
+    const items = tier ? pickLoot(tier, target === "body" ? 2 : 2) : [];
+    db.prepare("INSERT INTO searches (session_id, target, count) VALUES (?,?,1) ON CONFLICT(session_id, target) DO UPDATE SET count = count + 1")
+      .run(req.params.id, key);
+    const found = items.length > 0;
+    const tag = found ? `[LOOT FOUND: ${items.join("; ")}]` : `[LOOT: ничего ценного (d20=${roll})]`;
+    res.json({ roll, found, tier, loot: items, tag });
+  });
+
+  // --- Economy: таверна + магазин (сервер владеет золотом) ---
+  const SHOP: { name: string; cost: number; desc: string }[] = [
+    { name: "Зелье лечения (восстанавливает 5 HP)", cost: 15, desc: "Расходник" },
+    { name: "Зелье стабильности (снимает 2 Стресса)", cost: 12, desc: "Расходник" },
+    { name: "Кинжал гнева (+1 урон)", cost: 25, desc: "Оружие" },
+    { name: "Связка верёвки (10 м)", cost: 8, desc: "Инструмент" },
+    { name: "Потертая карта окрестностей", cost: 10, desc: "Открывает маршрут" },
+    { name: "Фляга крепкого вина", cost: 5, desc: "Торговый предмет" },
+  ];
+  const REST_COST = 10;
+
+  const parseHpNum = (hp: string) => {
+    const m = String(hp || "").match(/(\d+)\s*\/\s*(\d+)/);
+    return m ? { cur: parseInt(m[1]), max: parseInt(m[2]) } : { cur: 0, max: 0 };
+  };
+
+  app.get("/api/shop", (req, res) => {
+    res.json(SHOP);
+  });
+
+  app.post("/api/sessions/:id/economy", (req, res) => {
+    const { action, charName, item } = req.body || {};
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    if (dashIdx < 0) return res.status(400).json({ error: "dashboard not found" });
+    const dash = history[dashIdx].dashboard;
+
+    // Сервисы текущей локации — сервер проверяет сам, аутентичность месту
+    const curLoc = (dash.locations || []).find((l: any) => l.id === dash.currentLocationId);
+    const services: string[] = curLoc?.services || [];
+    const need = action === "buy" ? "market" : action === "inn" ? "inn" : action === "heal" ? "healer" : "tavern";
+    if (!services.includes(need)) {
+      return res.status(400).json({ error: "no service", tag: `[ECONOMY: здесь нет нужной услуги (${need}) — это ${curLoc?.name || "место"} без сервиса]` });
+    }
+
+    // Числа — из движкового состояния (State Authority)
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const dashChar = (dash.characters || []).find((c: any) => c.name === charName);
+
+    const finalize = () => {
+      saveEngineState(req.params.id, chars);
+      const merged = mergeStateIntoDashboard(dash, chars);
+      history[dashIdx].dashboard = merged;
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    };
+
+    if (action === "rest") {
+      const base = getBase(req.params.id);
+      const atBase = curLoc && base.name && curLoc.name === base.name;
+      const freeRest = atBase && Number(base.bedroom || 0) >= 1;
+      if (st.gold < (freeRest ? 0 : REST_COST)) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${REST_COST})]` });
+      st.gold -= freeRest ? 0 : REST_COST;
+      st.hp_cur = st.hp_max;
+      st.stress = Math.max(0, st.stress - 2);
+      finalize();
+      return res.json({ status: "ok", tag: freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_max}, стресс -2 (бесплатно, Спальня)]` : `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`, gold: st.gold });
+    }
+    if (action === "inn") {
+      const INN_COST = 20;
+      if (st.gold < INN_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${INN_COST})]` });
+      st.gold -= INN_COST;
+      st.hp_cur = st.hp_max;
+      st.stress = 0;
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${st.hp_max}, стресс до 0, списано ${INN_COST} золота]`, gold: st.gold });
+    }
+    if (action === "heal") {
+      const HEAL_COST = 12;
+      const HEAL_AMOUNT = 5;
+      if (st.gold < HEAL_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${HEAL_COST})]` });
+      if (st.hp_cur >= st.hp_max) return res.status(400).json({ error: "already full", tag: `[ECONOMY: ${charName} и так здоров(а)]` });
+      st.gold -= HEAL_COST;
+      st.hp_cur = Math.min(st.hp_max, st.hp_cur + HEAL_AMOUNT);
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`, gold: st.gold });
+    }
+    if (action === "buy") {
+      const good = SHOP.find(s => s.name === item);
+      if (!good) return res.status(400).json({ error: "unknown item" });
+      if (st.gold < good.cost) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${good.cost})]` });
+      st.gold -= good.cost;
+      if (dashChar) dashChar.inventory = [...(dashChar.inventory || []), good.name];
+      finalize();
+      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: st.gold });
+    }
+    res.status(400).json({ error: "unknown action" });
+  });
+
+  // --- Engine State (State Authority: движок владеет числами) ---
+  const ensureEngineState = (sessionId: string): any => {
+    const row = db.prepare("SELECT * FROM engine_state WHERE session_id = ?").get(sessionId) as any;
+    if (row) return JSON.parse(row.characters);
+    const sess = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
+    if (sess) {
+      const history = JSON.parse(sess.history || "[]");
+      const dash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
+      const chars: any = {};
+      for (const c of (dash?.characters || [])) {
+        const { cur, max } = parseHpNum(c.hp);
+        chars[c.name] = { hp_cur: cur, hp_max: max, stress: Number(c.stress) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0, status: "active" };
+      }
+      if (Object.keys(chars).length) {
+        db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
+        return chars;
+      }
+    }
+    return {};
+  };
+  const saveEngineState = (sessionId: string, chars: any) => {
+    db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
+  };
+  const stateToTag = (chars: any) =>
+    Object.entries(chars).map(([name, c]: any) => `${c.status === "base" ? "🏠" : "⚔️"} ${name} HP ${c.hp_cur}/${c.hp_max}, Стресс ${c.stress}, Жетоны ${c.tokens}, Золото ${c.gold}, XP ${c.xp}`).join(" | ");
+  const mergeStateIntoDashboard = (dash: any, chars: any) => {
+    if (!dash || !Array.isArray(dash.characters)) return dash;
+    dash.characters = dash.characters.map((c: any) => {
+      const s = chars[c.name];
+      if (!s) return c;
+      return { ...c, hp: `${s.hp_cur}/${s.hp_max}`, stress: s.stress, gold: s.gold, xp: s.xp, tokens: s.tokens, status: s.status || "active" };
+    });
+    return dash;
+  };
+  const applyStateChanges = (chars: any, changes: any[]) => {
+    const applied: any[] = [];
+    for (const ch of changes || []) {
+      const { field, name, delta } = ch;
+      const c = chars[name];
+      if (!c || typeof delta !== "number" || isNaN(delta)) continue;
+      if (field === "hp") {
+        const before = c.hp_cur;
+        c.hp_cur = Math.max(0, Math.min(c.hp_max, c.hp_cur + delta));
+        applied.push({ field, name, delta, from: before, to: c.hp_cur });
+      } else if (["stress", "gold", "xp", "tokens"].includes(field)) {
+        const before = c[field];
+        c[field] = Math.max(0, c[field] + delta);
+        applied.push({ field, name, delta, from: before, to: c[field] });
+      }
+    }
+    return applied;
+  };
+
+  app.get("/api/sessions/:id/state", (req, res) => {
+    const chars = ensureEngineState(req.params.id);
+    res.json({ characters: chars, tag: `[STATE: ${stateToTag(chars)}]` });
+  });
+
+  // --- Roster: персонажи на базе (active/base) ---
+  app.post("/api/sessions/:id/party", (req, res) => {
+    const { charName, status } = req.body || {};
+    const chars = ensureEngineState(req.params.id);
+    const c = chars[charName];
+    if (!c) return res.status(404).json({ error: `character ${charName} not found` });
+    c.status = status === "base" ? "base" : "active";
+    if (c.status === "base") {
+      c.hp_cur = c.hp_max;
+      c.stress = 0;
+    }
+    saveEngineState(req.params.id, chars);
+    // зеркалим в dashboard
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (row) {
+      const history = JSON.parse(row.history || "[]");
+      const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+      if (dashIdx >= 0) {
+        history[dashIdx].dashboard = mergeStateIntoDashboard(history[dashIdx].dashboard, chars);
+        db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      }
+    }
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: c.status === "base" ? `[PARTY: ${charName} остался(ась) на базе — HP восстановлено, стресс снят]` : `[PARTY: ${charName} снова в партии]`, characters: chars });
+  });
+
+  // --- Base (Логово): апгрейды за золото ---
+  const BASE_BUILDINGS = ["bedroom", "treasury", "barracks", "trophy_hall", "armory", "garden"];
+  const getBase = (sessionId: string) => {
+    const b = db.prepare("SELECT * FROM bases WHERE session_id = ?").get(sessionId) as any;
+    return b || { session_id: sessionId, name: "", bedroom: 0, treasury: 0, barracks: 0, trophy_hall: 0, armory: 0, garden: 0 };
+  };
+
+  app.get("/api/sessions/:id/base", (req, res) => {
+    res.json(getBase(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/base/claim", (req, res) => {
+    const { name } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO bases (session_id, name) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET name=excluded.name").run(req.params.id, name);
+    // помечаем текущую локацию type='base' в dashboard
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (row) {
+      const history = JSON.parse(row.history || "[]");
+      const idx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+      if (idx >= 0) {
+        const locs = history[idx].dashboard.locations || [];
+        const loc = locs.find((l: any) => l.name === name);
+        if (loc) loc.type = "base";
+        db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      }
+    }
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", base: getBase(req.params.id), tag: `[BASE: «${name}» теперь логово партии]` });
+  });
+
+  app.post("/api/sessions/:id/base-upgrade", (req, res) => {
+    const { building } = req.body || {};
+    if (!BASE_BUILDINGS.includes(building)) return res.status(400).json({ error: "unknown building" });
+    const b = getBase(req.params.id);
+    const level = Number(b[building] || 0);
+    const cost = 60 * (level + 1);
+    const chars = ensureEngineState(req.params.id);
+    const names = Object.keys(chars);
+    if (names.length === 0) return res.status(400).json({ error: "no characters" });
+    const share = Math.ceil(cost / names.length);
+    if (names.some(n => (chars[n].gold || 0) < share)) {
+      return res.status(400).json({ error: "not enough gold", tag: `[BASE: не хватает золота на улучшение (нужно ${cost} на всех, по ${share} с героя)]` });
+    }
+    for (const n of names) chars[n].gold -= share;
+    saveEngineState(req.params.id, chars);
+    db.prepare(`INSERT INTO bases (session_id, ${building}) VALUES (?,1) ON CONFLICT(session_id) DO UPDATE SET ${building} = bases.${building} + 1`).run(req.params.id);
+    const base = getBase(req.params.id);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", building, level: level + 1, cost, base, tag: `[BASE: «${BASE_NAMES[building] || building}» улучшена до уровня ${level + 1} (стоимость ${cost} золота)]` });
+  });
+  const BASE_NAMES: Record<string, string> = { bedroom: "Спальня", treasury: "Казна", barracks: "Казарма", trophy_hall: "Зал трофеев", armory: "Оружейная", garden: "Огород" };
+
+  // --- Expeditions: наёмники приносят награды (идл-ожидание) ---
+  const EXPEDITION_TIERS: Record<string, { cost: number; hours: number; reward: number; pool: keyof typeof LOOT_POOLS; minBarracks: number }> = {
+    short: { cost: 20, hours: 0.5, reward: 35, pool: "common", minBarracks: 0 },
+    long: { cost: 50, hours: 2, reward: 90, pool: "uncommon", minBarracks: 1 },
+    deep: { cost: 100, hours: 6, reward: 200, pool: "rare", minBarracks: 2 },
+  };
+
+  app.post("/api/sessions/:id/expedition", (req, res) => {
+    const { charName, tier } = req.body || {};
+    const cfg = EXPEDITION_TIERS[tier];
+    if (!cfg) return res.status(400).json({ error: "unknown tier (short/long/deep)" });
+    const base = getBase(req.params.id);
+    const barracksLvl = Number(base.barracks || 0);
+    if (barracksLvl < cfg.minBarracks) {
+      return res.status(400).json({ error: "barracks too low", tag: `[EXPEDITION: нужна Казарма ур. ${cfg.minBarracks} для тира «${tier}» (сейчас ${barracksLvl})]` });
+    }
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const cost = Math.max(5, Math.floor(cfg.cost * (1 - 0.1 * barracksLvl)));
+    if (st.gold < cost) return res.status(400).json({ error: "not enough gold", tag: `[EXPEDITION: у ${charName} не хватает золота (${st.gold}/${cost})]` });
+    st.gold -= cost;
+    saveEngineState(req.params.id, chars);
+    const id = crypto.randomUUID();
+    const rewardItem = pickLoot(cfg.pool, 1)[0] || "";
+    db.prepare("INSERT INTO expeditions (id, session_id, char_name, hireling, tier, cost, reward_gold, reward_item, returns_at) VALUES (?,?,?,?,?,?,?,?, datetime('now', ?))")
+      .run(id, req.params.id, charName, `Наёмник «${tier}»`, tier, cost, cfg.reward, rewardItem, `+${Math.round(cfg.hours * 60)} minutes`);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", id, tag: `[EXPEDITION: наёмник ушёл в поход (${tier}, ${cfg.hours} ч). Вернётся с ~${cfg.reward}🪙${rewardItem ? ' и «' + rewardItem + '»' : ''}]` });
+  });
+
+  app.get("/api/sessions/:id/expeditions", (req, res) => {
+    res.json(db.prepare("SELECT * FROM expeditions WHERE session_id = ? AND claimed = 0 ORDER BY returns_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/expeditions/claim", (req, res) => {
+    const ready = db.prepare("SELECT * FROM expeditions WHERE session_id = ? AND claimed = 0 AND returns_at <= datetime('now')").all(req.params.id) as any[];
+    if (ready.length === 0) return res.json({ status: "ok", claimed: [] });
+    const chars = ensureEngineState(req.params.id);
+    const claimed: any[] = [];
+    for (const e of ready) {
+      const st = chars[e.char_name];
+      if (st) {
+        st.gold += e.reward_gold;
+        claimed.push({ char: e.char_name, tier: e.tier, gold: e.reward_gold, item: e.reward_item, hireling: e.hireling });
+      }
+      db.prepare("UPDATE expeditions SET claimed = 1 WHERE id = ?").run(e.id);
+    }
+    saveEngineState(req.params.id, chars);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    const tag = claimed.length
+      ? `[EXPEDITION: вернулись наёмники — ${claimed.map(c => `${c.char} +${c.gold}🪙${c.item ? ' + «' + c.item + '»' : ''}`).join("; ")}]`
+      : "";
+    res.json({ status: "ok", claimed, tag });
+  });
+
+  // --- Collection: трофеи (Зал трофеев) ---
+  app.get("/api/sessions/:id/collection", (req, res) => {
+    res.json(db.prepare("SELECT * FROM collection WHERE session_id = ? ORDER BY created_at DESC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/collection", (req, res) => {
+    const { name, desc = "", type = "trophy" } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO collection (id, session_id, name, desc, type) VALUES (?,?,?,?,?)").run(crypto.randomUUID(), req.params.id, name, desc, type);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[COLLECTION: «${name}» добавлен в коллекцию]` });
+  });
+
+  // --- Training (downtime у базы): золото -> XP ---
+  app.post("/api/sessions/:id/train", (req, res) => {
+    const { charName } = req.body || {};
+    const base = getBase(req.params.id);
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    const dash = dashIdx >= 0 ? history[dashIdx].dashboard : null;
+    const curLoc = (dash?.locations || []).find((l: any) => l.id === dash?.currentLocationId);
+    const atBase = curLoc && base.name && curLoc.name === base.name;
+    if (!atBase) return res.status(400).json({ error: "not at base", tag: `[TRAIN: тренировка — только в логове]` });
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const cost = 30;
+    if (st.gold < cost) return res.status(400).json({ error: "not enough gold", tag: `[TRAIN: у ${charName} не хватает золота (${st.gold}/${cost})]` });
+    st.gold -= cost;
+    st.xp += 20;
+    saveEngineState(req.params.id, chars);
+    if (dash) { history[dashIdx].dashboard = mergeStateIntoDashboard(dash, chars); db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id); }
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[TRAIN: ${charName} тренировался(ась) в логове — +20 XP, списано ${cost} золота]` });
+  });
+
+  // --- Fronts (grim portents): мир живёт без игрока ---
+  const CAROUSING_INCIDENTS = [
+    "долг Гильдии воров: они придут за процентами", "проснулся(ась) с чужой татуировкой — она светится в темноте",
+    "вчера оскорбил(а) благородного — его люди уже ищут тебя", "должен услугу бармену «Ржавого якоря»",
+    "потерял(а) ценную вещь (движок не помнит какую — спроси у игрока)", "подслушал(а) секрет, который опасно знать",
+    "кто-то заплатил за твою выпивку и оставил записку без подписи", "присоединился(ась) к культу «Спящих» (по пьяни)",
+    "выиграл(а) чужой кошелёк в кости — владелец зол на тебя", "совсем не помнишь прошлой ночи — и это плохой знак",
+  ];
+
+  app.get("/api/sessions/:id/fronts", (req, res) => {
+    res.json(db.prepare("SELECT * FROM fronts WHERE session_id = ? AND status = 'active' ORDER BY created_at ASC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/fronts", (req, res) => {
+    const { name, impulse = "", portents = [], doom = "" } = req.body || {};
+    if (!name || !Array.isArray(portents) || portents.length === 0) return res.status(400).json({ error: "name + portents[] required" });
+    const id = crypto.randomUUID();
+    db.prepare("INSERT INTO fronts (id, session_id, name, impulse, portents, doom) VALUES (?,?,?,?,?,?)")
+      .run(id, req.params.id, name, impulse, JSON.stringify(portents), doom);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", id, tag: `[FRONT: «${name}» активирован — ${portents.length} портентов до ${doom || "катастрофы"}]` });
+  });
+
+  app.post("/api/sessions/:id/fronts/:fid/resolve", (req, res) => {
+    db.prepare("UPDATE fronts SET status = 'resolved' WHERE id = ?").run(req.params.fid);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok" });
+  });
+
+  // --- Carousing: золото -> XP с риском происшествия (OSR) ---
+  app.post("/api/sessions/:id/carouse", (req, res) => {
+    const { charName } = req.body || {};
+    const chars = ensureEngineState(req.params.id);
+    const st = chars[charName];
+    if (!st) return res.status(404).json({ error: `character ${charName} not found` });
+    const spend = Math.min(st.gold, Math.max(10, Math.floor(Math.random() * 6 + 1) * 10));
+    if (spend < 10) return res.status(400).json({ error: "not enough gold", tag: `[CAROUSE: у ${charName} меньше 10 золота]` });
+    st.gold -= spend;
+    st.xp += spend;
+    saveEngineState(req.params.id, chars);
+    const incident = Math.floor(Math.random() * 6) === 0;
+    const hook = incident ? CAROUSING_INCIDENTS[Math.floor(Math.random() * CAROUSING_INCIDENTS.length)] : "";
+    const tag = incident
+      ? `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) и вляпался(лась): ${hook} — придумай, как это разыграть как крючок]`
+      : `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) — удачно, без последствий]`;
+    res.json({ status: "ok", spend, xp: spend, incident, hook, tag });
+  });
+
+  // --- Memorial: павшие герои ---
+  app.get("/api/sessions/:id/memorial", (req, res) => {
+    res.json(db.prepare("SELECT * FROM memorial WHERE session_id = ? ORDER BY created_at DESC").all(req.params.id));
+  });
+
+  app.post("/api/sessions/:id/memorial", (req, res) => {
+    const { name, desc = "" } = req.body || {};
+    if (!name) return res.status(400).json({ error: "name required" });
+    db.prepare("INSERT INTO memorial (id, session_id, name, desc) VALUES (?,?,?,?)").run(crypto.randomUUID(), req.params.id, name, desc);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    res.json({ status: "ok", tag: `[MEMORIAL: «${name}» вписан в книгу павших]` });
+  });
+
+  // --- Idle: пассивный доход, пока игрока нет ---
+  app.post("/api/sessions/:id/idle", (req, res) => {
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (!row) return res.status(404).json({ error: "session not found" });
+    const history = JSON.parse(row.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    const dash = dashIdx >= 0 ? history[dashIdx].dashboard : null;
+    const pl = partyLevel(dash);
+
+    const now = Date.now();
+    const rec = db.prepare("SELECT * FROM idle WHERE session_id = ?").get(req.params.id) as any;
+    const last = rec ? new Date(String(rec.last_seen).replace(' ', 'T') + 'Z').getTime() : now;
+    const hours = Math.min(12, Math.max(0, (now - last) / 3600000));
+    db.prepare("INSERT INTO idle (session_id, last_seen) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(session_id) DO UPDATE SET last_seen = CURRENT_TIMESTAMP").run(req.params.id);
+
+    const base = getBase(req.params.id);
+    const treasuryLvl = Number(base.treasury || 0);
+    const idleGold = Math.floor((2 + pl * 2) * hours) + Math.floor(treasuryLvl * 2 * hours);
+    const doomUp = hours >= 6 ? 1 : 0;
+    let changed = false;
+
+    const chars = ensureEngineState(req.params.id);
+    if (Object.keys(chars).length > 0 && idleGold > 0) {
+      const per = Math.floor(idleGold / Object.keys(chars).length);
+      for (const name of Object.keys(chars)) {
+        chars[name].gold += per;
+        chars[name].xp += per;
+      }
+      saveEngineState(req.params.id, chars);
+      if (dash) {
+        const merged = mergeStateIntoDashboard(dash, chars);
+        history[dashIdx].dashboard = merged;
+      }
+      changed = true;
+    }
+    if (dash && doomUp) {
+      dash.doomPool = Math.min(20, (Number(dash.doomPool) || 0) + doomUp);
+      if (dashIdx >= 0) { history[dashIdx].dashboard = dash; }
+      changed = true;
+    }
+    if (changed) {
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    }
+    const tag = idleGold > 0
+      ? `[IDLE: пока тебя не было (${hours.toFixed(1)} ч), город принёс +${idleGold} золота и XP${doomUp ? ", Пул Рока +1" : ""}]`
+      : doomUp ? `[IDLE: пока тебя не было, Пул Рока +1 — мир не ждал]` : "";
+
+    // Фронты: грим-портенты идут сами, пока игрока нет
+    let newsTag = "";
+    if (hours >= 0.5) {
+      const fronts = db.prepare("SELECT * FROM fronts WHERE session_id = ? AND status = 'active'").all(req.params.id) as any[];
+      const news: string[] = [];
+      for (const f of fronts) {
+        const portents: string[] = JSON.parse(f.portents || "[]");
+        const idx = Number(f.portent_index || 0);
+        if (idx >= portents.length) continue;
+        db.prepare("UPDATE fronts SET portent_index = ? WHERE id = ?").run(idx + 1, f.id);
+        news.push(`«${f.name}»: ${portents[idx]}`);
+      }
+      if (news.length) newsTag = `[FRONT NEWS: пока вас не было, ${news.join("; ")} — мир не стоял на месте]`;
+    }
+
+    res.json({ status: "ok", idleGold, doomUp, partyLevel: pl, hours: Number(hours.toFixed(1)), tag, newsTag });
+  });
+
+  // NEXUS EXPORT: writes session to skill-compatible files (session.json + archive.md + timeline.md)
+  app.get("/api/sessions/:id/export", (req, res) => {
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(req.params.id) as any;
+    if (!row) return res.status(404).json({ error: "Session not found" });
+
+    const history = JSON.parse(row.history || "[]");
+    const codex = JSON.parse(row.codex || "[]");
+    let decisionTree = [];
+    try { decisionTree = JSON.parse(row.decision_tree || "[]"); } catch (e) { decisionTree = []; }
+    if (!decisionTree.length) {
+      const lastDashMsg = history.slice().reverse().find((m: any) => m.dashboard);
+      decisionTree = lastDashMsg?.dashboard?.decisionTree || [];
+    }
+    const dashboard = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard || {};
+
+    const parseHp = (hp: string) => {
+      const m = String(hp || "").match(/(\d+)\s*\/\s*(\d+)/);
+      return m ? { current: parseInt(m[1]), max: parseInt(m[2]) } : { current: 0, max: 0 };
+    };
+    const parseStress = (s: string | number) => {
+      if (typeof s === "number") return s;
+      const m = String(s || "").match(/(\d+)/);
+      return m ? parseInt(m[1]) : 0;
+    };
+
+    const characters = (dashboard.characters || []).map((c: any) => ({
+      name: c.name,
+      hp: parseHp(c.hp),
+      stress: parseStress(c.stress),
+      tokens: c.tokens || 0,
+      state: c.condition || "—",
+      scars: [],
+      personal_goal: c.goal || "—",
+      inventory: c.inventory || [],
+      notes: "",
+    }));
+    const threats = (dashboard.threats || []).map((t: any) => ({
+      name: t.name,
+      hp: parseHp(t.hp),
+      stress: 0,
+      aspects: Array.isArray(t.features) ? t.features.join("; ") : (t.features || ""),
+      legendary_resistance: 0,
+    }));
+    const clocks = (dashboard.clocks || []);
+    const clocksObj = {
+      chapter: clocks[0]?.progress || 0,
+      chapter_max: clocks[0]?.total || 6,
+      threat: clocks[1]?.progress || 0,
+      threat_max: clocks[1]?.total || 6,
+    };
+
+    const sessionJson = {
+      session_id: row.id,
+      status: "active",
+      story: {
+        genre: row.genre || "Custom",
+        setting: row.setting || "",
+        style: row.style || "",
+        synopsis: row.name || "",
+        chapter: 1,
+        round: history.length,
+      },
+      options: { karma: false },
+      characters,
+      npcs: codex.filter((e: any) => e.type === "npc").map((e: any) => ({
+        name: e.name, hp: { current: 10, max: 10 }, stress: 0,
+        aspects: e.description || "", known_by: [], memory: [],
+      })),
+      threats,
+      scene: {
+        location: dashboard.currentLocationId || "",
+        time: "",
+        aspects: dashboard.sceneAspects || [],
+      },
+      clocks: clocksObj,
+      doom_pool: dashboard.doomPool || 0,
+      doom_pool_max: 20,
+      echo_of_past: dashboard.echoes || [],
+      atmosphere: dashboard.atmosphere || "",
+      decision_tree: decisionTree,
+      npc_memory: [],
+      history: history.slice(-20).map((m: any, i: number) => ({
+        round: i + 1,
+        action: m.role === "user" ? m.content : "",
+        result: m.role === "assistant" ? m.content : "",
+        roll_tag: "",
+      })),
+      counters: { turns_total: history.length, rounds_since_narrative_right: 0, fail_streak: 0 },
+    };
+
+    const archiveMd = [
+      row.lore ? `# Story Archive\n\n${row.lore}` : "",
+      row.archive ? `\n\n# Final Drafts (NEXUS SAVE)\n\n${row.archive}` : "",
+    ].filter(Boolean).join("\n") || "# Story Archive\n\n(пока пусто)";
+
+    const timelineMd = history
+      .filter((m: any) => m.role === "user")
+      .map((m: any, i: number) => `- [Ход ${i + 1}] ${String(m.content).replace(/\n/g, " ").slice(0, 200)}`)
+      .join("\n") || "(пока пусто)";
+
+    res.json({ status: "ok", files: ["session.json", "archive.md", "timeline.md"], session_json: sessionJson, archive_md: archiveMd, timeline_md: timelineMd });
+  });
+
+
+  return { encounterCheck, ensureEngineState, saveEngineState, stateToTag, mergeStateIntoDashboard, applyStateChanges, partyLevel, getBase };
+}
+
+export type GameApi = ReturnType<typeof registerGameRoutes>;
