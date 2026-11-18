@@ -13,6 +13,27 @@ export const safeJsonParse = (raw: string): any => {
   return JSON.parse(t);
 };
 
+const asArray = (v: any): any[] | undefined => (v == null ? undefined : Array.isArray(v) ? v : undefined);
+
+/** Модели иногда присылают equipment объектом {"Оружие": "Меч"} или предметы строками — приводим к схеме. */
+const normalizeEquipment = (eq: any): any[] | undefined => {
+  if (eq == null) return undefined;
+  const list = Array.isArray(eq) ? eq : typeof eq === 'object' ? Object.entries(eq).map(([slot, item]) => ({ slot, item })) : [];
+  return list.filter(Boolean).map((e: any) => {
+    const item = e.item;
+    if (typeof item === 'string') return { ...e, item: /^(пусто|empty|нет|-)?$/i.test(item.trim()) ? null : { name: item } };
+    return e;
+  });
+};
+
+export const normalizeCharacter = (c: any) => {
+  if (!c || typeof c !== 'object') return c;
+  const out = { ...c };
+  if ('equipment' in out) out.equipment = normalizeEquipment(out.equipment);
+  for (const k of ['inventory', 'actions', 'abilities', 'relationships']) if (k in out && !Array.isArray(out[k])) delete out[k];
+  return out;
+};
+
 export const parseDashboard = (text: string, currentDashboard: DashboardData): { cleanText: string, dashboard?: DashboardData, codexUpdates?: CodexEntry[], loreUpdate?: string, finalDraft?: string, sessionSummary?: string } => {
   let cleanText = text;
   let dashboard: DashboardData | undefined;
@@ -21,7 +42,10 @@ export const parseDashboard = (text: string, currentDashboard: DashboardData): {
   const dashMatch = text.match(/<dashboard_json>([\s\S]*?)<\/dashboard_json>/);
   if (dashMatch) {
     try {
-      const parsed = safeJsonParse(dashMatch[1]);
+      const parsed = safeJsonParse(dashMatch[1]) || {};
+      if (parsed.characters && !Array.isArray(parsed.characters)) delete parsed.characters;
+      if (parsed.characters) parsed.characters = parsed.characters.map(normalizeCharacter);
+      for (const k of ['threats', 'sceneAspects', 'sceneLoot', 'locations', 'clocks', 'echoes', 'decisionTree']) if (k in parsed && !asArray(parsed[k])) delete parsed[k];
       let mergedCharacters = [...(currentDashboard.characters || [])];
       if (parsed.characters) {
         parsed.characters.forEach((parsedChar: any) => {

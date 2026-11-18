@@ -1,5 +1,34 @@
 // Клиент API: подставляет ключ мастера / секрет устройства / токены доступа.
 import { useEffect, useRef } from 'react';
+import { demoFetch, demoSubscribe } from 'virtual:nexus-transport';
+
+/** Демо-сборка для GitHub Pages: сервер работает прямо в браузере. */
+export const IS_DEMO = import.meta.env.VITE_DEMO === '1';
+const BASE = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+
+/** Абсолютная ссылка на экран приложения (в демо — через хеш-роутинг). */
+export const appLink = (path: string) => IS_DEMO ? `${window.location.origin}${BASE}/#${path}` : `${window.location.origin}${path}`;
+
+/** Query-параметры текущего экрана (в демо они живут внутри хеша). */
+export const locationSearch = () => IS_DEMO ? (window.location.hash.split('?')[1] || '') : window.location.search.slice(1);
+export const clearLocationSearch = () => {
+  if (IS_DEMO) window.history.replaceState(null, '', window.location.href.split('?')[0].replace(/#.*$/, '') + '#' + (window.location.hash.slice(1).split('?')[0] || '/'));
+  else window.history.replaceState(null, '', window.location.pathname);
+};
+
+/** Переход на страницу оплаты. В демо тестовая «оплата» проводится сразу. */
+export async function followPaymentUrl(url: string) {
+  const m = /\/api\/billing\/mock\/confirm\/([^/?#]+)/.exec(url);
+  if (IS_DEMO && m) {
+    await demoFetch(url, { method: 'GET', headers: { 'x-nexus-client': '1' } });
+    window.location.hash = `#/?payment=${encodeURIComponent(m[1])}`;
+    window.location.reload();
+    return;
+  }
+  window.location.href = url;
+}
+
+const doFetch = (path: string, init: RequestInit) => (IS_DEMO ? demoFetch(path, init) : fetch(path, init));
 
 const LS = {
   device: 'nexus_device_id',
@@ -36,7 +65,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   let res: Response;
   try {
-    res = await fetch(path, { credentials: 'same-origin', method: opts.method || (opts.body !== undefined ? 'POST' : 'GET'), headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+    res = await doFetch(path, { credentials: 'same-origin', method: opts.method || (opts.body !== undefined ? 'POST' : 'GET'), headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
   } catch {
     throw new ApiError('Нет связи с сервером', 0, 'network');
   }
@@ -68,6 +97,7 @@ export function useSessionSocket(sessionId: string | null | undefined, onEvent: 
 
   useEffect(() => {
     if (!sessionId) return;
+    if (IS_DEMO) return demoSubscribe(sessionId, e => handler.current(e));
     let socket: WebSocket | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let attempt = 0;
@@ -101,5 +131,6 @@ export function useSessionSocket(sessionId: string | null | undefined, onEvent: 
   }, [sessionId]);
 }
 
-export const characterLink = (sessionId: string, charName: string) =>
-  `${window.location.origin}/character/${sessionId}/${encodeURIComponent(btoa(unescape(encodeURIComponent(charName))))}`;
+export const characterPath = (sessionId: string, charName: string) =>
+  `/character/${sessionId}/${encodeURIComponent(btoa(unescape(encodeURIComponent(charName))))}`;
+export const characterLink = (sessionId: string, charName: string) => appLink(characterPath(sessionId, charName));

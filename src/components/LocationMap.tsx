@@ -385,7 +385,7 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
                           disabled={isProcessing}
                           className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs font-bold transition-colors text-left ${isProcessing ? 'opacity-50 cursor-wait' : 'hover:bg-emerald-500/20 text-emerald-400'}`}
                         >
-                          <Target size={12} /> {isProcessing ? 'Exploring...' : 'Explore'}
+                          <Target size={12} /> {isProcessing ? 'Исследуем…' : 'Исследовать'}
                         </button>
                       )}
                       
@@ -395,13 +395,13 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
                           disabled={isProcessing}
                           className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs font-bold transition-colors text-left ${isProcessing ? 'opacity-50 cursor-wait' : 'hover:bg-white/10 text-white'}`}
                         >
-                          <Footprints size={12} /> {isProcessing ? 'Traveling...' : 'Travel'}
+                          <Footprints size={12} /> {isProcessing ? 'В пути…' : 'Отправиться'}
                         </button>
                       )}
                       
                       {isLocked && (
                         <div className="flex items-center gap-2 px-2 py-1.5 text-red-400 text-xs font-bold opacity-60 cursor-not-allowed">
-                          <Lock size={12} /> Locked
+                          <Lock size={12} /> Закрыто
                         </div>
                       )}
                     </motion.div>
@@ -418,7 +418,7 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
         <button 
           onClick={handleAutoLayout}
           className="p-2 bg-black/60 backdrop-blur border border-white/10 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          title="Auto Layout"
+          title="Расставить автоматически"
         >
           <Wand2 size={16} />
         </button>
@@ -426,21 +426,21 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
         <button 
           onClick={handleZoomIn}
           className="p-2 bg-black/60 backdrop-blur border border-white/10 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          title="Zoom In"
+          title="Приблизить"
         >
           <Plus size={16} />
         </button>
         <button 
           onClick={handleZoomOut}
           className="p-2 bg-black/60 backdrop-blur border border-white/10 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          title="Zoom Out"
+          title="Отдалить"
         >
           <Minus size={16} />
         </button>
         <button 
           onClick={handleReset}
           className="p-2 bg-black/60 backdrop-blur border border-white/10 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-          title="Reset View"
+          title="Сбросить вид"
         >
           <RefreshCw size={16} />
         </button>
@@ -458,16 +458,16 @@ export const LocationMap: React.FC<LocationMapProps> = ({ locations, currentLoca
       <div className="absolute bottom-4 right-4 flex flex-col gap-2 z-40 pointer-events-none">
         <div className="bg-black/60 backdrop-blur p-2 rounded-lg border border-white/10 text-[10px] text-white/40 space-y-1 pointer-events-auto">
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-white border border-white" /> Current
+            <div className="w-2 h-2 rounded-full bg-white border border-white" /> Здесь
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full border border-emerald-500 text-emerald-500" /> Safe (1-2)
+            <div className="w-2 h-2 rounded-full border border-emerald-500 text-emerald-500" /> Безопасно (1–2)
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full border border-amber-500 text-amber-500" /> Risky (3)
+            <div className="w-2 h-2 rounded-full border border-amber-500 text-amber-500" /> Рискованно (3)
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full border border-red-500 text-red-500" /> Deadly (4-5)
+            <div className="w-2 h-2 rounded-full border border-red-500 text-red-500" /> Смертельно (4–5)
           </div>
         </div>
       </div>

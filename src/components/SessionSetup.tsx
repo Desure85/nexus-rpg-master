@@ -26,13 +26,13 @@ interface Props {
 const TALE_SETTINGS = ["Волшебный лес", "Подводное царство", "Город игрушек", "Облачное королевство", "Зимняя сказка", "Космос и звёзды"];
 
 const PREDEFINED_SETTINGS = [
-  "Dark Fantasy", "Cyberpunk", "Space Opera", "Post-Apocalyptic", "Victorian Horror", "Weird West"
+  "Тёмное фэнтези", "Киберпанк", "Космоопера", "Постапокалипсис", "Викторианский хоррор", "Мистический Дикий Запад"
 ];
 
 const GAME_STYLES = [
-  { id: 'narrative', name: 'Narrative Focus', desc: 'Больше сюжета, загадок и общения. Бои редкие и сюжетные (10-15%).' },
-  { id: 'balanced', name: 'Balanced', desc: 'Классический баланс между экшеном и историей (50/50).' },
-  { id: 'combat', name: 'Combat Heavy', desc: 'Фокус на тактике, сражениях и механике. (80% боев).' },
+  { id: 'narrative', name: 'Упор на сюжет', desc: 'Больше сюжета, загадок и общения. Бои редкие и сюжетные (10-15%).' },
+  { id: 'balanced', name: 'Баланс', desc: 'Классический баланс между экшеном и историей (50/50).' },
+  { id: 'combat', name: 'Упор на бои', desc: 'Фокус на тактике, сражениях и механике. (80% боев).' },
   { id: 'fairytale', name: 'Сказка для детей', desc: 'Добрая, волшебная атмосфера. Без жестокости и мрака. Фокус на дружбе и чудесах.' },
 ];
 
@@ -344,8 +344,8 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
           <div className="space-y-3">
             {characters.map((char, index) => (
               <div key={char.id} className="flex gap-3 items-start bg-white/5 p-3 rounded-xl border border-white/5">
-                <div className="flex-1 space-y-3">
-                  <div className="flex gap-3">
+                <div className="flex-1 min-w-0 space-y-3">
+                  <div className="flex flex-wrap sm:flex-nowrap gap-2 sm:gap-3">
                     <div className="flex bg-black/40 border border-white/10 rounded-lg p-1">
                       <button
                         onClick={() => setCharacters(chars => chars.map(c => c.id === char.id ? { ...c, gender: 'М' } : c))}
@@ -365,14 +365,14 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
                       value={char.name}
                       onChange={e => setCharacters(chars => chars.map(c => c.id === char.id ? { ...c, name: e.target.value } : c))}
                       placeholder="Имя персонажа"
-                      className="w-1/3 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                      className="flex-1 sm:flex-none min-w-0 sm:w-1/3 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                     />
                     <input 
                       type="text"
                       value={char.concept}
                       onChange={e => setCharacters(chars => chars.map(c => c.id === char.id ? { ...c, concept: e.target.value } : c))}
                       placeholder={isTale ? 'Какой он? (напр. Любопытный зайчонок)' : 'Концепт (напр. Угрюмый дворф-наемник)'}
-                      className="flex-1 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
+                      className="w-full sm:w-auto sm:flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                     />
                   </div>
                 </div>

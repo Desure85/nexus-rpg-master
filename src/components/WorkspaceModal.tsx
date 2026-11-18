@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Users, Cpu, Wallet, Database, Copy, Check, Trash2, Plus, Key, Globe, Loader2 } from 'lucide-react';
-import { api } from '../api';
+import { api, appLink, followPaymentUrl } from '../api';
 import { WorkspaceInfo, CurrentUser, WorkspaceRole } from '../types';
 import { inputCls, labelCls, GEMINI_MODELS, OPENCODE_MODELS } from './PlatformAiForm';
 import { customConfirm } from './PromptModal';
@@ -84,7 +84,7 @@ const MembersTab: React.FC<{ ws: WorkspaceInfo; user: CurrentUser; isAdmin: bool
 
   const createInvite = () => act(async () => {
     const r = await api<{ token: string }>(`/api/workspaces/${ws.id}/invites`, { body: { role: inviteRole, days: 7, maxUses: 10 } });
-    setNewLink(`${window.location.origin}/invite/${r.token}`);
+    setNewLink(appLink(`/invite/${r.token}`));
   });
 
   return (
@@ -217,7 +217,7 @@ const AiTab: React.FC<{ ws: WorkspaceInfo; setError: (s: string) => void; onChan
             {provider === 'gemini' ? (
               <select value={model || 'gemini-3-flash-preview'} onChange={e => setModel(e.target.value)} className={inputCls}>{GEMINI_MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</select>
             ) : provider === 'opencode' ? (
-              <select value={model || 'deepseek-v4-flash'} onChange={e => setModel(e.target.value)} className={inputCls}>{OPENCODE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select>
+              <select value={model || 'deepseek-v4.1-flash'} onChange={e => setModel(e.target.value)} className={inputCls}>{OPENCODE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select>
             ) : (
               <input value={model} onChange={e => setModel(e.target.value)} placeholder={provider === 'openrouter' ? 'anthropic/claude-3.5-sonnet' : 'llama3.1'} className={inputCls} />
             )}
@@ -248,7 +248,7 @@ const BillingTab: React.FC<{ ws: WorkspaceInfo; isAdmin: boolean; setError: (s: 
     setBuying(productId);
     try {
       const r = await api<{ confirmationUrl: string }>(`/api/workspaces/${ws.id}/checkout`, { body: { productId } });
-      window.location.href = r.confirmationUrl;
+      await followPaymentUrl(r.confirmationUrl);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка');
       setBuying('');

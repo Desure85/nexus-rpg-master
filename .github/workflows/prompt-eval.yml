@@ -8,6 +8,9 @@ on:
       provider:
         description: "gemini | openrouter | opencode"
         default: opencode
+      model:
+        description: "Модель (для opencode Go: deepseek-v4.1-flash, mimo-v2.6-flash, kimi-k2.6…)"
+        default: deepseek-v4.1-flash
       runs:
         description: "Сколько раз прогнать сценарии"
         default: "2"
@@ -29,6 +32,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_MODEL: ${{ inputs.provider == 'opencode' && inputs.model || '' }}
+          OPENROUTER_MODEL: ${{ inputs.provider == 'openrouter' && inputs.model || '' }}
+          GEMINI_MODEL: ${{ inputs.provider == 'gemini' && inputs.model || '' }}
         run: npm run eval:prompts
       - if: always()
         run: cat eval-report.md >> "$GITHUB_STEP_SUMMARY"

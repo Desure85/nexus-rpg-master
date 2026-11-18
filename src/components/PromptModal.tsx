@@ -76,7 +76,7 @@ export const PromptModal: React.FC = () => {
             onClick={() => handleClose(null)}
             className="px-4 py-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
           >
-            Cancel
+            Отмена
           </button>
           <button
             onClick={() => handleClose(options.isConfirm ? 'true' : inputValue)}

@@ -17,11 +17,11 @@ const SLOT_ICONS: Record<string, React.ReactNode> = {
 };
 
 const SLOT_LABELS: Record<string, string> = {
-  'head': 'Head',
-  'body': 'Body',
-  'main-hand': 'Main Hand',
-  'off-hand': 'Off Hand',
-  'accessory': 'Accessory',
+  'head': 'Голова',
+  'body': 'Тело',
+  'main-hand': 'Основная рука',
+  'off-hand': 'Вторая рука',
+  'accessory': 'Аксессуар',
 };
 
 export const EquipmentVisualizer: React.FC<Props> = ({ equipment = [], onUpdate }) => {
@@ -31,7 +31,7 @@ export const EquipmentVisualizer: React.FC<Props> = ({ equipment = [], onUpdate 
     const slot = getSlot(slotName);
     const item = slot?.item;
     const isObject = typeof item === 'object' && item !== null;
-    const itemName = isObject ? (item as Item).name : (item as string) || 'Empty';
+    const itemName = isObject ? (item as Item).name : (item as string) || 'Пусто';
     const bonus = isObject ? (item as Item).bonus : null;
 
     return (
@@ -40,12 +40,12 @@ export const EquipmentVisualizer: React.FC<Props> = ({ equipment = [], onUpdate 
         className="group relative flex items-center gap-3 p-2 bg-white/5 border border-white/10 rounded-lg hover:border-white/30 transition-all cursor-pointer"
         onClick={async () => {
           if (!onUpdate) return;
-          const name = await customPrompt(`Enter item name for ${SLOT_LABELS[slotName]} (leave empty to clear):`, itemName === 'Empty' ? '' : itemName);
+          const name = await customPrompt(`Предмет в слоте «${SLOT_LABELS[slotName]}» (пусто — снять):`, itemName === 'Пусто' ? '' : itemName);
           if (name === null) return;
           if (name === '') {
             onUpdate(slotName, null);
           } else {
-            const bonus = await customPrompt(`Enter bonus for ${name} (e.g. +1 Armor):`, isObject ? (item as Item).bonus || '' : '');
+            const bonus = await customPrompt(`Бонус предмета «${name}» (напр. +1 к защите):`, isObject ? (item as Item).bonus || '' : '');
             onUpdate(slotName, {
               name,
               description: isObject ? (item as Item).description : '',
@@ -83,7 +83,7 @@ export const EquipmentVisualizer: React.FC<Props> = ({ equipment = [], onUpdate 
   return (
     <div className="space-y-2 mt-4">
       <div className="flex items-center justify-between mb-2">
-        <h4 className="text-[10px] uppercase tracking-[0.2em] text-white/40 font-black">Equipment</h4>
+        <h4 className="text-[10px] uppercase tracking-[0.2em] text-white/40 font-black">Снаряжение</h4>
       </div>
       
       <div className="grid grid-cols-1 gap-2">

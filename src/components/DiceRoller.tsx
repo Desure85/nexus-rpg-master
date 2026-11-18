@@ -166,7 +166,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
               <button 
                 onClick={() => setLastRoll(null)}
                 className="p-1.5 hover:bg-white/5 rounded-lg transition-colors text-white/20 hover:text-white/60"
-                title="Reset Roll"
+                title="Сбросить бросок"
               >
                 <RotateCcw size={14} />
               </button>
@@ -175,7 +175,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
               <button 
                 onClick={onClose}
                 className="p-1.5 hover:bg-white/5 rounded-lg transition-colors text-white/20 hover:text-white/60"
-                title="Close Dice Tray"
+                title="Закрыть кубики"
               >
                 <Plus size={16} className="rotate-45" />
               </button>
@@ -186,7 +186,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
         {/* Character Selection */}
         <div className="space-y-2">
           <label className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold pl-1">
-            <User size={10} /> Select Operative
+            <User size={10} /> Кто действует
           </label>
           <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
             {characters.map(c => {
@@ -240,7 +240,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
               className="space-y-2"
             >
               <label className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold pl-1">
-                <Activity size={10} /> Vector Selection
+                <Activity size={10} /> Выбор действия
               </label>
               <div className="grid grid-cols-1 gap-2 max-h-[200px] overflow-y-auto custom-scrollbar pr-1">
                 {currentChar?.actions?.map(a => {
@@ -317,7 +317,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                     <div className="p-1.5 rounded-lg bg-white/5 text-white/40">
                       <Plus size={12} />
                     </div>
-                    <span className="text-[11px] text-white/40 italic">Custom Action...</span>
+                    <span className="text-[11px] text-white/40 italic">Своё действие…</span>
                   </div>
                 </button>
               </div>
@@ -331,7 +331,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                   <textarea
                     value={customActionInput}
                     onChange={(e) => setCustomActionInput(e.target.value)}
-                    placeholder="Describe your action..."
+                    placeholder="Опишите действие…"
                     className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20"
                     autoFocus
                   />
@@ -345,10 +345,10 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
         {threatLevel > 0 && isMechanicEnabled('threat') && (
           <div className="space-y-2">
             <label className="flex items-center gap-1 text-[8px] uppercase tracking-[0.2em] text-white/30 font-bold">
-              <ShieldAlert size={10} /> Active Threat Level
+              <ShieldAlert size={10} /> Уровень угрозы
             </label>
             <div className="p-2 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
-              <span className="text-xs text-red-400 font-bold">Enemy Resistance</span>
+              <span className="text-xs text-red-400 font-bold">Сопротивление врага</span>
               <span className="text-xs text-red-400 font-mono bg-red-500/20 px-2 py-0.5 rounded">d{threatLevel}</span>
             </div>
           </div>
@@ -409,7 +409,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
             className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg"
           >
             <div className="flex items-center gap-2 text-[9px] text-emerald-400 font-bold uppercase tracking-widest">
-              <Zap size={10} /> Master's Suggestion
+              <Zap size={10} /> Совет мастера
             </div>
             <p className="text-[10px] text-emerald-200/60 italic mt-1">{suggested.reason}</p>
           </motion.div>
@@ -444,7 +444,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                     </motion.div>
                   ))}
                 </div>
-                <span className="font-mono text-[8px] uppercase tracking-widest text-emerald-500/40">Calculating Probability...</span>
+                <span className="font-mono text-[8px] uppercase tracking-widest text-emerald-500/40">Считаем шансы…</span>
               </motion.div>
             ) : lastRoll ? (
               <motion.div 
@@ -464,7 +464,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                   ))}
                   {lastRoll.shift !== undefined && (
                     <div className="flex items-center gap-1 ml-2 pl-4 border-l border-white/10">
-                      <span className="font-mono text-[10px] text-white/20 uppercase">Shift</span>
+                      <span className="font-mono text-[10px] text-white/20 uppercase">Сдвиг</span>
                       <span className={`font-display text-2xl font-bold ${lastRoll.shift > 0 ? 'text-emerald-400' : lastRoll.shift < 0 ? 'text-red-400' : 'text-white/40'}`}>
                         {lastRoll.shift > 0 ? `+${lastRoll.shift}` : lastRoll.shift === 0 ? '±0' : lastRoll.shift}
                       </span>
@@ -477,7 +477,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
               </motion.div>
             ) : (
               <div className="font-mono text-[9px] uppercase tracking-widest text-white/10">
-                Awaiting Input Signal
+                Ждём броска
               </div>
             )}
           </AnimatePresence>

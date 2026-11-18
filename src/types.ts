@@ -190,3 +190,7 @@ export interface WorkspaceInfo {
 }
 
 export interface CurrentUser { id: string; email: string; name: string; isSuperadmin: boolean }
+
+/** Подписи стандартных слотов снаряжения (модель пишет id на английском). */
+export const SLOT_RU: Record<string, string> = { head: 'Голова', body: 'Тело', 'main-hand': 'Оружие', 'off-hand': 'Вторая рука', accessory: 'Аксессуар' };
+export const slotLabel = (slot: string) => SLOT_RU[slot] || slot;

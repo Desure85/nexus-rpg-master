@@ -1,6 +1,7 @@
 // Детерминированный «ИИ» для тестов, CI и демо без ключей (LLM_PROVIDER=mock).
 // Отвечает в том же протоколе, что и настоящая модель: нарратив + JSON-блоки.
 import type { LlmRequest } from "./llm";
+import { demoReply } from "./mock-demo";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -121,7 +122,8 @@ function oracleReply(req: LlmRequest): string {
 }
 
 export async function mockComplete(req: LlmRequest, onDelta: (d: string) => void): Promise<string> {
-  const text = /дизайнер таблиц оракула/.test(req.system) ? oracleReply(req)
+  const text = process.env.MOCK_STYLE === "demo" ? demoReply(req)
+    : /дизайнер таблиц оракула/.test(req.system) ? oracleReply(req)
     : /Сказочник/.test(req.system) ? taleReply(req)
     : /креативный помощник/.test(req.system) ? ideaReply(req)
     : rpgReply(req);
