@@ -106,6 +106,8 @@ export interface DashboardData {
   suggestedRoll?: {
     type: 'classic' | 'triple' | 'shifted' | 'taint';
     reason: string;
+    /** Сложность, объявленная до броска (5–25, по умолчанию 12) */
+    dc?: number;
   };
 }
 

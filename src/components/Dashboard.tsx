@@ -31,6 +31,8 @@ interface DashboardProps {
 /** Предмет с эффектом в названии («восстанавливает 5 HP», «снимает 2 Стресса») движок умеет применить. */
 export const isUsableItem = (item: string) => /(восстанавливает|лечит|снимает)\s*\d+|\d+\s*HP/i.test(item);
 
+const ROLL_RU: Record<string, string> = { classic: 'Обычный бросок (d20)', triple: 'Резонанс стресса (3d20)', shifted: 'Сдвиг судьбы (3d20+d6)', taint: 'Бросок хаоса (2d20)' };
+
 export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
@@ -192,6 +194,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     <div className="flex items-center gap-1.5 min-w-0">
                       <h4 className="font-display text-lg leading-tight text-white flex items-center gap-1 group min-w-0">
                         <span className="truncate">{char.name}</span>
+                        {(char as any).status === 'downed' && <span className="shrink-0 text-[9px] font-sans font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/20 text-red-300" title="0 HP: выбыл. Спасбросок d20 (10+) или помощь союзника вернут его с 1 HP">💀 Повержен</span>}
                         <button 
                           onClick={async () => {
                             const next = await customPrompt(`Новое имя для ${char.name}`, char.name);
@@ -1146,8 +1149,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold">Совет мастера</span>
               </div>
               <div className="flex flex-col gap-1">
-                <span className="text-sm font-bold text-white capitalize">{data.suggestedRoll.type} Roll</span>
-                <p className="text-xs text-white/60 italic leading-relaxed">"{data.suggestedRoll.reason}"</p>
+                <span className="text-sm font-bold text-white flex items-center gap-2">
+                  {ROLL_RU[data.suggestedRoll.type] || data.suggestedRoll.type}
+                  <button
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/10 text-white/70 hover:bg-white/20"
+                    title="Сложность броска (клик — изменить). 8 простое · 12 обычное · 15 трудное · 18 очень трудное"
+                    onClick={async () => {
+                      const next = await customPrompt('Сложность (DC): 8 простое, 12 обычное, 15 трудное, 18 очень трудное', String(data.suggestedRoll?.dc ?? 12));
+                      const n = parseInt(next || '');
+                      if (next !== null && n >= 5 && n <= 25) onUpdate?.({ ...data, suggestedRoll: { ...data.suggestedRoll!, dc: n } });
+                    }}
+                  >DC {data.suggestedRoll.dc ?? 12}</button>
+                </span>
+                <p className="text-xs text-white/60 italic leading-relaxed">{data.suggestedRoll.reason}</p>
               </div>
             </div>
           )}

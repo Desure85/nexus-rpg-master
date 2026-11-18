@@ -8,7 +8,8 @@ import { isUsableItem } from './Dashboard';
 import { DisclaimerFooter } from './Disclaimer';
 import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
-import { RichParagraphs } from './RichText';
+import { RichParagraphs, UserContent } from './RichText';
+import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
 
 export const CharacterView: React.FC = () => {
   const { sessionId, charName: rawCharName } = useParams<{ sessionId: string; charName: string }>();
@@ -149,6 +150,19 @@ export const CharacterView: React.FC = () => {
     try {
       await api(`/api/sessions/${sessionId}/actions`, { body: { charName, action: actionText.trim(), roll: !isTale && rollType ? rollType : undefined } });
       setActionInput('');
+      fetchPending();
+    } catch (e) {
+      alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const sendDeathSave = async () => {
+    if (!session || isSending || hasActed || claimState !== 'approved') return;
+    setIsSending(true);
+    try {
+      await api(`/api/sessions/${sessionId}/actions`, { body: { charName, deathSave: true } });
       fetchPending();
     } catch (e) {
       alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
@@ -371,7 +385,13 @@ export const CharacterView: React.FC = () => {
 
               {character.status === 'downed' && (
                 <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200">
-                  💀 <b>Герой повержен.</b> Ходить нельзя, пока союзник не стабилизирует его (жетон, зелье или помощь). Мастер уже знает.
+                  💀 <b>Герой повержен.</b> Обычные действия недоступны. Союзник может стабилизировать вас (жетон, зелье, помощь), или испытайте судьбу сами: спасбросок d20, нужно 10+ — тогда вы вернётесь с 1 HP.
+                  {!hasActed && claimState === 'approved' && (
+                    <button onClick={sendDeathSave} disabled={isSending} className="mt-3 w-full py-2.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 font-bold text-red-100 disabled:opacity-50">
+                      🎲 Бросить спасбросок
+                    </button>
+                  )}
+                  {hasActed && <p className="mt-2 text-xs text-red-200/70">Спасбросок отправлен — исход станет известен после хода мастера.</p>}
                 </div>
               )}
 
@@ -427,6 +447,16 @@ export const CharacterView: React.FC = () => {
                       ))}
                   </div>
                 )}
+                {!isTale && (dashboard.suggestedRoll || rollType) && (() => {
+                  const gear = gearBonus(character as any, actionInput);
+                  return (
+                    <p className="text-[11px] text-white/45 leading-snug">
+                      {dashboard.suggestedRoll && <>Мастер советует: <b className="text-amber-300/90">{dashboard.suggestedRoll.reason}</b>, сложность <b className="text-white/80">{dashboard.suggestedRoll.dc ?? DEFAULT_DC}</b>. </>}
+                      {gear.total ? <span className="text-sky-300/80">Снаряжение: {gear.total > 0 ? '+' : ''}{gear.total} ({gear.parts.join(', ')}). </span> : null}
+                      <span className="text-white/30">Итог и исход посчитает игра.</span>
+                    </p>
+                  );
+                })()}
                 {hasActed && (
                   <div className="text-xs text-emerald-400 text-center space-y-1">
                     <p className="animate-pulse">{isTale ? 'Твоя идея у сказочника. Ждём продолжения...' : 'Действие отправлено Мастеру. Ждём его решения...'}</p>
@@ -658,10 +688,10 @@ export const CharacterView: React.FC = () => {
                         {(msg.content || '').includes('[PLAYER ACTION:') ? (
                           <div className="flex flex-col gap-1 text-left">
                             <span className="text-[8px] uppercase tracking-widest font-bold opacity-60">Ход игрока</span>
-                            <span>{(msg.content || '').replace(/\[PLAYER ACTION:.*?\]/, '').trim()}</span>
+                            <span className="whitespace-pre-wrap"><UserContent text={(msg.content || '').replace(/\[PLAYER ACTION:.*?\]/, '').trim()} /></span>
                             <span className="text-[8px] italic opacity-40">— {(msg.content || '').match(/\[PLAYER ACTION: (.*?)\]/)?.[1]}</span>
                           </div>
-                        ) : <span className="whitespace-pre-wrap">{displayUserContent(msg.content)}</span>}
+                        ) : <span className="whitespace-pre-wrap"><UserContent text={displayUserContent(msg.content)} /></span>}
                       </div>
                     ) : (
                       <div className={`narrative-text space-y-4 ${isBookView ? 'text-white/90' : 'text-white/80'} font-serif leading-relaxed`}>

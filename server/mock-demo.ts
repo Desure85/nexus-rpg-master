@@ -2,6 +2,7 @@
 // Не умный, но живой: читает действия игроков, подсказки оракула [MUSE], угрозы и слоты действий,
 // и отдаёт нарратив + теги механик, чтобы в демо работали урон, лут, опыт, уровни и предметы.
 import type { LlmRequest } from "./llm";
+import { resolvedOutcomes, type Outcome } from "../shared/resolve";
 
 let seed = Date.now() % 100000;
 const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed % 100000) / 100000; };
@@ -196,7 +197,7 @@ function gameStart(req: LlmRequest, user: string) {
       { id: "loc-3", name: far, description: "Говорят, туда лучше не ходить", dangerLevel: 3, status: "rumored", type: "dungeon", services: [], coordinates: { x: 78, y: 22 }, connections: ["loc-2"] },
     ],
     currentLocationId: "loc-1", clocks: [{ name: "Угроза крепнет", progress: 1, total: 6 }], doomPool: 0, echoes: [],
-    atmosphere: "Тревожное ожидание", suggestedRoll: { type: "classic", reason: "Внимательность" },
+    atmosphere: "Тревожное ожидание", suggestedRoll: { type: "classic", reason: "Внимательность", dc: 12 },
   };
   const who = heroes.map(h => h.name);
   const meet = who.length > 1 ? `${who.slice(0, -1).join(", ")} и ${who.at(-1)} встречаются` : `${who[0] || "Герой"} ${heroes[0]?.female ? "оказалась" : "оказался"}`;
@@ -243,17 +244,43 @@ function turn(req: LlmRequest, user: string) {
   if (travel) parts.push(`Дорога до места «${travel}» занимает время: ${pick(W.sense)}. Наконец впереди показывается цель.`);
   if (explore) parts.push(`Герои прочёсывают «${explore}» шаг за шагом. ${pick(NARR.search)}`);
 
+  const outcomes = resolvedOutcomes(user);
+  const OUT: Record<Outcome, string[]> = {
+    crit: ["Всё складывается идеально — лучше, чем можно было мечтать.", "Время будто замедляется: каждое движение точно и красиво."],
+    success: ["Чисто и уверенно — задуманное удаётся.", "Получилось, и без всяких подвохов."],
+    partial: ["Получилось — но не даром.", "Цель достигнута, хотя цена ощутима."],
+    fail: ["Не вышло: в последний миг всё идёт наперекосяк.", "Расчёт оказался неверным, и мир отвечает жёстко."],
+    critfail: ["Хуже некуда: ошибка оборачивается новой бедой.", "Провал настолько громкий, что его услышали все вокруг."],
+  };
   for (const a of acts) {
     const kind = reaction(a.text);
+    const rolled = outcomes.find(o => o.actor === a.who) || (acts.length === 1 ? outcomes[0] : undefined);
+    const good = !rolled || rolled.outcome === "crit" || rolled.outcome === "success" || rolled.outcome === "partial";
+    if (rolled?.deathSave) {
+      parts.push(rolled.deathSave === "stabilized" ? `**${a.who}** с хрипом открывает глаза — жив, хоть и еле держится.` : `**${a.who}** не приходит в себя. Если никто не поможет — это конец.`);
+      continue;
+    }
+    if (rolled) {
+      parts.push(`**${a.who}**: ${pick(OUT[rolled.outcome])}`);
+      if (!good) {
+        tags.push(`[DAMAGE: ${a.who} -${rolled.outcome === "critfail" ? between(3, 5) : between(1, 3)}]`);
+        if (chance(0.5)) tags.push(`[STRESS: ${a.who} +1]`);
+        tags.push(`[XP: ${a.who} +${between(5, 10)}]`);
+        continue;
+      }
+      if (rolled.outcome === "partial") tags.push(chance(0.5) ? `[STRESS: ${a.who} +1]` : `[DAMAGE: ${a.who} -1]`);
+      if (rolled.outcome === "crit") tags.push(`[TOKEN: ${a.who} +1]`);
+    }
     const clean = a.text.replace(/#\w+/g, "").replace(/\s+/g, " ").trim();
     const short = clean.length > 70 ? clean.slice(0, 70) + "…" : clean;
     void short;
-    parts.push(`**${a.who}**: ${pick(NARR[kind])}`);
+    if (!rolled) parts.push(`**${a.who}**: ${pick(NARR[kind])}`);
+    else parts.push(pick(NARR[kind]));
     if (kind === "fight") {
       let target = threats[0] || newThreats[0];
       if (!target) { target = { name: pick(W.enemy), hp: "10/10", features: [pick(["Быстрый", "Бронированный", "Хитрый"])] }; newThreats.push(target); }
       tags.push(`[HIT: ${target.name} -${between(2, 5)}]`);
-      if (chance(0.5)) { tags.push(`[DAMAGE: ${a.who} -${between(1, 3)}]`); parts.push(`${target.name} огрызается и задевает героя.`); }
+      if (!rolled && chance(0.5)) { tags.push(`[DAMAGE: ${a.who} -${between(1, 3)}]`); parts.push(`${target.name} огрызается и задевает героя.`); }
     } else if (kind === "search") {
       if (chance(0.5)) { tags.push(`[GOLD: ${a.who} +${between(3, 12)}]`); parts.push("В пыли блестят монеты."); }
       else { const item = pick(W.loot); loot = [...new Set([...loot, item])]; parts.push(`Находка: ${item} — можно забрать.`); }
@@ -287,7 +314,7 @@ function turn(req: LlmRequest, user: string) {
   const out: any = {
     atmosphere: pick(["Напряжение растёт", "Короткая передышка", "Опасность рядом", "Тайна сгущается"]),
     sceneLoot: loot,
-    suggestedRoll: { type: pick(["classic", "stress", "fate"]), reason: pick(["Ловкость", "Сила воли", "Внимательность", "Хитрость"]) },
+    suggestedRoll: { type: pick(["classic", "triple", "shifted"]), reason: pick(["Ловкость", "Сила воли", "Внимательность", "Хитрость"]), dc: pick([10, 12, 12, 15]) },
   };
   if (newThreats.length) out.threats = [...(dash.threats || []), ...newThreats];
   if (Object.keys(slots).length) out.characters = chars.map(c => ({ name: c.name, actions: actionsFor(g, c.name, slots[c.name]) }));
