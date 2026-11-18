@@ -156,6 +156,13 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   let buf = "";
   let acc = "";
   let usage: LlmUsage | undefined;
+  let reasoningChars = 0;
+  const finish = () => {
+    if (!acc.trim() && reasoningChars > 0) {
+      throw new LlmError("Модель весь лимит потратила на рассуждения и не успела ответить. Увеличьте лимит ответа или выберите модель без рассуждений (например, flash-версию).");
+    }
+    return { text: acc, usage };
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -166,16 +173,19 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       buf = buf.slice(nl + 1);
       if (!line.startsWith("data:")) continue;
       const payload = line.slice(5).trim();
-      if (payload === "[DONE]") return { text: acc, usage };
+      if (payload === "[DONE]") return finish();
       try {
         const ev = JSON.parse(payload);
         const delta = ev.choices?.[0]?.delta?.content || "";
         if (delta) { acc += delta; onDelta(delta); }
+        // модели с рассуждениями (DeepSeek, Kimi…) шлют «мысли» отдельно — не показываем, но учитываем
+        const thought = ev.choices?.[0]?.delta?.reasoning_content || ev.choices?.[0]?.delta?.reasoning || "";
+        if (thought) reasoningChars += thought.length;
         if (ev.usage) usage = { inputTokens: ev.usage.prompt_tokens || 0, outputTokens: ev.usage.completion_tokens || 0, estimated: false };
       } catch { /* keep-alive / мусор */ }
     }
   }
-  return { text: acc, usage };
+  return finish();
 }
 
 /** Gemini через REST (SSE) — без SDK: работает и в Node, и прямо в браузере (демо). */

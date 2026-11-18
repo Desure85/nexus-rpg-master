@@ -292,7 +292,7 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
     const started = Date.now();
     try {
       if (mode === "platform") billing.assertCanSpend(req.params.wid, mode);
-      const r = await completeWithUsage(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 20 });
+      const r = await completeWithUsage(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 1024 });
       billing.recordUsage({ workspaceId: req.params.wid, userId: req.auth.user!.id, kind: "test", mode, llm, usage: r.usage });
       res.json({ ok: true, ms: Date.now() - started, sample: r.text.slice(0, 80), provider: r.provider, model: r.model, mode });
     } catch (e: any) {
