@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import crypto from "crypto";
 import { itemEffect } from "../shared/items";
+import { genreOf, SHOPS, LOOT, moneyIn, type Genre, type LootTier } from "../shared/genre";
 import type { DB } from "./db";
 
 export interface EncounterResult {
@@ -107,15 +108,12 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   });
 
   // --- Loot: детерминированный поиск (локация / тело) ---
-  const LOOT_POOLS: Record<string, string[]> = {
-    common: ["12 золотых монет", "Зелье лечения (восстанавливает 5 HP)", "Старый железный кинжал", "Связка верёвки (10 м)", "Потертая карта окрестностей", "Пустая склянка"],
-    uncommon: ["30 золотых монет", "Зелье стабильности (снимает 2 Стресса)", "Кинжал гнева (+1 урон)", "Малый ключ", "Письмо с чужой печатью", "Фляга крепкого вина"],
-    rare: ["75 золотых монет", "Зелье великого лечения (восстанавливает 10 HP)", "Меч из лунного серебра (+2 урон, светится в темноте)", "Свиток с шифром", "Амулет старой гильдии", "Линза истины (видит невидимое)"],
-    epic: ["150 золотых монет", "Сердце Вельдегара (расходник: 20 HP или сброс 5 Стресса, 1 раз)", "Ключ от башни Инквизитора", "Дневник Варго (знание слабости врага)", "Печать Нексуса"],
+  const genreFor = (sessionId: string): Genre => {
+    const r = db.prepare("SELECT setting, genre, name FROM sessions WHERE id = ?").get(sessionId) as any;
+    return genreOf(`${r?.genre || ""} ${r?.setting || ""} ${r?.name || ""}`);
   };
-
-  const pickLoot = (pool: keyof typeof LOOT_POOLS, count: number, used: string[] = []) => {
-    const available = LOOT_POOLS[pool].filter(i => !used.includes(i));
+  const pickLoot = (pool: LootTier, count: number, used: string[] = [], genre: Genre = "fantasy") => {
+    const available = (LOOT[genre] || LOOT.fantasy)[pool].filter(i => !used.includes(i));
     const picked: string[] = [];
     for (let i = 0; i < count && available.length > 0; i++) {
       const idx = Math.floor(Math.random() * available.length);
@@ -124,7 +122,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     return picked;
   };
 
-  const tierFor = (roll: number, danger: number): keyof typeof LOOT_POOLS | null => {
+  const tierFor = (roll: number, danger: number): LootTier | null => {
     if (roll < 5) return null;
     if (roll <= 14) return "common";
     if (roll <= 19) return danger <= 2 ? "common" : "uncommon";
@@ -140,23 +138,42 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     }
     const roll = Math.floor(Math.random() * 20) + 1;
     const tier = tierFor(roll, dangerLevel);
-    const items = tier ? pickLoot(tier, target === "body" ? 2 : 2) : [];
+    const items = tier ? pickLoot(tier, 2, [], genreFor(req.params.id)) : [];
     db.prepare("INSERT INTO searches (session_id, target, count) VALUES (?,?,1) ON CONFLICT(session_id, target) DO UPDATE SET count = count + 1")
       .run(req.params.id, key);
+    // Находки сразу ложатся на сцену (деньги — делятся между героями в партии): модель только описывает
+    const money = items.map(moneyIn).filter((n): n is number => n !== null).reduce((a, b) => a + b, 0);
+    const goods = items.filter(i => moneyIn(i) === null);
+    const row = db.prepare("SELECT history FROM sessions WHERE id = ?").get(req.params.id) as any;
+    const history = JSON.parse(row?.history || "[]");
+    const dashIdx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    let moneyNote = "";
+    if (dashIdx >= 0 && (goods.length || money)) {
+      const dash = history[dashIdx].dashboard;
+      dash.sceneLoot = [...(dash.sceneLoot || []), ...goods];
+      if (money) {
+        const chars = ensureEngineState(req.params.id);
+        const active = Object.keys(chars).filter(n => chars[n].status !== "base");
+        const per = active.length ? Math.floor(money / active.length) : 0;
+        for (const n of active) chars[n].gold += per;
+        saveEngineState(req.params.id, chars);
+        history[dashIdx].dashboard = mergeStateIntoDashboard(dash, chars);
+        moneyNote = per ? ` Деньги (${money}) уже поделены: по ${per} каждому.` : "";
+      }
+      db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id);
+      broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+    }
     const found = items.length > 0;
-    const tag = found ? `[LOOT FOUND: ${items.join("; ")}]` : `[LOOT: ничего ценного (d20=${roll})]`;
+    const tag = found ? `[LOOT FOUND: ${items.join("; ")}] Предметы уже лежат в sceneLoot.${moneyNote}` : `[LOOT: ничего ценного (d20=${roll})]`;
     res.json({ roll, found, tier, loot: items, tag });
   });
 
   // --- Economy: таверна + магазин (сервер владеет золотом) ---
-  const SHOP: { name: string; cost: number; desc: string }[] = [
-    { name: "Зелье лечения (восстанавливает 5 HP)", cost: 15, desc: "Расходник" },
-    { name: "Зелье стабильности (снимает 2 Стресса)", cost: 12, desc: "Расходник" },
-    { name: "Кинжал гнева (+1 урон)", cost: 25, desc: "Оружие" },
-    { name: "Связка верёвки (10 м)", cost: 8, desc: "Инструмент" },
-    { name: "Потертая карта окрестностей", cost: 10, desc: "Открывает маршрут" },
-    { name: "Фляга крепкого вина", cost: 5, desc: "Торговый предмет" },
-  ];
+  /** Магазин под жанр сессии; Оружейная в логове даёт скидку 15% за уровень (до 45%). */
+  const shopFor = (sessionId: string) => {
+    const armory = Math.min(3, Number(getBase(sessionId).armory || 0));
+    return (SHOPS[genreFor(sessionId)] || SHOPS.fantasy).map(i => ({ ...i, cost: Math.max(1, Math.round(i.cost * (1 - 0.15 * armory))) }));
+  };
   const REST_COST = 10;
 
   const parseHpNum = (hp: string) => {
@@ -164,8 +181,8 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     return m ? { cur: parseInt(m[1]), max: parseInt(m[2]) } : { cur: 0, max: 0 };
   };
 
-  app.get("/api/shop", (req, res) => {
-    res.json(SHOP);
+  app.get("/api/sessions/:id/shop", (req, res) => {
+    res.json(shopFor(req.params.id));
   });
 
   app.post("/api/sessions/:id/economy", (req, res) => {
@@ -208,7 +225,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       st.hp_cur = st.hp_max;
       st.stress = Math.max(0, st.stress - 2);
       finalize();
-      return res.json({ status: "ok", tag: freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_max}, стресс -2 (бесплатно, Спальня)]` : `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`, gold: st.gold });
+      { const tag = freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_max}, стресс -2 (бесплатно, Спальня)]` : `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     if (action === "inn") {
       const INN_COST = 20;
@@ -217,7 +234,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       st.hp_cur = st.hp_max;
       st.stress = 0;
       finalize();
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${st.hp_max}, стресс до 0, списано ${INN_COST} золота]`, gold: st.gold });
+      { const tag = `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${st.hp_max}, стресс до 0, списано ${INN_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     if (action === "heal") {
       const HEAL_COST = 12;
@@ -227,16 +244,16 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       st.gold -= HEAL_COST;
       st.hp_cur = Math.min(st.hp_max, st.hp_cur + HEAL_AMOUNT);
       finalize();
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`, gold: st.gold });
+      { const tag = `[ECONOMY: ${charName} подлечился(лась) у лекаря — +${HEAL_AMOUNT} HP, списано ${HEAL_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     if (action === "buy") {
-      const good = SHOP.find(s => s.name === item);
+      const good = shopFor(req.params.id).find(s => s.name === item);
       if (!good) return res.status(400).json({ error: "unknown item" });
       if (st.gold < good.cost) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${good.cost})]` });
       st.gold -= good.cost;
       if (dashChar) dashChar.inventory = [...(dashChar.inventory || []), good.name];
       finalize();
-      return res.json({ status: "ok", tag: `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`, gold: st.gold });
+      { const tag = `[ECONOMY: ${charName} купил(а) «${good.name}» за ${good.cost} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     res.status(400).json({ error: "unknown action" });
   });
@@ -275,6 +292,15 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   };
   const saveEngineState = (sessionId: string, chars: any) => {
     db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
+  };
+  /** Числа движка → последний дашборд (чтобы трата золота была видна сразу, без хода мастера). */
+  const syncDash = (sessionId: string, chars: any) => {
+    const row = db.prepare("SELECT history FROM sessions WHERE id = ?").get(sessionId) as any;
+    const history = JSON.parse(row?.history || "[]");
+    const idx = history.map((m: any) => m.dashboard ? 1 : 0).lastIndexOf(1);
+    if (idx < 0) return;
+    history[idx].dashboard = mergeStateIntoDashboard(history[idx].dashboard, chars);
+    db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), sessionId);
   };
   const STATUS_ICON: Record<string, string> = { base: "🏠", downed: "💀 ПОВЕРЖЕН", active: "⚔️" };
   const stateToTag = (chars: any) =>
@@ -400,19 +426,24 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     }
     for (const n of names) chars[n].gold -= share;
     saveEngineState(req.params.id, chars);
+    syncDash(req.params.id, chars);
     db.prepare(`INSERT INTO bases (session_id, ${building}) VALUES (?,1) ON CONFLICT(session_id) DO UPDATE SET ${building} = bases.${building} + 1`).run(req.params.id);
     const base = getBase(req.params.id);
     broadcast(req.params.id, { type: "update", sessionId: req.params.id });
-    res.json({ status: "ok", building, level: level + 1, cost, base, tag: `[BASE: «${BASE_NAMES[building] || building}» улучшена до уровня ${level + 1} (стоимость ${cost} золота)]` });
+    const btag = `[BASE: «${BASE_NAMES[building] || building}» улучшена до уровня ${level + 1} (стоимость ${cost} золота)]`;
+    queueNews(req.params.id, btag);
+    res.json({ status: "ok", building, level: level + 1, cost, base, tag: btag });
   });
   const BASE_NAMES: Record<string, string> = { bedroom: "Спальня", treasury: "Казна", barracks: "Казарма", trophy_hall: "Зал трофеев", armory: "Оружейная", garden: "Огород" };
 
   // --- Expeditions: наёмники приносят награды (идл-ожидание) ---
-  const EXPEDITION_TIERS: Record<string, { cost: number; hours: number; reward: number; pool: keyof typeof LOOT_POOLS; minBarracks: number }> = {
+  const EXPEDITION_TIERS: Record<string, { cost: number; hours: number; reward: number; pool: LootTier; minBarracks: number }> = {
     short: { cost: 20, hours: 0.5, reward: 35, pool: "common", minBarracks: 0 },
     long: { cost: 50, hours: 2, reward: 90, pool: "uncommon", minBarracks: 1 },
     deep: { cost: 100, hours: 6, reward: 200, pool: "rare", minBarracks: 2 },
   };
+
+  const EXPEDITION_NAMES: Record<string, string> = { short: "Короткая вылазка", long: "Дальний поход", deep: "Глубокая экспедиция" };
 
   app.post("/api/sessions/:id/expedition", (req, res) => {
     const { charName, tier } = req.body || {};
@@ -430,12 +461,15 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     if (st.gold < cost) return res.status(400).json({ error: "not enough gold", tag: `[EXPEDITION: у ${charName} не хватает золота (${st.gold}/${cost})]` });
     st.gold -= cost;
     saveEngineState(req.params.id, chars);
+    syncDash(req.params.id, chars);
     const id = crypto.randomUUID();
-    const rewardItem = pickLoot(cfg.pool, 1)[0] || "";
+    const rewardItem = pickLoot(cfg.pool, 1, [], genreFor(req.params.id)).filter(i => moneyIn(i) === null)[0] || "";
     db.prepare("INSERT INTO expeditions (id, session_id, char_name, hireling, tier, cost, reward_gold, reward_item, returns_at) VALUES (?,?,?,?,?,?,?,?, datetime('now', ?))")
-      .run(id, req.params.id, charName, `Наёмник «${tier}»`, tier, cost, cfg.reward, rewardItem, `+${Math.round(cfg.hours * 60)} minutes`);
+      .run(id, req.params.id, charName, EXPEDITION_NAMES[tier], tier, cost, cfg.reward, rewardItem, `+${Math.round(cfg.hours * 60)} minutes`);
     broadcast(req.params.id, { type: "update", sessionId: req.params.id });
-    res.json({ status: "ok", id, tag: `[EXPEDITION: наёмник ушёл в поход (${tier}, ${cfg.hours} ч). Вернётся с ~${cfg.reward}🪙${rewardItem ? ' и «' + rewardItem + '»' : ''}]` });
+    const etag = `[EXPEDITION: ${EXPEDITION_NAMES[tier].toLowerCase()} — наёмник ушёл в поход на ${cfg.hours < 1 ? `${Math.round(cfg.hours * 60)} мин` : `${cfg.hours} ч`}.]`;
+    queueNews(req.params.id, etag);
+    res.json({ status: "ok", id, tag: `[EXPEDITION: ${EXPEDITION_NAMES[tier].toLowerCase()} — наёмник ушёл в поход на ${cfg.hours < 1 ? `${Math.round(cfg.hours * 60)} мин` : `${cfg.hours} ч`}. Вернётся с ~${cfg.reward}🪙${rewardItem ? ' и «' + rewardItem + '»' : ''}]` });
   });
 
   app.get("/api/sessions/:id/expeditions", (req, res) => {
@@ -511,7 +545,9 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     saveEngineState(req.params.id, chars);
     if (dash) { history[dashIdx].dashboard = mergeStateIntoDashboard(dash, chars); db.prepare("UPDATE sessions SET history = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(JSON.stringify(history), req.params.id); }
     broadcast(req.params.id, { type: "update", sessionId: req.params.id });
-    res.json({ status: "ok", tag: `[TRAIN: ${charName} тренировался(ась) в логове — +20 XP, списано ${cost} золота]` });
+    const tag = `[TRAIN: ${charName} тренировался(ась) в логове — +20 XP, списано ${cost} золота]`;
+    queueNews(req.params.id, tag);
+    res.json({ status: "ok", tag });
   });
 
   // --- Fronts (grim portents): мир живёт без игрока ---
@@ -546,6 +582,10 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   // --- Carousing: золото -> XP с риском происшествия (OSR) ---
   app.post("/api/sessions/:id/carouse", (req, res) => {
     const { charName } = req.body || {};
+    const srow = db.prepare("SELECT history FROM sessions WHERE id = ?").get(req.params.id) as any;
+    const sdash = JSON.parse(srow?.history || "[]").slice().reverse().find((m: any) => m.dashboard)?.dashboard;
+    const sloc = (sdash?.locations || []).find((l: any) => l.id === sdash?.currentLocationId);
+    if (!(sloc?.services || []).includes("tavern")) return res.status(400).json({ error: "no service", tag: `[CAROUSE: кутить можно только там, где есть таверна]` });
     const chars = ensureEngineState(req.params.id);
     const st = chars[charName];
     if (!st) return res.status(404).json({ error: `character ${charName} not found` });
@@ -554,11 +594,14 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     st.gold -= spend;
     st.xp += spend;
     saveEngineState(req.params.id, chars);
+    syncDash(req.params.id, chars);
     const incident = Math.floor(Math.random() * 6) === 0;
     const hook = incident ? CAROUSING_INCIDENTS[Math.floor(Math.random() * CAROUSING_INCIDENTS.length)] : "";
     const tag = incident
       ? `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) и вляпался(лась): ${hook} — придумай, как это разыграть как крючок]`
       : `[CAROUSE: ${charName} прокутил(ась) ${spend}🪙 (XP ${spend}) — удачно, без последствий]`;
+    queueNews(req.params.id, tag);
+    broadcast(req.params.id, { type: "update", sessionId: req.params.id });
     res.json({ status: "ok", spend, xp: spend, incident, hook, tag });
   });
 
@@ -592,7 +635,11 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
 
     const base = getBase(req.params.id);
     const treasuryLvl = Number(base.treasury || 0);
-    const idleGold = Math.floor((2 + pl * 2) * hours) + Math.floor(treasuryLvl * 2 * hours);
+    // Зал трофеев: каждый трофей (до 10) приносит +1 золота в час
+    const trophies = Number(base.trophy_hall || 0) >= 1 ? Math.min(10, (db.prepare("SELECT COUNT(*) AS n FROM collection WHERE session_id = ?").get(req.params.id) as any).n) : 0;
+    const idleGold = Math.floor((2 + pl * 2) * hours) + Math.floor(treasuryLvl * 2 * hours) + Math.floor(trophies * hours);
+    // Огород: одно зелье за каждые 4 часа на уровень (не больше 3 за раз)
+    const gardenPotions = Math.min(3, Math.floor(hours / 4) * Number(base.garden || 0));
     const doomUp = hours >= 6 ? 1 : 0;
     let changed = false;
 
@@ -610,6 +657,13 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       }
       changed = true;
     }
+    if (dash && gardenPotions > 0 && (dash.characters || []).length) {
+      const potion = (SHOPS[genreFor(req.params.id)] || SHOPS.fantasy).find(i => /HP/.test(i.name))?.name || "Зелье лечения (восстанавливает 5 HP)";
+      const first = dash.characters.find((c: any) => c.status !== "base") || dash.characters[0];
+      first.inventory = [...(first.inventory || []), ...Array.from({ length: gardenPotions }, () => potion)];
+      history[dashIdx].dashboard = dash;
+      changed = true;
+    }
     if (dash && doomUp) {
       dash.doomPool = Math.min(10, (Number(dash.doomPool) || 0) + doomUp);
       if (dashIdx >= 0) { history[dashIdx].dashboard = dash; }
@@ -620,7 +674,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       broadcast(req.params.id, { type: "update", sessionId: req.params.id });
     }
     const tag = idleGold > 0
-      ? `[IDLE: пока тебя не было (${hours.toFixed(1)} ч), город принёс +${idleGold} золота и XP${doomUp ? ", Пул Рока +1" : ""}]`
+      ? `[IDLE: пока тебя не было (${hours.toFixed(1)} ч), город принёс +${idleGold} золота и XP${gardenPotions ? `, огород дал зелий: ${gardenPotions}` : ""}${doomUp ? ", Пул Рока +1" : ""}]`
       : doomUp ? `[IDLE: пока тебя не было, Пул Рока +1 — мир не ждал]` : "";
 
     // Фронты: грим-портенты идут сами, пока игрока нет

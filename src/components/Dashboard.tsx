@@ -53,11 +53,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
     if (!isCampaign || !sessionId) return;
     let cancelled = false;
     const load = () => {
-      fetch(`/api/sessions/${sessionId}/base`).then(r => r.json()).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
-      fetch(`/api/sessions/${sessionId}/expeditions`).then(r => r.json()).then(e => { if (!cancelled) setExpeditions(e); }).catch(() => {});
-      fetch(`/api/sessions/${sessionId}/collection`).then(r => r.json()).then(c => { if (!cancelled) setCollection(c); }).catch(() => {});
-      fetch(`/api/sessions/${sessionId}/fronts`).then(r => r.json()).then(f => { if (!cancelled) setFronts(f); }).catch(() => {});
-      fetch(`/api/sessions/${sessionId}/memorial`).then(r => r.json()).then(m => { if (!cancelled) setMemorial(m); }).catch(() => {});
+      api<any>(`/api/sessions/${sessionId}/base`).then(b => { if (!cancelled) setBase(b); }).catch(() => {});
+      api<any>(`/api/sessions/${sessionId}/expeditions`).then(e => { if (!cancelled) setExpeditions(e); }).catch(() => {});
+      api<any>(`/api/sessions/${sessionId}/collection`).then(c => { if (!cancelled) setCollection(c); }).catch(() => {});
+      api<any>(`/api/sessions/${sessionId}/fronts`).then(f => { if (!cancelled) setFronts(f); }).catch(() => {});
+      api<any>(`/api/sessions/${sessionId}/memorial`).then(m => { if (!cancelled) setMemorial(m); }).catch(() => {});
     };
     load();
     return () => { cancelled = true; };
@@ -66,8 +66,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
   const openShop = async () => {
     setShopChar((data.characters || [])[0]?.name || '');
     try {
-      const res = await fetch('/api/shop');
-      setShopItems(await res.json());
+      setShopItems(await api(`/api/sessions/${sessionId}/shop`));
     } catch (e) { console.error("Shop fetch error", e); }
     setShopOpen(true);
   };
@@ -1379,9 +1378,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 { id: 'bedroom', name: 'Спальня', icon: '🛏️', desc: 'Бесплатный отдых в логове' },
                 { id: 'treasury', name: 'Казна', icon: '💰', desc: '+2🪙/час к идл-доходу за ур.' },
                 { id: 'barracks', name: 'Казарма', icon: '⚔️', desc: 'Откроет наёмников' },
-                { id: 'trophy_hall', name: 'Зал трофеев', icon: '🏆', desc: 'Откроет коллекцию' },
-                { id: 'armory', name: 'Оружейная', icon: '⚒️', desc: 'Улучшит магазин на базе' },
-                { id: 'garden', name: 'Огород', icon: '🌿', desc: 'Пассивные зелья' },
+                { id: 'trophy_hall', name: 'Зал трофеев', icon: '🏆', desc: 'Каждый трофей (до 10): +1 золота в час' },
+                { id: 'armory', name: 'Оружейная', icon: '⚒️', desc: 'Скидка в магазинах −15% за уровень' },
+                { id: 'garden', name: 'Огород', icon: '🌿', desc: 'Зелье лечения каждые 4 ч отсутствия за уровень' },
               ].map(u => (
                 <div key={u.id} className="p-2 bg-black/40 border border-white/10 rounded-lg">
                   <div className="flex justify-between items-center">

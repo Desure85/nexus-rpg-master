@@ -81,6 +81,7 @@ function rpgReply(req: LlmRequest): string {
   if (/#potion/.test(user) && names[0]) body += ` [USE: ${names[0]}|Зелье лечения]`;
   if (/#clock/.test(user)) body += ` [CLOCK: Тревога +${user.match(/#clock(\d+)/)?.[1] || 1}]`;
   if (/#take/.test(user) && names[0]) body += ` [TAKE: ${names[0]}|Ключ]`;
+  if (/#questdone/.test(user)) body += ` [QUEST: Найти мельника|done]`;
   const dash: any = { atmosphere: "Напряжение растёт" };
   // модель «пытается» переписать прогресс часов — движок не даст
   if (/#clock/.test(user)) dash.clocks = [{ name: "Тревога", progress: 0, total: 4 }];

@@ -491,6 +491,26 @@ export class Engine {
         dashboard.sceneLoot = loot.filter((_, i) => i !== idx);
       }
 
+      // Путешествия: прибытие фиксирует движок (модель могла забыть сменить currentLocationId), перехват — оставляет на месте
+      const arrival = turnUserText.match(/\[TRAVEL(?: DISCOVERY)?\][\s\S]*?currentLocationId = "([^"]+)"/)?.[1];
+      if (arrival && (dashboard.locations || []).some(l => l.id === arrival)) {
+        dashboard.currentLocationId = arrival;
+        dashboard.locations = (dashboard.locations || []).map(l => l.id === arrival ? { ...l, status: "visited" } : l);
+      } else if (/\[TRAVEL ENCOUNTER\]/.test(turnUserText)) {
+        dashboard.currentLocationId = currentDashboard.currentLocationId;
+      }
+
+      // Квесты: статус меняется тегом [QUEST: Название|done/failed/active]
+      const accepted = [...turnUserText.matchAll(/\[ACCEPT QUEST\][^«]*«([^»]+)»/g)].map(m => ({ title: m[1], status: "active" as const }));
+      for (const q of [...accepted, ...parseDramaTags(aiContent).quests]) {
+        const norm = (n: string) => String(n || "").toLowerCase().replace(/ё/g, "е").trim();
+        const list = dashboard.quests || [];
+        const i = list.findIndex(x => norm(x.title) === norm(q.title) || norm(x.title).includes(norm(q.title)));
+        if (i >= 0) list[i] = { ...list[i], status: q.status };
+        else if (q.status === "active") list.push({ id: crypto.randomUUID(), title: q.title, desc: "", status: "active" });
+        dashboard.quests = list;
+      }
+
       // Пул Рока: обнуление после мирового события и дубли Хаоса — движком
       if (this.isEnabled(mechanics, "doom_pool")) {
         const prevDoom = Number(currentDashboard.doomPool) || 0;

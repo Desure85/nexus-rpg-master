@@ -190,7 +190,7 @@ export const parseStateTags = (text: string): { clean: string; changes: StateCha
       changes.push({ field: STATE_FIELDS[kind], name, delta });
       return '';
     })
-    .replace(/\[(HIT|USE|CLOCK|TAKE):[^\]]*\]/gi, '')
+    .replace(/\[(HIT|USE|CLOCK|TAKE|QUEST):[^\]]*\]/gi, '')
     .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi, '')
     .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
@@ -199,7 +199,7 @@ export const parseStateTags = (text: string): { clean: string; changes: StateCha
 };
 
 /** Часы [CLOCK: Название +N] и подбор добычи [TAKE: Герой|Предмет]. */
-export const parseDramaTags = (text: string): { clocks: { name: string; delta: number }[]; takes: { name: string; item: string }[] } => {
+export const parseDramaTags = (text: string): { clocks: { name: string; delta: number }[]; takes: { name: string; item: string }[]; quests: { title: string; status: 'active' | 'done' | 'failed' }[] } => {
   const clocks: { name: string; delta: number }[] = [];
   const takes: { name: string; item: string }[] = [];
   for (const m of text.matchAll(/\[CLOCK:\s*([^\]]+?)\s*([+\-−–])\s*(\d+)\s*\]/gi)) {
@@ -207,7 +207,13 @@ export const parseDramaTags = (text: string): { clocks: { name: string; delta: n
     if (n) clocks.push({ name: m[1].replace(/[«»"]/g, '').trim(), delta: m[2] === '+' ? n : -n });
   }
   for (const m of text.matchAll(/\[TAKE:\s*([^\]|]+)\|([^\]]+)\]/gi)) takes.push({ name: m[1].trim(), item: m[2].trim() });
-  return { clocks, takes };
+  const quests: { title: string; status: 'active' | 'done' | 'failed' }[] = [];
+  const QS: Record<string, 'active' | 'done' | 'failed'> = { active: 'active', 'принят': 'active', done: 'done', 'выполнен': 'done', failed: 'failed', 'провален': 'failed' };
+  for (const m of text.matchAll(/\[QUEST:\s*([^\]|]+)\|\s*([^\]]+?)\s*\]/gi)) {
+    const st = QS[m[2].toLowerCase()];
+    if (st) quests.push({ title: m[1].replace(/[«»"]/g, '').trim(), status: st });
+  }
+  return { clocks, takes, quests };
 };
 
 /** Урон по врагам [HIT: Враг -N] и использование расходников [USE: Герой|Предмет]. */
