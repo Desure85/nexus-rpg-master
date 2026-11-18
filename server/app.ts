@@ -19,6 +19,7 @@ import {
 } from "./store";
 import { buildGameStartPrompt, buildTaleStartPrompt, TALE_AGES, INITIAL_DASHBOARD, type TaleAge } from "../shared/rules";
 import { rollTag, ROLL_TYPES, type RollType } from "../shared/dice";
+import { tablesFor, MAX_ROWS as ORACLE_MAX_ROWS } from "./oracle";
 
 export interface AppOptions {
   dbPath?: string;
@@ -107,6 +108,7 @@ export async function createApp(opts: AppOptions = {}) {
     res.json({
       registration: registrationMode(),
       mail: mailConfigured(),
+      disclaimer: { extra: process.env.DISCLAIMER_EXTRA || "", url: process.env.TERMS_URL || "" },
       payments: paymentsProvider(),
       llm: describeProvider(readSettings(db).llm),
       taleAges: TALE_AGES,
@@ -216,7 +218,7 @@ export async function createApp(opts: AppOptions = {}) {
   //  claim/actions/roll — игрок (секрет устройства);
   //  всё остальное — только мастер, и изменения истории идут через очередь сессии.
   const PLAYER_ROUTES = /^\/(claim|actions|use)\/?$/;
-  const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore)\/?$/;
+  const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore|oracle\/generate)\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
     const row = db.prepare("SELECT workspace_id, created_by FROM sessions WHERE id = ?").get(id) as { workspace_id: string | null; created_by: string | null } | undefined;
@@ -455,6 +457,45 @@ export async function createApp(opts: AppOptions = {}) {
 1. Опиши, что они находят: детали, следы, NPC.
 2. Открой 1–2 НОВЫЕ локации: добавь в locations (уникальный id, name, description, dangerLevel по стилю игры, status "known", coordinates рядом с текущей, connections ["${loc.id}"]) и допиши их id в connections «${loc.name}».`);
     res.status(202).json({ status: "queued" });
+  });
+
+  // ------------------------------- оракул сессии -------------------------------
+  app.get("/api/sessions/:id/oracle", (req, res) => {
+    // таблицы — спойлеры будущих поворотов: только мастеру
+    if (!(req as any).isOwner) return res.status(403).json({ error: "owner_required", message: "Только мастер сессии" });
+    const s = loadSession(db, req.params.id)!;
+    const tables = engine.oracle.load(s.id);
+    res.json({
+      generating: engine.isOracleGenerating(s.id),
+      maxRows: ORACLE_MAX_ROWS,
+      tables: tablesFor(s).map(d => {
+        const t = tables[d.id];
+        return { id: d.id, title: d.title, hint: d.hint, rows: t?.rows || [], used: t?.used.length || 0, remaining: t ? t.rows.length - t.used.length : 0, updatedAt: t?.updatedAt || null };
+      }),
+    });
+  });
+
+  app.post("/api/sessions/:id/oracle/generate", llmLimiter, (req, res) => {
+    const s = loadSession(db, req.params.id)!;
+    const mode = req.body?.mode === "extend" ? "extend" : "replace";
+    const ids = tablesFor(s).map(d => d.id);
+    const tables = (Array.isArray(req.body?.tables) ? req.body.tables : []).filter((t: any) => ids.includes(t));
+    const hint = str(req.body?.hint, 300).trim() || undefined;
+    if (!s.workspace_id) return res.status(400).json({ error: "no_workspace" });
+    try { billing.assertCanSpend(s.workspace_id, tenancy.resolveLlm(s.workspace_id).mode); }
+    catch (e) { if (e instanceof BillingError) return res.status(e.status).json({ error: e.code, message: e.message }); throw e; }
+    const queued = engine.scheduleOracle(s.id, mode, { tables, hint, reason: "manual" });
+    res.status(202).json({ status: queued ? "queued" : "already_queued", mode, tables });
+  });
+
+  app.put("/api/sessions/:id/oracle/:tableId", (req, res) => {
+    const s = loadSession(db, req.params.id)!;
+    const def = tablesFor(s).find(d => d.id === req.params.tableId);
+    if (!def) return res.status(404).json({ error: "table_not_found" });
+    if (!Array.isArray(req.body?.rows)) return res.status(400).json({ error: "rows_required" });
+    const rows = engine.oracle.setRows(s.id, def, req.body.rows.slice(0, 500));
+    broadcast(s.id, { type: "oracle", sessionId: s.id, status: "ready", mode: "edit", changed: [def.id] });
+    res.json({ id: def.id, rows });
   });
 
   // ГМ вписывает ход за персонажа (соло / игрок не успел)

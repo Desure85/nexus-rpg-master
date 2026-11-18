@@ -10,7 +10,9 @@ import {
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
 import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags } from "../shared/parse";
-import { museTag, actionSlotsTag, taleIdea } from "../shared/oracle";
+import { actionSlotsTag } from "../shared/oracle";
+import { createOracleStore, tablesFor, buildOraclePrompt, parseOracleResponse, type OracleStore, type OracleTableDef } from "./oracle";
+import { BillingError } from "./billing";
 import type { DashboardData, Message, MechanicConfig } from "../src/types";
 
 export interface TurnOptions {
@@ -29,7 +31,91 @@ export class Engine {
   private busy = new Set<string>();
   private pendingTurns = new Map<string, number>();
 
-  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing) {}
+  readonly oracle: OracleStore;
+  private oracleJobs = new Set<string>();
+  private oracleAttempt = new Map<string, number>();
+
+  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing) {
+    this.oracle = createOracleStore(db);
+  }
+
+  isOracleGenerating(sessionId: string) {
+    return [...this.oracleJobs].some(k => k.startsWith(`${sessionId}:`));
+  }
+
+  /**
+   * Поставить в очередь сессии генерацию таблиц оракула.
+   * replace — с нуля (старт игры, «перегенерировать»), extend — дописать новые строки (колода на исходе, «догенерировать»).
+   */
+  scheduleOracle(sessionId: string, mode: "replace" | "extend", opts: { tables?: string[]; hint?: string; reason?: string } = {}) {
+    const key = `${sessionId}:${mode}:${(opts.tables || []).join(",")}`;
+    if (this.oracleJobs.has(key)) return false;
+    this.oracleJobs.add(key);
+    this.oracleAttempt.set(sessionId, Date.now());
+    this.broadcast(sessionId, { type: "oracle", sessionId, status: "generating", mode });
+    this.withLock(sessionId, async () => {
+      try {
+        const changed = await this.generateOracle(sessionId, mode, opts);
+        this.broadcast(sessionId, { type: "oracle", sessionId, status: "ready", mode, changed });
+      } catch (e: any) {
+        console.error(`[oracle ${sessionId}]`, e?.message || e);
+        this.broadcast(sessionId, { type: "oracle", sessionId, status: "error", mode, error: e?.message || "Ошибка генерации" });
+      } finally {
+        this.oracleJobs.delete(key);
+      }
+    });
+    return true;
+  }
+
+  private async generateOracle(sessionId: string, mode: "replace" | "extend", opts: { tables?: string[]; hint?: string }) {
+    const s = loadSession(this.db, sessionId);
+    if (!s) throw new Error("Сессия не найдена");
+    const cfg = this.effectiveConfig(s);
+    const all = tablesFor(s);
+    const defs: OracleTableDef[] = opts.tables?.length ? all.filter(d => opts.tables!.includes(d.id)) : all;
+    if (!defs.length) throw new Error("Нет таких таблиц");
+    const existing = this.oracle.load(sessionId);
+    const { system, user } = buildOraclePrompt(s, defs, mode, opts.hint, existing);
+    const request: LlmRequest = { system, messages: [{ role: "user", content: user }], temperature: 1.0, maxTokens: 4000 };
+    const text = await this.callLlm(s, cfg, request, "oracle", () => undefined);
+    const data = parseOracleResponse(text);
+    if (!data) throw new Error("Модель вернула таблицы не в формате JSON");
+    const changed = this.oracle.apply(sessionId, defs, data, mode);
+    if (!changed.length) throw new Error("Модель не дала новых строк");
+    return changed;
+  }
+
+  /** Строка из таблицы сессии; при «колода на исходе» — фоновая догенерация. Нет таблиц — лениво создаём. */
+  private drawOracle(s: StoredSession, tableId: string, fallbackId = tableId) {
+    const r = this.oracle.draw(s.id, tableId, Math.random, fallbackId);
+    if (!r) return "";
+    if (r.low) this.scheduleOracle(s.id, "extend", { tables: [tableId], reason: "low" });
+    if (r.source === "default") {
+      const last = this.oracleAttempt.get(s.id) || 0;
+      // старые сессии (до оракула сессии) и неудачная генерация — пробуем не чаще раза в 10 минут
+      if (Date.now() - last > 10 * 60_000 && s.history.some(m => m.role === "assistant")) this.scheduleOracle(s.id, "replace", { reason: "lazy" });
+    }
+    return r.value;
+  }
+
+  private museFor(s: StoredSession, event: boolean) {
+    const gentle = s.style === "fairytale";
+    const parts = [`«${this.drawOracle(s, "actions", gentle ? "gentle_actions" : "actions")} — ${this.drawOracle(s, "subjects", gentle ? "gentle_subjects" : "subjects")}»`];
+    if (event) {
+      const comp = this.drawOracle(s, "complications");
+      const npc = this.drawOracle(s, "npcs");
+      if (comp) parts.push(`осложнение: ${comp}`);
+      if (npc) parts.push(`если появится NPC: ${npc}`);
+    } else if (Math.random() < 0.3) {
+      const detail = this.drawOracle(s, "details");
+      if (detail) parts.push(`деталь места: ${detail}`);
+    }
+    return `[MUSE: ${parts.join("; ")}]`;
+  }
+
+  private taleIdeaFor(s: StoredSession) {
+    return `помощник — ${this.drawOracle(s, "helpers")}; чудо — ${this.drawOracle(s, "wonders")}; испытание — ${this.drawOracle(s, "trials")}`;
+  }
 
   isBusy(sessionId: string) {
     return this.busy.has(sessionId) || (this.pendingTurns.get(sessionId) || 0) > 0;
@@ -178,7 +264,7 @@ export class Engine {
         const ec = this.game.encounterCheck(sessionId, s.style || "balanced", false);
         if (ec.tag) finalContent += `\n\n${ec.tag}`;
         // Оракул: случайный мотив — всегда при событии, иначе примерно в каждом третьем ходе
-        if (ec.result !== "none" || Math.random() < 0.35) finalContent += `\n\n${museTag(s.style)}`;
+        if (ec.result !== "none" || Math.random() < 0.35) finalContent += `\n\n${this.museFor(s, ec.result !== "none")}`;
         const chars = this.game.ensureEngineState(sessionId);
         const stateTag = this.game.stateToTag(chars);
         if (stateTag) finalContent += `\n\n[STATE: ${stateTag}]`;
@@ -338,6 +424,8 @@ export class Engine {
     if (archiveAdd) fresh.archive = fresh.archive ? `${fresh.archive}\n\n---\n\n${archiveAdd}` : archiveAdd;
     saveSession(this.db, fresh);
     this.broadcast(sessionId, { type: "turn_end", sessionId, turnId, sessionSummary: parsed.sessionSummary || null });
+    // Старт игры: сеттинг и завязка уже есть — генерируем таблицы оракула под них
+    if (userText.startsWith("[SYSTEM COMMAND: GAME START]")) this.scheduleOracle(sessionId, "replace", { reason: "start" });
     this.broadcast(sessionId, { type: "update", sessionId });
 
     // Повышение уровня → ИИ придумывает уникальные способности (отдельный ход)
@@ -389,7 +477,7 @@ export class Engine {
     const isFinal = /^\[TALE_END\]/.test(content) || chapter >= tale.chapters;
     const heroes = (lastDashboard(s.history).characters || []).map(c => `- ${c.name}${c.goal ? `: ${c.goal}` : ""}`).join("\n");
     const memory = (heroes ? `\n\n## ГЕРОИ СКАЗКИ\n${heroes}` : "") + (s.lore ? `\n\n## ПАМЯТЬ СКАЗКИ\n${s.lore}` : "");
-    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, taleIdea()) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
+    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, isFinal ? undefined : this.taleIdeaFor(s)) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
 
     const turnId = crypto.randomUUID();
     this.busy.add(sessionId);
@@ -416,6 +504,7 @@ export class Engine {
     }
     saveSession(this.db, fresh);
     this.broadcast(sessionId, { type: "turn_end", sessionId, turnId, taleFinished: isFinal });
+    if (content.startsWith("[TALE_START]")) this.scheduleOracle(sessionId, "replace", { reason: "start" });
     this.broadcast(sessionId, { type: "update", sessionId });
   }
 }

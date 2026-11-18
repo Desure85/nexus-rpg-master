@@ -159,3 +159,20 @@ describe('отображение служебных команд', () => {
     expect(displayUserContent('[SAVE_CHAPTER] Сохрани главу...')).toBe('💾 Сохранить главу');
   });
 });
+
+describe('оракул: чистка строк', () => {
+  it('убирает дубли (в т.ч. с существующими), нумерацию и мусор', async () => {
+    const { cleanRows } = await import('../server/oracle');
+    expect(cleanRows(['1. Предать', 'предать!', '«Ключ»', 42, '', 'Ключ', 'x'.repeat(200)], ['Ключ'])).toEqual(['Предать']);
+  });
+});
+
+describe('дисклеймер', () => {
+  it('у мастера и игрока свои разделы, markdown для гайда', async () => {
+    const { disclaimerFor, disclaimerMarkdown } = await import('../shared/disclaimer');
+    expect(disclaimerFor('gm').map(s => s.title)).toContain('Кредиты');
+    expect(disclaimerFor('player').map(s => s.title)).not.toContain('Кредиты');
+    expect(disclaimerFor('player').map(s => s.title)).toContain('Дети');
+    expect(disclaimerMarkdown()).toContain('**Это вымысел, созданный ИИ.**');
+  });
+});

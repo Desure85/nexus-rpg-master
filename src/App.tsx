@@ -17,6 +17,8 @@ import { api, ApiError, useSessionSocket, characterLink, getSavedWorkspace, save
 import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
+import { OraclePanel } from './components/OraclePanel';
+import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
 export { DEFAULT_MECHANICS, SYSTEM_PROMPT };
@@ -74,6 +76,7 @@ export default function App() {
   const [adminView, setAdminView] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [turnErrorCode, setTurnErrorCode] = useState<string | null>(null);
+  const [oracleStatus, setOracleStatus] = useState<{ state: 'idle' | 'generating' | 'error'; error?: string; tick: number }>({ state: 'idle', tick: 0 });
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [currentSession, setCurrentSession] = useState<GameSession | null>(null);
   const [isSettingUp, setIsSettingUp] = useState(false);
@@ -283,6 +286,10 @@ export default function App() {
       case 'claims_changed':
       case 'actions_changed':
         fetchPanels();
+        break;
+      case 'oracle':
+        setOracleStatus(prev => ({ state: e.status === 'generating' ? 'generating' : e.status === 'error' ? 'error' : 'idle', error: e.error, tick: prev.tick + 1 }));
+        if (e.status === 'error' && currentSession?.isOwner) showToast(`Оракул: ${e.error}`);
         break;
       case 'level_up':
         showToast(`Новый уровень: ${(e as any).leveled.join(', ')}. Способности появятся в следующем ходе.`);
@@ -1254,6 +1261,7 @@ export default function App() {
                 </div>
               </div>
               )}
+              <DisclaimerFooter audience="gm" className="px-4 pb-2 -mt-2" />
             </div>
 
             {/* Dashboard Sidebar */}
@@ -1438,6 +1446,9 @@ export default function App() {
                         <div className="text-sm text-white/60 font-serif leading-relaxed whitespace-pre-wrap">{currentSession.lore || 'Пока пусто.'}</div>
                       </>
                     )}
+                    {currentSession.isOwner && !taleFinished && (
+                      <div className="pt-4 border-t border-white/10"><OraclePanel sessionId={currentSession.id} status={oracleStatus} /></div>
+                    )}
                   </div>
                 ) : rightPanelTab === 'lore' ? (
                   <div className="p-6 space-y-4 overflow-y-auto h-full">
@@ -1447,6 +1458,9 @@ export default function App() {
                     <div className="text-sm text-white/60 font-serif leading-relaxed whitespace-pre-wrap">
                       {currentSession.lore || "No lore recorded yet. Use 'Nexus Save' to crystallize the story."}
                     </div>
+                    {currentSession.isOwner && (
+                      <div className="pt-4 border-t border-white/10"><OraclePanel sessionId={currentSession.id} status={oracleStatus} /></div>
+                    )}
                     {currentSession.archive && (
                       <>
                         <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold flex items-center gap-2 pt-4 border-t border-white/10">
@@ -1524,6 +1538,7 @@ export default function App() {
                 Онлайн-НРИ с ИИ-мастером: соло, с друзьями или сказка на ночь.
               </p>
             </motion.div>
+            <DisclaimerFooter audience="gm" className="max-w-md px-4" />
             
             {serverConfig && !serverConfig.llm.keyPresent && (
               <div className="max-w-xl mx-4 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-200/80">
