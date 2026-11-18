@@ -147,6 +147,7 @@ export function migrate(db: DB) {
   `);
 
   addColumn(db, "sessions", "codex", "codex TEXT");
+  addColumn(db, "pending_actions", "tokens_spent", "tokens_spent INTEGER DEFAULT 0");
   addColumn(db, "sessions", "archive", "archive TEXT");
   addColumn(db, "sessions", "decision_tree", "decision_tree TEXT");
   addColumn(db, "sessions", "mode", "mode TEXT DEFAULT 'short'");

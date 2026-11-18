@@ -250,6 +250,18 @@ export class Engine {
       .map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
   }
 
+  /** Контекст для расчёта исхода бросков: лист героев, статусы движка, DC мастера. */
+  rollContext(s: StoredSession) {
+    const engineChars = this.game.ensureEngineState(s.id);
+    const dash = lastDashboard(s.history);
+    return {
+      characters: dash.characters || [],
+      status: Object.fromEntries(Object.entries(engineChars).map(([n, c]: [string, any]) => [n, c.status])),
+      gearEnabled: this.isEnabled(this.effectiveConfig(s).mechanics, "equipment"),
+      dc: (dash.suggestedRoll as any)?.dc,
+    };
+  }
+
   private async runTurn(sessionId: string, content: string, opts: TurnOptions) {
     const s = loadSession(this.db, sessionId);
     if (!s) throw new Error("Сессия не найдена");
@@ -297,13 +309,7 @@ export class Engine {
     for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].role === "assistant") { lastAssistantIdx = i; break; }
     // Исход бросков считает движок: дописываем «Итог … → УСПЕХ/ПРОВАЛ» до того, как модель увидит ход
     {
-      const engineChars = this.game.ensureEngineState(sessionId);
-      const ctx = {
-        characters: lastDashboard(s.history).characters || [],
-        status: Object.fromEntries(Object.entries(engineChars).map(([n, c]: [string, any]) => [n, c.status])),
-        gearEnabled: this.isEnabled(cfg.mechanics, "equipment"),
-        dc: (lastDashboard(s.history).suggestedRoll as any)?.dc,
-      };
+      const ctx = this.rollContext(s);
       let changed = false;
       for (let i = lastAssistantIdx + 1; i < s.history.length; i++) {
         const m = s.history[i];
@@ -389,7 +395,11 @@ export class Engine {
       const deathChanges = outcomes.filter(o => o.deathSave === "stabilized")
         .map(o => ({ field: "hp" as const, name: this.game.resolveName(chars, o.actor) || o.actor, delta: 1 }))
         .filter(c => chars[c.name]?.status === "downed");
-      const applied = this.game.applyStateChanges(chars, [...armored, ...auto, ...useChanges, ...deathChanges]);
+      // Крит даёт жетон автоматически; свой [TOKEN +N] модели этому же герою не дублируем
+      const critActors = new Set(outcomes.filter(o => o.outcome === "crit").map(o => this.game.resolveName(chars, o.actor)).filter(Boolean) as string[]);
+      const tokenChanges = this.isEnabled(mechanics, "tokens") ? [...critActors].map(name => ({ field: "tokens" as const, name, delta: 1 })) : [];
+      const modelChanges = armored.filter(c => !(c.field === "tokens" && c.delta > 0 && critActors.has(this.game.resolveName(chars, c.name) || "")));
+      const applied = this.game.applyStateChanges(chars, [...modelChanges, ...auto, ...useChanges, ...deathChanges, ...tokenChanges]);
       for (const o of outcomes.filter(o => o.deathSave === "failed")) {
         const ch = (dashboard.characters || []).find(c => c.name === (this.game.resolveName(chars, o.actor) || o.actor));
         if (ch) ch.condition = "💀 При смерти: без помощи союзника погибнет в конце следующего хода";

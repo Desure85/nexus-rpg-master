@@ -10,6 +10,8 @@ import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
 import { RichParagraphs, UserContent } from './RichText';
 import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
+import { levelFromXp } from '../../shared/rules';
+import { describeEffect } from '../../shared/items';
 
 export const CharacterView: React.FC = () => {
   const { sessionId, charName: rawCharName } = useParams<{ sessionId: string; charName: string }>();
@@ -33,6 +35,8 @@ export const CharacterView: React.FC = () => {
   const [claimOwner, setClaimOwner] = useState('');
   const [playerName, setPlayerName] = useState(() => localStorage.getItem('nexus_player_name') || '');
   const [myPending, setMyPending] = useState<string | null>(null);
+  const [myPendingId, setMyPendingId] = useState<string | null>(null);
+  const [actionKind, setActionKind] = useState<'' | 'flashback' | 'narrative'>('');
 
   // Decode character name safely (handle both Base64 and legacy URI encoded)
   const charName = React.useMemo(() => {
@@ -49,7 +53,9 @@ export const CharacterView: React.FC = () => {
   const fetchPending = async () => {
     try {
       const pending = await api<any[]>(`/api/sessions/${sessionId}/pending`);
-      setMyPending(pending.find((p: any) => p.char_name === charName)?.action_text ?? null);
+      const mine = pending.find((p: any) => p.char_name === charName);
+      setMyPending(mine?.action_text ?? null);
+      setMyPendingId(mine?.id ?? null);
     } catch (e) { console.error("Pending fetch error", e); }
   };
 
@@ -148,11 +154,26 @@ export const CharacterView: React.FC = () => {
     if (!actionText.trim() || !session || isSending || hasActed || claimState !== 'approved') return;
     setIsSending(true);
     try {
-      await api(`/api/sessions/${sessionId}/actions`, { body: { charName, action: actionText.trim(), roll: !isTale && rollType ? rollType : undefined } });
+      await api(`/api/sessions/${sessionId}/actions`, { body: { charName, action: actionText.trim(), roll: !isTale && rollType ? rollType : undefined, kind: actionKind || undefined } });
       setActionInput('');
+      setActionKind('');
       fetchPending();
     } catch (e) {
       alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const reroll = async () => {
+    if (!myPendingId || isSending) return;
+    setIsSending(true);
+    try {
+      await api(`/api/sessions/${sessionId}/actions/${myPendingId}/reroll`, { body: {} });
+      fetchPending();
+      fetchData();
+    } catch (e) {
+      alert(`Переброс не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
@@ -321,6 +342,16 @@ export const CharacterView: React.FC = () => {
                 <div>
                   <h1 className="text-4xl font-display font-bold tracking-tighter">{character.name}</h1>
                   <p className="text-amber-400/60 uppercase tracking-widest text-[10px] font-bold mt-1">{character.goal}</p>
+                  {!isTale && (() => {
+                    const lv = levelFromXp(character.xp || 0);
+                    const need = 50 * lv * lv;
+                    return (
+                      <div className="flex flex-wrap gap-1.5 mt-2 text-[11px] font-mono">
+                        <span className="px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300/90">🪙 {character.gold ?? 0}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300/90" title="Каждый уровень: +2 к макс. HP и новая способность">Ур. {lv} · {character.xp ?? 0}/{need} опыта</span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="text-right">
                   {!isTale && isMechanicEnabled('condition') && (
@@ -366,9 +397,12 @@ export const CharacterView: React.FC = () => {
 
               {/* Tokens */}
               {!isTale && isMechanicEnabled('tokens') && (
-                <div className="p-4 bg-amber-400/5 border border-amber-400/20 rounded-2xl flex items-center justify-between">
-                  <span className="text-[10px] uppercase tracking-widest text-amber-400/60 font-bold">Жетоны судьбы</span>
-                  <div className="flex gap-3">
+                <div className="p-4 bg-amber-400/5 border border-amber-400/20 rounded-2xl flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <span className="text-[10px] uppercase tracking-widest text-amber-400/60 font-bold">Жетоны судьбы</span>
+                    <p className="text-[11px] text-amber-100/50 leading-snug mt-1">Переброс неудачи, флешбэк или право на истину. Новый — за крит или яркую игру.</p>
+                  </div>
+                  <div className="flex gap-3 shrink-0">
                     {Array.from({ length: 3 }).map((_, i) => (
                       <div 
                         key={i} 
@@ -418,11 +452,24 @@ export const CharacterView: React.FC = () => {
                 <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
                   <MessageSquarePlus size={12} /> {isTale ? 'Свой вариант' : 'Своё действие'}
                 </h3>
+                {!isTale && isMechanicEnabled('tokens') && !hasActed && (
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    {([['', 'Действие', ''], ['flashback', '⟲ Флешбэк', 'Опиши, как герой подготовился к этому в прошлом. Стоит 1 жетон.'], ['narrative', '✎ Право на истину', 'Добавь деталь мира, которая станет правдой. Стоит 1 жетон.']] as const).map(([id, label, hint]) => (
+                      <button
+                        key={id}
+                        title={hint || undefined}
+                        disabled={!!id && (character.tokens || 0) < 1}
+                        onClick={() => setActionKind(id)}
+                        className={`px-2.5 py-1 rounded-full border transition-all disabled:opacity-30 ${actionKind === id ? 'bg-amber-400/20 border-amber-400/50 text-amber-100' : 'border-white/10 text-white/50 hover:text-white'}`}
+                      >{label}{id ? ' · 1 жетон' : ''}</button>
+                    ))}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <textarea
                     value={actionInput}
                     onChange={(e) => setActionInput(e.target.value)}
-                    placeholder={isTale ? 'Что сделает твой герой?' : 'Опиши действие...'}
+                    placeholder={isTale ? 'Что сделает твой герой?' : actionKind === 'flashback' ? 'Как герой подготовился к этому заранее?' : actionKind === 'narrative' ? 'Какая деталь мира оказывается правдой?' : 'Опиши действие...'}
                     disabled={hasActed || isSending}
                     className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20"
                   />
@@ -435,7 +482,7 @@ export const CharacterView: React.FC = () => {
                     <span className="text-[10px] uppercase tracking-widest">{isTale ? 'Ок' : 'Ход'}</span>
                   </button>
                 </div>
-                {!isTale && (
+                {!isTale && !hasActed && (
                   <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-white/40 font-bold">
                     <span>Бросок:</span>
                     {([['', 'нет'], ['classic', 'd20'], ['triple', '3d20'], ['shifted', 'Сдвиг'], ['taint', 'Хаос']] as const)
@@ -447,7 +494,7 @@ export const CharacterView: React.FC = () => {
                       ))}
                   </div>
                 )}
-                {!isTale && (dashboard.suggestedRoll || rollType) && (() => {
+                {!isTale && !hasActed && (dashboard.suggestedRoll || rollType) && (() => {
                   const gear = gearBonus(character as any, actionInput);
                   return (
                     <p className="text-[11px] text-white/45 leading-snug">
@@ -457,12 +504,20 @@ export const CharacterView: React.FC = () => {
                     </p>
                   );
                 })()}
-                {hasActed && (
-                  <div className="text-xs text-emerald-400 text-center space-y-1">
-                    <p className="animate-pulse">{isTale ? 'Твоя идея у сказочника. Ждём продолжения...' : 'Действие отправлено Мастеру. Ждём его решения...'}</p>
-                    <p className="text-white/40 italic whitespace-pre-wrap">«{myPending}»</p>
-                  </div>
-                )}
+                {hasActed && (() => {
+                  const failed = /→ (ПРОВАЛ|КРИТ\. ПРОВАЛ|УСПЕХ С ЦЕНОЙ)/.test(myPending || '') && !/\(переброс за жетон\)/.test(myPending || '');
+                  return (
+                    <div className="text-xs text-emerald-400 text-center space-y-2">
+                      <p className="animate-pulse">{isTale ? 'Твоя идея у сказочника. Ждём продолжения...' : 'Действие отправлено Мастеру. Ждём его решения...'}</p>
+                      <p className="text-white/60 whitespace-pre-wrap"><UserContent text={myPending || ''} /></p>
+                      {!isTale && failed && (character.tokens || 0) > 0 && (
+                        <button onClick={reroll} disabled={isSending} className="w-full py-2 rounded-lg border border-amber-400/40 bg-amber-400/10 text-amber-200 font-bold hover:bg-amber-400/20 disabled:opacity-50">
+                          ✦ Перебросить за жетон судьбы (осталось {character.tokens})
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
               </section>
 
               {!isTale && <>
@@ -545,7 +600,7 @@ export const CharacterView: React.FC = () => {
                             } catch (e) { alert(e instanceof Error ? e.message : 'Не получилось'); }
                           }}
                           className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold"
-                        >
+                         title={`Использовать: ${describeEffect(item)}`}>
                           Использовать
                         </button>
                       )}

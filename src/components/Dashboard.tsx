@@ -5,7 +5,9 @@ import QRCode from 'qrcode';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode, Search } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
-import { characterLink } from '../api';
+import { api, characterLink } from '../api';
+import { isConsumable, describeEffect } from '../../shared/items';
+import { levelFromXp } from '../../shared/rules';
 
 interface DashboardProps {
   data: DashboardData;
@@ -29,7 +31,7 @@ interface DashboardProps {
 }
 
 /** Предмет с эффектом в названии («восстанавливает 5 HP», «снимает 2 Стресса») движок умеет применить. */
-export const isUsableItem = (item: string) => /(восстанавливает|лечит|снимает)\s*\d+|\d+\s*HP/i.test(item);
+export const isUsableItem = (item: string) => isConsumable(item);
 
 const ROLL_RU: Record<string, string> = { classic: 'Обычный бросок (d20)', triple: 'Резонанс стресса (3d20)', shifted: 'Сдвиг судьбы (3d20+d6)', taint: 'Бросок хаоса (2d20)' };
 
@@ -138,6 +140,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       c.name === name ? { ...c, ...updates } : c
     );
     onUpdate({ ...data, characters: newChars });
+  };
+
+  /** Трата жетона через движок: он спишет жетон и сообщит ИИ в следующем ходе. */
+  const spendToken = async (charName: string, kind: 'reroll' | 'flashback' | 'narrative' | 'stabilize') => {
+    setActiveTokenMenu(null);
+    if (!sessionId) return;
+    let note = '';
+    if (kind === 'flashback') note = (await customPrompt(`Флешбэк: как ${charName} подготовился к этому заранее?`)) || '';
+    if (kind === 'narrative') note = (await customPrompt(`Право на истину: какая деталь мира станет правдой?`)) || '';
+    if (kind === 'stabilize') {
+      const downed = data.characters.filter(c => (c as any).status === 'downed' && c.name !== charName).map(c => c.name);
+      note = downed.length === 1 ? downed[0] : (await customPrompt(`Кого стабилизировать? (${downed.join(', ')})`, downed[0])) || '';
+    }
+    if ((kind === 'flashback' || kind === 'narrative' || kind === 'stabilize') && !note.trim()) return;
+    try {
+      await api(`/api/sessions/${sessionId}/tokens`, { body: { charName, kind, note } });
+      if (kind === 'reroll') await customConfirm(`Жетон потрачен. Брось кубик за ${charName} ещё раз в лотке кубиков — прежний бросок можно не отправлять.`);
+    } catch (e) {
+      await customConfirm(e instanceof Error ? e.message : 'Не удалось потратить жетон');
+    }
   };
 
   const updateDoom = (val: number) => {
@@ -260,35 +282,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                             </div>
                             <div className="p-1">
                               <button 
-                                onClick={async () => {
-                                  if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
-                                  setActiveTokenMenu(null);
-                                }}
+                                onClick={() => spendToken(char.name, 'reroll')}
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
                                 <RotateCcw size={12} /> Переброс
                               </button>
                               <button 
-                                onClick={async () => {
-                                  if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
-                                  setActiveTokenMenu(null);
-                                }}
+                                onClick={() => spendToken(char.name, 'flashback')}
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
                                 <ZapOff size={12} /> Флешбэк
                               </button>
                               <button 
-                                onClick={async () => {
-                                  if (char.tokens > 0) updateChar(char.name, { tokens: char.tokens - 1 });
-                                  setActiveTokenMenu(null);
-                                }}
+                                onClick={() => spendToken(char.name, 'narrative')}
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
-                                <MessageSquarePlus size={12} /> Право на сюжет
+                                <MessageSquarePlus size={12} /> Право на истину
                               </button>
+                              {data.characters.some(c => (c as any).status === 'downed' && c.name !== char.name) && (
+                                <button
+                                  onClick={() => spendToken(char.name, 'stabilize')}
+                                  disabled={char.tokens === 0}
+                                  className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-red-200/80 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
+                                >
+                                  💀 Стабилизировать союзника
+                                </button>
+                              )}
                               <div className="h-px bg-white/5 my-1" />
                               <button 
                                 onClick={async () => {
@@ -331,7 +353,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </span>
                   <span
                     className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300/90 cursor-pointer hover:text-sky-200 whitespace-nowrap"
-                    title={`XP (клик — задать вручную). Уровень = floor(sqrt(xp/50))+1`}
+                    title={(() => { const lv = levelFromXp(char.xp || 0); const need = 50 * lv * lv; return `Опыт. До ${lv + 1} уровня: ещё ${need - (char.xp || 0)} (нужно ${need}). Каждый уровень: +2 к макс. HP и новая способность. Клик — задать вручную.`; })()}
                     onClick={async () => {
                       const next = await customPrompt(`Опыт: ${char.name}`, String(char.xp ?? 0));
                       if (next !== null) {
@@ -340,7 +362,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       }
                     }}
                   >
-                    Ур. {Math.floor(Math.sqrt(Math.max(0, (char.xp || 0)) / 50)) + 1} · {char.xp ?? 0} опыта
+                    Ур. {levelFromXp(char.xp || 0)} · {char.xp ?? 0}/{50 * levelFromXp(char.xp || 0) ** 2} опыта
                   </span>
                   {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
                     <div className="flex gap-1">
@@ -458,7 +480,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       >
                         {item}
                         {onUseItem && isUsableItem(item) && (
-                          <button onClick={() => onUseItem(char.name, item)} className="text-emerald-400/70 hover:text-emerald-300 font-bold" title="Использовать">
+                          <button onClick={() => onUseItem(char.name, item)} className="text-emerald-400/70 hover:text-emerald-300 font-bold" title={`Использовать: ${describeEffect(item)}`}>
                             ✚
                           </button>
                         )}

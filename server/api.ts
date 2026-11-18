@@ -14,6 +14,7 @@ import {
 } from "./store";
 import { buildGameStartPrompt, buildTaleStartPrompt, TALE_AGES, INITIAL_DASHBOARD, type TaleAge } from "../shared/rules";
 import { rollTag, ROLL_TYPES, type RollType } from "../shared/dice";
+import { resolveRolls } from "../shared/resolve";
 import { tablesFor, MAX_ROWS as ORACLE_MAX_ROWS } from "./oracle";
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
@@ -156,7 +157,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   //  GET — по ссылке (UUID сессии — секрет приглашения);
   //  claim/actions/roll — игрок (секрет устройства);
   //  всё остальное — только мастер, и изменения истории идут через очередь сессии.
-  const PLAYER_ROUTES = /^\/(claim|actions|use)\/?$/;
+  const PLAYER_ROUTES = /^\/(claim|actions|use|actions\/[^/]+\/reroll)\/?$/;
   const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore|oracle\/generate)\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
@@ -315,6 +316,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const deviceId = req.auth.deviceId;
     const charName = str(req.body?.charName, 60);
     const deathSave = req.body?.deathSave === true;
+    const kind = ["flashback", "narrative"].includes(req.body?.kind) ? req.body.kind as "flashback" | "narrative" : null;
     let action = deathSave ? "Спасбросок смерти" : str(req.body?.action, 2000).trim();
     if (!deviceId || !charName || !action) return res.status(400).json({ error: "charName/action required" });
     const claim = db.prepare("SELECT * FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, charName, deviceId) as any;
@@ -327,6 +329,18 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const existing = db.prepare("SELECT 1 FROM pending_actions WHERE session_id = ? AND char_name = ?").get(req.params.id, charName);
     if (existing) return res.status(409).json({ error: "already_acted", message: "Действие уже отправлено, ждём мастера" });
     const s = loadSession(db, req.params.id)!;
+    // Жетон за флешбэк или «право на истину» списывается сразу; вернётся, если действие отменят
+    let tokensSpent = 0;
+    if (kind && s.mode !== "tale") {
+      const chars = gameApi.ensureEngineState(req.params.id);
+      if ((chars[charName]?.tokens || 0) < 1) return res.status(409).json({ error: "no_tokens", message: "Нет жетонов судьбы" });
+      gameApi.applyStateChanges(chars, [{ field: "tokens", name: charName, delta: -1 }]);
+      gameApi.saveEngineState(req.params.id, chars);
+      tokensSpent = 1;
+      action = kind === "flashback"
+        ? `[FLASHBACK — жетон потрачен] ${action}`
+        : `[NARRATIVE RIGHT — жетон потрачен] ${action}`;
+    }
     const roll = (deathSave ? "classic" : req.body?.roll) as RollType | undefined;
     if (roll && ROLL_TYPES.includes(roll) && s.mode !== "tale") {
       const dash = lastDashboard(s.history);
@@ -335,16 +349,92 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       const enabled = (mid: string) => mech.find(m => m.id === mid)?.enabled ?? true;
       action += `\n${rollTag({ type: roll, bare: true, charName, actionName: action.slice(0, 80), stress: ch?.stress, threatLevel: deathSave ? 0 : dash.threatLevel, stressEnabled: enabled("stress"), threatEnabled: enabled("threat") })}`;
     }
+    // Исход броска считаем сразу: игрок видит результат и может перебросить за жетон до хода мастера
+    if (action.includes("[ROLL:")) action = resolveRolls(`[PLAYER ACTION: ${charName}] ${action}`, engine.rollContext(s)).text.replace(/^\[PLAYER ACTION: [^\]]+\] /, "");
     const id = crypto.randomUUID();
-    db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text) VALUES (?,?,?,?,?)").run(id, req.params.id, charName, claim.player_name, action);
+    db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text, tokens_spent) VALUES (?,?,?,?,?,?)").run(id, req.params.id, charName, claim.player_name, action, tokensSpent);
+    syncTokensToDashboard(req.params.id);
     broadcast(req.params.id, { type: "actions_changed", sessionId: req.params.id });
     res.json({ status: "ok", id, action });
   });
 
+  /** Числа движка → последний дашборд (жетоны видны сразу, без хода мастера). */
+  const syncTokensToDashboard = (sessionId: string) => {
+    const s = loadSession(db, sessionId);
+    if (!s) return;
+    let idx = -1;
+    for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].dashboard) { idx = i; break; }
+    if (idx < 0) return;
+    s.history[idx] = { ...s.history[idx], dashboard: gameApi.mergeStateIntoDashboard(s.history[idx].dashboard, gameApi.ensureEngineState(sessionId)) };
+    saveSession(db, s);
+    broadcast(sessionId, { type: "update", sessionId });
+  };
+
+  // Переброс за жетон: только свой ещё не обработанный ход с броском
+  app.post("/api/sessions/:id/actions/:aid/reroll", rateLimit({ windowMs: 60_000, max: 10 }), (req, res) => {
+    const row = db.prepare("SELECT * FROM pending_actions WHERE id = ? AND session_id = ?").get(req.params.aid, req.params.id) as any;
+    if (!row) return res.status(404).json({ error: "not_found", message: "Ход уже обработан" });
+    const claim = db.prepare("SELECT 1 FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, row.char_name, req.auth.deviceId || "");
+    if (!claim) return res.status(403).json({ error: "not_your_character", message: "Персонаж не закреплён за этим устройством" });
+    const tag = String(row.action_text).match(/\[ROLL:[^\]]*\]/)?.[0];
+    if (!tag) return res.status(400).json({ error: "no_roll", message: "В этом ходе нет броска" });
+    const chars = gameApi.ensureEngineState(req.params.id);
+    if ((chars[row.char_name]?.tokens || 0) < 1) return res.status(409).json({ error: "no_tokens", message: "Нет жетонов судьбы" });
+    const type: RollType = /Fate Shift/.test(tag) ? "shifted" : /Stress Resonance/.test(tag) ? "triple" : /Chaos Roll/.test(tag) ? "taint" : "classic";
+    const s = loadSession(db, req.params.id)!;
+    const dash = lastDashboard(s.history);
+    const ch = dash.characters?.find(c => c.name === row.char_name);
+    const mech = s.config.mechanics || readSettings(db).mechanics;
+    const enabled = (mid: string) => mech.find(m => m.id === mid)?.enabled ?? true;
+    const isDeath = /^Спасбросок смерти/.test(row.action_text);
+    gameApi.applyStateChanges(chars, [{ field: "tokens", name: row.char_name, delta: -1 }]);
+    gameApi.saveEngineState(req.params.id, chars);
+    const fresh = rollTag({ type, bare: true, charName: row.char_name, actionName: "", stress: ch?.stress, threatLevel: isDeath ? 0 : dash.threatLevel, stressEnabled: enabled("stress"), threatEnabled: enabled("threat") });
+    const base = String(row.action_text).replace(/\n?\[ROLL:[^\]]*\]/g, "").replace(/\s*\(переброс за жетон\)$/, "");
+    const resolved = resolveRolls(`[PLAYER ACTION: ${row.char_name}] ${base}\n${fresh}`, engine.rollContext(s)).text.replace(/^\[PLAYER ACTION: [^\]]+\] /, "");
+    const text = resolved.replace(/(\[ROLL:[^\]]*\])$/, "$1 (переброс за жетон)");
+    db.prepare("UPDATE pending_actions SET action_text = ?, tokens_spent = tokens_spent + 1 WHERE id = ?").run(text, row.id);
+    syncTokensToDashboard(req.params.id);
+    broadcast(req.params.id, { type: "actions_changed", sessionId: req.params.id });
+    res.json({ status: "ok", action: text });
+  });
+
   app.delete("/api/sessions/:id/actions/:aid", (req, res) => {
+    const row = db.prepare("SELECT char_name, tokens_spent FROM pending_actions WHERE id = ? AND session_id = ?").get(req.params.aid, req.params.id) as any;
     db.prepare("DELETE FROM pending_actions WHERE id = ? AND session_id = ?").run(req.params.aid, req.params.id);
+    // отменённый ход возвращает потраченные жетоны
+    if (row?.tokens_spent > 0) {
+      const chars = gameApi.ensureEngineState(req.params.id);
+      gameApi.applyStateChanges(chars, [{ field: "tokens", name: row.char_name, delta: row.tokens_spent }]);
+      gameApi.saveEngineState(req.params.id, chars);
+      syncTokensToDashboard(req.params.id);
+    }
     broadcast(req.params.id, { type: "actions_changed", sessionId: req.params.id });
     res.json({ status: "ok" });
+  });
+
+  // Мастер тратит жетон героя (переброс на своём экране, флешбэк, право на истину). ИИ узнает со следующим ходом.
+  app.post("/api/sessions/:id/tokens", (req, res) => {
+    if (!(req as any).isOwner) return res.status(403).json({ error: "owner_required" });
+    const charName = str(req.body?.charName, 60);
+    const kind = String(req.body?.kind || "");
+    const note = str(req.body?.note, 400).trim();
+    const KINDS: Record<string, string> = { reroll: "переброс", flashback: "флешбэк", narrative: "право на истину", stabilize: "стабилизация союзника" };
+    if (!KINDS[kind]) return res.status(400).json({ error: "bad_kind" });
+    const chars = gameApi.ensureEngineState(req.params.id);
+    const name = gameApi.resolveName(chars, charName);
+    if (!name) return res.status(404).json({ error: "character_not_found" });
+    if ((chars[name].tokens || 0) < 1) return res.status(409).json({ error: "no_tokens", message: "Нет жетонов судьбы" });
+    let target: string | null = null;
+    if (kind === "stabilize") {
+      target = gameApi.resolveName(chars, note);
+      if (!target || chars[target].status !== "downed") return res.status(409).json({ error: "not_downed", message: "Укажите поверженного союзника" });
+    }
+    gameApi.applyStateChanges(chars, [{ field: "tokens", name, delta: -1 }, ...(target ? [{ field: "hp", name: target, delta: 1 }] : [])]);
+    gameApi.saveEngineState(req.params.id, chars);
+    if (kind !== "reroll") gameApi.queueNews(req.params.id, `[TOKEN SPENT: ${name} → ${KINDS[kind]}${note ? `: ${note}` : ""}] Жетон уже списан. ${kind === "flashback" ? "Флешбэк правдив, если правдоподобен: покажи, как подготовка помогает сейчас." : kind === "narrative" ? "Деталь, которую ввёл игрок, — правда мира." : `${target} стабилизирован и снова в строю с 1 HP (уже применено) — опиши, как ${name} его поднимает.`}`);
+    syncTokensToDashboard(req.params.id);
+    res.json({ status: "ok", tokens: chars[name].tokens });
   });
 
   // Использовать расходник: мастер — за любого героя, игрок — только за своего. ИИ узнает в следующем ходе.
