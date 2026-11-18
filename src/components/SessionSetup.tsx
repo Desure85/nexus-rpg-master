@@ -107,10 +107,12 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
     setGenCharId(id);
     const char = characters.find(c => c.id === id);
     const genderStr = char?.gender === 'Ж' ? 'Женщина' : 'Мужчина';
+    const taken = characters.filter(c => c.id !== id && c.name.trim()).map(c => c.name.trim());
+    const avoid = taken.length ? ` Имя не должно совпадать с: ${taken.join(', ')}.` : '';
     try {
       const res = await onGenerate(isTale
-        ? `Придумай сказочного героя для мира: ${setting || 'Любой'}. Пол: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Ёжик Тимоша: Любопытный и очень храбрый"`
-        : `Придумай имя и краткий концепт (класс/профессия/особенность) для персонажа в сеттинге: ${setting || 'Любой'}. Пол персонажа: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Гаррет: Вор-тень из трущоб"`);
+        ? `Придумай сказочного героя для мира: ${setting || 'Любой'}. Пол: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Ёжик Тимоша: Любопытный и очень храбрый"${avoid}`
+        : `Придумай имя и краткий концепт (класс/профессия/особенность) для персонажа в сеттинге: ${setting || 'Любой'}. Пол персонажа: ${genderStr}. Ответь СТРОГО в формате "Имя: Концепт" без лишних слов. Пример: "Гаррет: Вор-тень из трущоб"${avoid}`);
       
       // Clean up the response first (remove markdown bold, quotes, etc)
       const cleanRes = res.replace(/[*"']/g, '').trim();
@@ -136,7 +138,11 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
         concept = cleanRes.substring(name.length).trim() || 'Unknown';
       }
       
-      setCharacters(chars => chars.map(c => c.id === id ? { ...c, name, concept } : c));
+      // модель всё же повторилась — добавляем прозвище, чтобы игроки не путались
+      const suffixes = ['Младший', 'Второй', 'из Пустошей', 'Тихий', 'Рыжий'];
+      let finalName = name, k = 0;
+      while (taken.some(t => t.toLowerCase() === finalName.toLowerCase()) && k < suffixes.length) finalName = `${name} ${suffixes[k++]}`;
+      setCharacters(chars => chars.map(c => c.id === id ? { ...c, name: finalName, concept } : c));
     } catch (e) { 
       console.error(e);
       void customAlert("Ошибка генерации персонажа.");

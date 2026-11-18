@@ -295,6 +295,30 @@ export const parseTale = (raw: string): TaleParse => {
       choices = choicesRaw.split(/\n|;/).map(s => s.replace(/^[-*\d.)\s"]+|["\s]+$/g, '')).filter(Boolean).slice(0, 4);
     }
   }
+  if (!choicesRaw) {
+    // незакрытый тег (модель упёрлась в лимит) — берём хвост
+    const open = text.match(/<choices_json>([\s\S]*)$/i);
+    if (open) {
+      text = text.slice(0, open.index);
+      const arr = open[1].match(/\[[\s\S]*?\]/);
+      try { if (arr) choices = JSON.parse(arr[0]).map(String); } catch { /* ниже */ }
+      if (!choices.length) choices = [...open[1].matchAll(/"([^"]{3,})"/g)].map(m => m[1]);
+    }
+  }
+  if (!choices.length) {
+    // модель перечислила варианты списком в конце текста
+    const lines = text.trimEnd().split('\n');
+    const tail: string[] = [];
+    while (lines.length && /^\s*(?:[-*•]|\d+[.)])\s+\S/.test(lines[lines.length - 1])) tail.unshift(lines.pop()!);
+    if (tail.length >= 2 && tail.length <= 4) {
+      choices = tail.map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s+/, '').replace(/\*\*/g, '').trim());
+      while (lines.length && /^\s*(\*\*)?(Что (же )?(делать|дальше|выберут)|Варианты|Выбор)[^\n]{0,60}$/i.test(lines[lines.length - 1].trim() || 'Выбор')) {
+        const l = lines.pop()!; if (!l.trim()) continue;
+      }
+      text = lines.join('\n');
+    }
+  }
+  choices = choices.map(c => c.trim()).filter(Boolean).slice(0, 4);
   const title = grab('tale_title');
   const moral = grab('tale_moral');
   const lore = grab('lore_update');

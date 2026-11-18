@@ -174,8 +174,14 @@ async function multiplayer(browser) {
   await pl.getByText('Запросить персонажа').click();
   await gm.waitForTimeout(1500);
   await gm.getByRole('button').filter({ hasText: /Принять|Одобрить|Пустить/ }).first().click();
-  await pl.waitForTimeout(2000);
+  // ждём лист героя; если не появился — перезагрузка (одобрение могло прийти до подписки)
+  for (let i = 0; i < 3 && !(await pl.locator('textarea').count()); i++) {
+    await pl.waitForTimeout(4000);
+    if (await pl.getByText('Понятно, играть').count()) await pl.getByText('Понятно, играть').click();
+    if (!(await pl.locator('textarea').count()) && i === 1) await pl.reload();
+  }
   await snap(pl, 'mp_player_sheet');
+  if (!(await pl.locator('textarea').count())) log('   экран игрока: ' + (await pl.locator('body').innerText()).slice(0, 600).replace(/\n+/g, ' | '));
   await pl.locator('textarea').first().fill('Взламываю терминал у двери, чтобы открыть проход');
   await pl.getByRole('button', { name: 'd20', exact: true }).click();
   await pl.getByRole('button').filter({ hasText: /^\s*Ход\s*$/ }).first().click();
