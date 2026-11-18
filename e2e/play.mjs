@@ -172,8 +172,11 @@ async function multiplayer(browser) {
   if (await pl.getByText('Понятно, играть').count()) await pl.getByText('Понятно, играть').click();
   await pl.locator('input').first().fill('Аня');
   await pl.getByText('Запросить персонажа').click();
-  await gm.waitForTimeout(1500);
-  await gm.getByRole('button').filter({ hasText: /Принять|Одобрить|Пустить/ }).first().click();
+  // кнопка именно в карточке заявки — у живой модели «Принять …» бывает и среди вариантов действий
+  const approve = gm.locator('div', { hasText: 'хочет' }).getByRole('button', { name: 'Принять', exact: true }).last();
+  await approve.waitFor({ timeout: 15000 });
+  check('мастер сразу видит заявку игрока', await gm.getByText(/хочет играть за/).count() > 0);
+  await approve.click();
   // ждём лист героя; если не появился — перезагрузка (одобрение могло прийти до подписки)
   for (let i = 0; i < 3 && !(await pl.locator('textarea').count()); i++) {
     await pl.waitForTimeout(4000);
