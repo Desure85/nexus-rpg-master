@@ -19,7 +19,7 @@ const dashboardOf = (system: string): any => {
 };
 
 const parseHeroes = (text: string) => [...text.matchAll(/^- ([^(\n:]+?)\s*\(([^)]*)\):\s*(.+)$/gm)]
-  .map(m => ({ name: m[1].trim(), female: /Женщ/.test(m[2]), concept: m[3].trim() }));
+  .map(m => ({ name: m[1].trim(), female: /Женщ/.test(m[2]), concept: m[3].replace(/\s*\[[^\]]*\]/g, "").trim() }));
 
 /** [ACTION SLOTS: Имя: Профильный, Рискованный; Имя2: …] */
 const parseSlots = (text: string): Record<string, string[]> => {

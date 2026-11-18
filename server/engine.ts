@@ -11,6 +11,9 @@ import {
 } from "../shared/rules";
 import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags } from "../shared/parse";
 import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
+import { archetypeById, applyArchetype } from "../shared/archetypes";
+import { genreOf } from "../shared/genre";
+import { applyVeteran } from "./heroes";
 import { actionSlotsTag } from "../shared/oracle";
 import { createOracleStore, tablesFor, buildOraclePrompt, parseOracleResponse, type OracleStore, type OracleTableDef } from "./oracle";
 import { BillingError } from "./billing";
@@ -213,7 +216,8 @@ export class Engine {
   /** Вызов ИИ с проверкой и списанием кредитов пространства. */
   private async callLlm(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, kind: string, onDelta: (d: string) => void) {
     if (s.workspace_id) this.billing.assertCanSpend(s.workspace_id, cfg.aiMode);
-    const r = await completeWithUsage(cfg.llm, request, onDelta);
+    // один разговор на сессию и вид запроса: стабильный id помогает кэшу промптов у провайдера
+    const r = await completeWithUsage(cfg.llm, { ...request, conversationId: request.conversationId || `${s.id}:${kind}` }, onDelta);
     if (s.workspace_id) this.billing.recordUsage({ workspaceId: s.workspace_id, sessionId: s.id, userId: s.created_by, kind, mode: cfg.aiMode, llm: cfg.llm as LlmSettings, usage: r.usage });
     this.log(cfg.loggingEnabled, s, request, r.text);
     return r.text;
@@ -365,6 +369,19 @@ export class Engine {
 
     const leveled: string[] = [];
     let dashboard: DashboardData = isClarify ? currentDashboard : (parsed.dashboard || structuredClone(currentDashboard));
+    // Архетипы и ветераны: стартовые числа, снаряжение и способности задаёт игра, а не модель
+    if (!isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.heroes?.length) {
+      const genre = genreOf(`${s.setting} ${s.name}`);
+      dashboard.characters = (dashboard.characters || []).map(c => {
+        const h = s.config.heroes!.find(x => x.name === c.name);
+        if (!h) return c;
+        let out: any = c;
+        const a = archetypeById(h.archetype);
+        if (a) out = applyArchetype(out, a, genre);
+        if (h.veteran) out = applyVeteran(out, h.veteran);
+        return out;
+      });
+    }
     if (!isClarify) {
       // State Authority: новые персонажи из ответа попадают в движок, затем применяются теги и числа перезаписываются
       const chars = this.game.ensureEngineState(sessionId);

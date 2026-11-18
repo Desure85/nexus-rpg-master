@@ -9,6 +9,8 @@ export interface Ability {
   desc: string;
   effect?: string;
   type?: 'boon' | 'curse' | 'flavor' | 'mechanical';
+  /** Пассивный бонус к броскам «+N к <навык>» (архетип, награда за уровень) — его применяет движок */
+  bonus?: string;
 }
 
 export interface Relationship {
@@ -33,6 +35,10 @@ export const stressValue = (s: number | string | undefined): number => (typeof s
 export const itemName = (item: Item | string | null | undefined): string => (!item ? '' : typeof item === 'string' ? item : item.name || '');
 
 export interface Character {
+  /** Архетип героя (shared/archetypes.ts) */
+  archetype?: string;
+  /** Ветеран из зала героев */
+  veteranId?: string;
   name: string;
   hp: string;
   stress: number | string;

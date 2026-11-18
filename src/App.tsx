@@ -6,7 +6,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { DiceRoller } from './components/DiceRoller';
 import { Codex } from './components/Codex';
 import { CharacterView } from './components/CharacterView';
-import { PromptModal } from './components/PromptModal';
+import { PromptModal, customAlert } from './components/PromptModal';
 import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, MechanicConfig, stressValue, WorkspaceInfo, CurrentUser } from './types';
 import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users, Award, Share2, Swords, Feather } from 'lucide-react';
@@ -20,6 +20,8 @@ import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
 import { RichParagraphs, UserContent, renderInline } from './components/RichText';
 import { GuideButton } from './components/GuideModal';
+import { HallModal } from './components/HallModal';
+import { ACHIEVEMENTS } from '../shared/achievements';
 import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
 import { DisclaimerFooter } from './components/Disclaimer';
@@ -123,6 +125,7 @@ export default function App() {
   const currentIdRef = useRef<string | null>(null);
   currentIdRef.current = currentSession?.id || null;
 
+  const [hallOpen, setHallOpen] = useState(false);
   const isTale = currentSession?.mode === 'tale';
   const dashBefore = useMemo(() => dashboardsBefore(currentSession?.history || []), [currentSession?.history]);
   const taleFinished = !!currentSession?.config?.tale?.finished;
@@ -137,7 +140,7 @@ export default function App() {
 
   const reportError = (e: unknown, prefix = 'Ошибка') => {
     const msg = e instanceof Error ? e.message : String(e);
-    alert(`${prefix}: ${msg}`);
+    void customAlert(`${prefix}: ${msg}`);
   };
 
   // ------------------------------ загрузка ------------------------------
@@ -272,6 +275,12 @@ export default function App() {
         break;
       case 'delta':
         setStreamingText(prev => (prev ?? '') + e.text);
+        break;
+      case 'achievement':
+        for (const code of e.codes) {
+          const a = ACHIEVEMENTS.find(x => x.code === code);
+          if (a) showToast(`${a.icon} Достижение: «${a.title}» — ${a.desc}`);
+        }
         break;
       case 'turn_end':
         setStreamingText(null);
@@ -758,7 +767,7 @@ export default function App() {
       download(`${currentSession.id}.timeline.md`, data.timeline_md || '(пусто)', 'text/markdown');
     } catch (e) {
       console.error("Skill export error:", e);
-      alert(`Экспорт не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+      void customAlert(`Экспорт не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     }
   };
 
@@ -825,7 +834,7 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/character/:sessionId/:charName" element={<CharacterView />} />
+      <Route path="/character/:sessionId/:charName" element={<><CharacterView /><PromptModal /></>} />
       <Route path="/invite/:token" element={authState === 'loading' ? gate(null) : <InviteRoute user={user} registration={serverConfig?.registration || 'open'} onAccepted={(wid) => loadMe(wid)} />} />
       <Route path="/reset/:token" element={<ResetRoute onDone={() => loadMe()} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -854,7 +863,12 @@ export default function App() {
             setIsSidebarOpen(false);
           }}
           onNewSession={() => {
-            handleNewSession();
+            // на главный экран: там быстрая игра, готовые сценарии и выбор режима
+            currentIdRef.current = null;
+            setCurrentSession(null);
+            setStreamingText(null);
+            setTurnError(null);
+            setIsSettingUp(false);
             setIsSidebarOpen(false);
           }}
           onDeleteSession={handleDeleteSession}
@@ -1624,6 +1638,7 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-6">
+              <button onClick={() => setHallOpen(true)} className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2">🎖️ Зал героев</button>
               <GuideButton audience="gm" className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2" />
               <button onClick={() => setIsSettingsOpen(true)} className="text-xs text-white/40 hover:text-white flex items-center gap-2">
                 <SettingsIcon size={14} /> Настройки
@@ -1633,6 +1648,7 @@ export default function App() {
         )}
       </main>
 
+      {hallOpen && <HallModal onClose={() => setHallOpen(false)} />}
       {isSettingsOpen && (
         <SettingsModal
           settings={effectiveSettings}

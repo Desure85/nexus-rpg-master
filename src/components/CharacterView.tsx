@@ -14,6 +14,7 @@ import { TurnSummary, dashboardsBefore, DeltaBadge } from './TurnSummary';
 import { gearBonus, DEFAULT_DC } from '../../shared/resolve';
 import { levelFromXp } from '../../shared/rules';
 import { describeEffect } from '../../shared/items';
+import { customAlert } from './PromptModal';
 
 export const CharacterView: React.FC = () => {
   const { sessionId, charName: rawCharName } = useParams<{ sessionId: string; charName: string }>();
@@ -99,7 +100,7 @@ export const CharacterView: React.FC = () => {
       if (data.status === 'pending' || data.status === 'approved') setClaimState(data.status);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'claimed_by_other') fetchClaims();
-      else alert(`Не удалось занять персонажа: ${e instanceof Error ? e.message : e}`);
+      else void customAlert(`Не удалось занять персонажа: ${e instanceof Error ? e.message : e}`);
     }
   };
 
@@ -176,7 +177,7 @@ export const CharacterView: React.FC = () => {
       setActionKind('');
       fetchPending();
     } catch (e) {
-      alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+      void customAlert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
@@ -190,7 +191,7 @@ export const CharacterView: React.FC = () => {
       fetchPending();
       fetchData();
     } catch (e) {
-      alert(`Переброс не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+      void customAlert(`Переброс не удался: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
@@ -203,7 +204,7 @@ export const CharacterView: React.FC = () => {
       await api(`/api/sessions/${sessionId}/actions`, { body: { charName, deathSave: true } });
       fetchPending();
     } catch (e) {
-      alert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
+      void customAlert(`Не удалось отправить: ${e instanceof Error ? e.message : 'неизвестная ошибка'}`);
     } finally {
       setIsSending(false);
     }
@@ -587,6 +588,7 @@ export const CharacterView: React.FC = () => {
                           </span>
                         </div>
                         <p className="text-sm text-white/60 mt-1 leading-relaxed">{ab.desc}</p>
+                        {ab.bonus && <p className="text-xs text-violet-200/80 mt-1">Бонус к броскам: <b>{ab.bonus}</b> — игра добавит его сама</p>}
                         {ab.effect && ab.effect !== '—' && <p className="text-xs text-white/40 mt-1 italic">{ab.effect}</p>}
                       </div>
                     ))}
@@ -640,7 +642,7 @@ export const CharacterView: React.FC = () => {
                           onClick={async () => {
                             try {
                               await api(`/api/sessions/${sessionId}/use`, { body: { charName, item } });
-                            } catch (e) { alert(e instanceof Error ? e.message : 'Не получилось'); }
+                            } catch (e) { void customAlert(e instanceof Error ? e.message : 'Не получилось'); }
                           }}
                           className="px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold"
                          title={`Использовать: ${describeEffect(item)}`}>
@@ -728,7 +730,7 @@ export const CharacterView: React.FC = () => {
                         disabled={claimState !== 'approved'}
                         onClick={async () => {
                           try { await api(`/api/sessions/${sessionId}/loot/take`, { body: { charName, item } }); fetchData(); }
-                          catch (e) { alert(e instanceof Error ? e.message : 'Не получилось'); }
+                          catch (e) { void customAlert(e instanceof Error ? e.message : 'Не получилось'); }
                         }}
                         className="px-3 py-2 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-100 text-sm hover:bg-amber-400/20 disabled:opacity-40"
                         title="Забрать себе"

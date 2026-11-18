@@ -4,6 +4,8 @@ import { deleteSessionCascade, type DB } from "./db";
 import { registerGameRoutes } from "./game";
 import { Engine } from "./engine";
 import { completeWithUsage, describeProvider, LlmError } from "./llm";
+import { createHeroes, veteranLine } from "./heroes";
+import { archetypeById } from "../shared/archetypes";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
@@ -27,6 +29,12 @@ const MAX_CHARACTERS = 8;
  */
 export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: string, data: any) => void }) {
   const { db, broadcast } = opts;
+  const heroes = createHeroes(db, opts.broadcast);
+  // после каждого хода мастера — проверка достижений
+  const broadcastWithHooks = (room: string, data: any) => {
+    broadcast(room, data);
+    if (data?.type === "turn_end") { try { heroes.checkSession(data.sessionId); } catch (e) { console.error("[achievements]", e); } }
+  };
   const billing = createBilling(db);
   const tenancy = createTenancy(db, billing);
 
@@ -96,7 +104,16 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const plotHook = str(setup.plotHook, 2000).trim();
     const style = ["narrative", "balanced", "combat", "fairytale"].includes(setup.style) ? setup.style : mode === "tale" ? "fairytale" : "balanced";
     const characters = (Array.isArray(setup.characters) ? setup.characters : [])
-      .map((c: any) => ({ name: str(c?.name, 60).trim(), concept: str(c?.concept, 300).trim(), gender: c?.gender === "Ж" ? "Ж" : "М" }))
+      .map((c: any) => {
+        const vet = c?.veteranId ? heroes.getHero(req.auth.user!.id, String(c.veteranId)) : null;
+        return {
+          name: vet?.name || str(c?.name, 60).trim(),
+          concept: vet?.concept || str(c?.concept, 300).trim(),
+          gender: (vet?.gender || c?.gender) === "Ж" ? "Ж" : "М",
+          archetype: archetypeById(vet?.archetype || c?.archetype)?.id,
+          veteranSheet: vet || undefined,
+        };
+      })
       .filter((c: any) => c.name)
       .slice(0, MAX_CHARACTERS);
     if (characters.length > limits.maxHeroes) return res.status(402).json({ error: "plan_limit", message: `На тарифе «${limits.title}» — до ${limits.maxHeroes} героев` });
@@ -116,6 +133,9 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       const chapters = Math.min(15, Math.max(3, Number(setup.tale?.chapters) || 6));
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
+    if (mode !== "tale" && characters.some((c: any) => c.archetype || c.veteranSheet)) {
+      config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, archetype: c.archetype, veteran: c.veteranSheet }));
+    }
     const id = crypto.randomUUID();
     const title = str(setup.title, 80).trim();
     const name = title ? (mode === "tale" ? `Сказка: ${title}` : title) : (mode === "tale" ? "Сказка: " : "") + (setting.split(/[.,;\n]/)[0].slice(0, 60) || "Новое приключение");
@@ -127,7 +147,9 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     db.prepare(`INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, mode, workspace_id, created_by, config)
       VALUES (?, ?, 'Custom', ?, ?, '', ?, ?, '[]', '', ?, ?, ?, ?)`)
       .run(id, name, setting, style, JSON.stringify(initialHistory), lore, mode, workspaceId, req.auth.user!.id, JSON.stringify(config));
-    const prompt = mode === "tale" ? buildTaleStartPrompt(setting, plotHook, characters) : buildGameStartPrompt(setting, plotHook, style, characters);
+    const prompt = mode === "tale"
+      ? buildTaleStartPrompt(setting, plotHook, characters)
+      : buildGameStartPrompt(setting, plotHook, style, characters.map((c: any) => ({ ...c, veteran: c.veteranSheet ? veteranLine(c.veteranSheet) : undefined })));
     engine.enqueueTurn(id, prompt);
     res.status(201).json(publicSession(loadSession(db, id)!, true, true));
   });
@@ -581,7 +603,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
 
   // ------------------------------- игровые сервисы -------------------------------
   const gameApi = registerGameRoutes(app, { db, broadcast });
-  engine = new Engine(db, gameApi, broadcast, tenancy, billing);
+  engine = new Engine(db, gameApi, broadcastWithHooks, tenancy, billing);
+  heroes.register(app, requireUser);
 
   // ------------------------------- настройки (админ) -------------------------------
   // Глобальные настройки: дефолтные промпт и механики видны всем вошедшим, ИИ платформы — суперадмину

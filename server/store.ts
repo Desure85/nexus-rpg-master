@@ -11,6 +11,8 @@ export interface SessionConfig {
   idlePlayerAction?: "random" | "skip" | "gm";
   autoApprove?: boolean;
   tale?: TaleConfig & { finished?: boolean; title?: string; moral?: string };
+  /** Герои при создании: архетип и ветеран из зала героев (снимок листа) */
+  heroes?: { name: string; archetype?: string; veteran?: any }[];
 }
 
 export interface StoredSession {

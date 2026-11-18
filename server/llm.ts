@@ -14,7 +14,11 @@ export interface LlmSettings {
 }
 
 export interface ChatMessage { role: "user" | "assistant"; content: string }
-export interface LlmRequest { system: string; messages: ChatMessage[]; temperature?: number; maxTokens?: number }
+export interface LlmRequest {
+  system: string; messages: ChatMessage[]; temperature?: number; maxTokens?: number;
+  /** Стабильный id разговора (сессия игры + вид запроса): opencode Go требует его для маршрутизации и кэша промптов */
+  conversationId?: string;
+}
 
 export interface LlmUsage { inputTokens: number; outputTokens: number; estimated: boolean }
 export interface LlmResult { text: string; usage: LlmUsage; provider: Provider; model: string }
@@ -27,6 +31,7 @@ export class LlmError extends Error {
 }
 
 const env = (k: string) => (process.env[k] || "").trim();
+const randomId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 const TIMEOUT_MS = () => Number(process.env.LLM_TIMEOUT_MS || 180_000);
 
 /** Срезает «мета»-абзацы, которые некоторые модели выдают перед ответом. */
@@ -102,6 +107,8 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
         url: env("OPENCODE_API_URL") || "https://opencode.ai/zen/go/v1",
         key: s.apiKey || env("OPENCODE_API_KEY"),
         model: (s.modelName && s.modelName !== "local-model" ? s.modelName : "") || env("OPENCODE_MODEL") || "deepseek-v4.1-flash",
+        // opencode Go: свой user agent и стабильный x-opencode-session на разговор (иначе HTTP 400 MissingSessionID)
+        extraHeaders: { "User-Agent": "nexus-rpg/1.0", "x-opencode-session": "" },
       };
     default:
       return {
@@ -114,6 +121,9 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
 
 async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal, wantUsage: boolean): Promise<{ text: string; usage?: LlmUsage }> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(t.extraHeaders || {}) };
+  if ("x-opencode-session" in headers) headers["x-opencode-session"] = req.conversationId || randomId();
+  // браузер (демо) не даёт задавать User-Agent — не мешаем ему
+  if (typeof window !== "undefined") delete headers["User-Agent"];
   if (t.key && t.key !== "not-needed") headers.Authorization = `Bearer ${t.key}`;
   const res = await fetch(`${t.url.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",

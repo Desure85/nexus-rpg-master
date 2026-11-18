@@ -1,4 +1,5 @@
 import type { MechanicConfig, DashboardData } from '../src/types';
+import { archetypeLine } from './archetypes';
 
 export const DEFAULT_MECHANICS: MechanicConfig[] = [
   {
@@ -469,7 +470,7 @@ ${heroes.map(h => `- ${h.name} (${h.gender === 'Ж' ? 'она' : 'он'}): ${h.c
 
 Расскажи первую главу: познакомь с героями и миром, задай чудесную проблему.`;
 
-export const buildGameStartPrompt = (setting: string, plotHook: string, style: string, characters: { name: string; concept: string; gender: string }[]) => {
+export const buildGameStartPrompt = (setting: string, plotHook: string, style: string, characters: { name: string; concept: string; gender: string; archetype?: string; veteran?: string }[]) => {
   const styleInstruction = style === 'narrative'
     ? 'ФОКУС: Нарратив и исследование. Бои должны быть редкими (10-15% времени), но значимыми. Уделяй внимание загадкам, социальному взаимодействию и атмосфере.'
     : style === 'combat'
@@ -484,7 +485,9 @@ export const buildGameStartPrompt = (setting: string, plotHook: string, style: s
 ${styleInstruction}
 
 Персонажи:
-${characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина' : 'Мужчина'}): ${c.concept}`).join('\n')}
+${characters.map(c => `- ${c.name} (${c.gender === 'Ж' ? 'Женщина' : 'Мужчина'}): ${c.concept}${archetypeLine(c.archetype)}${c.veteran ? ` [ветеран: ${c.veteran}]` : ''}`).join('\n')}
+
+Если у героя указан архетип или он ветеран — его числа, снаряжение и способности движок выставит сам; в описании опирайся на архетип и прошлое героя.
 
 Твоя задача:
 1. Опиши атмосферную стартовую сцену, в которой находятся персонажи. Задай настроение и опиши первую угрозу или интригу.
