@@ -80,7 +80,7 @@ export class Engine {
     if (!defs.length) throw new Error("Нет таких таблиц");
     const existing = this.oracle.load(sessionId);
     const { system, user } = buildOraclePrompt(s, defs, mode, opts.hint, existing);
-    const request: LlmRequest = { system, messages: [{ role: "user", content: user }], temperature: 1.0, maxTokens: 4000 };
+    const request: LlmRequest = { system, messages: [{ role: "user", content: user }], temperature: 1.0, maxTokens: 8000 };
     const text = await this.callLlm(s, cfg, request, "oracle", () => undefined);
     const data = parseOracleResponse(text);
     if (!data) throw new Error("Модель вернула таблицы не в формате JSON");

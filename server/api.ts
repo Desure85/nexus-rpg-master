@@ -166,7 +166,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
         system: "Ты креативный помощник для настольных ролевых игр и сказок. Отвечай кратко, ёмко и атмосферно, на русском. Не используй markdown.",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.9,
-        maxTokens: 400,
+        maxTokens: 2048, // с запасом: у моделей с рассуждениями лимит включает «мысли»
       });
       billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
       res.json({ text: r.text });
@@ -638,7 +638,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     };
     const started = Date.now();
     try {
-      const r = await completeWithUsage(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 20 });
+      const r = await completeWithUsage(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 1024 });
       res.json({ ok: true, ms: Date.now() - started, sample: r.text.slice(0, 80), ...describeProvider(llm) });
     } catch (e: any) {
       res.json({ ok: false, ms: Date.now() - started, error: e?.message, ...describeProvider(llm) });
