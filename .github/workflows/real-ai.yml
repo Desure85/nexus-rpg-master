@@ -73,6 +73,7 @@ jobs:
       - if: always()
         run: |
           cp server.log e2e-report/ || true
+          echo "== предупреждения сервера =="; grep -E "\[(tale|llm|engine)\]|Error" server.log | tail -40 || true
           cat e2e-report/report.md >> "$GITHUB_STEP_SUMMARY" || true
       - if: always()
         uses: actions/upload-artifact@v4

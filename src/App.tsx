@@ -113,6 +113,8 @@ export default function App() {
   const [turnError, setTurnError] = useState<string | null>(null);
   const [travelEvent, setTravelEvent] = useState<{ type: 'encounter' | 'discovery' | 'safe', locationName: string } | null>(null);
   const [pendingClaims, setPendingClaims] = useState<any[]>([]);
+  const seenClaims = useRef(new Set<string>());
+  const claimsPrimed = useRef(false);
   const [pendingActions, setPendingActions] = useState<any[]>([]);
   const [gmActionInputs, setGmActionInputs] = useState<Record<string, string>>({});
   const [isConfirming, setIsConfirming] = useState(false);
@@ -373,7 +375,16 @@ export default function App() {
     if (!id) return;
     try {
       const [c, a] = await Promise.all([api(`/api/sessions/${id}/claims`), api(`/api/sessions/${id}/pending`)]);
-      setPendingClaims(Array.isArray(c) ? c : []);
+      const list: any[] = Array.isArray(c) ? c : [];
+      // новая заявка — мастер должен заметить её сразу, даже если панель «Игроки» закрыта
+      const fresh = list.filter(x => x.status === 'pending' && !seenClaims.current.has(x.id));
+      list.forEach(x => seenClaims.current.add(x.id));
+      if (fresh.length && claimsPrimed.current) {
+        showToast(`🙋 ${fresh[0].player_name} хочет играть за ${fresh[0].char_name} — подтвердите во вкладке «Игроки»`);
+        setRightPanelTab('players');
+      }
+      claimsPrimed.current = true;
+      setPendingClaims(list);
       setPendingActions(Array.isArray(a) ? a : []);
     } catch (e) { console.error('Panels fetch error', e); }
   };
@@ -381,6 +392,7 @@ export default function App() {
   useEffect(() => {
     setPendingClaims([]);
     setPendingActions([]);
+    claimsPrimed.current = false;
     if (currentSession?.id) fetchPanels();
   }, [currentSession?.id]);
 

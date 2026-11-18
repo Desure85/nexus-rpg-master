@@ -629,6 +629,7 @@ export class Engine {
     let choices = (t.choices || []).map(c => String(c).replace(/^\s*[\d.)-]+\s*/, "").trim().slice(0, 90)).filter(Boolean);
     choices = [...new Set(choices)].slice(0, 3);
     if (!isFinal && choices.length < 2) {
+      console.warn(`[tale] модель не дала вариантов, хвост ответа: ${JSON.stringify(raw.slice(-400))}`);
       const extra = ["Пойти дальше и посмотреть, что будет", "Позвать на помощь друзей", "Остановиться и хорошенько подумать"];
       choices = [...choices, ...extra.filter(e => !choices.includes(e))].slice(0, 3);
     }

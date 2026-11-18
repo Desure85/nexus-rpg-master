@@ -181,6 +181,7 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
         // модели с рассуждениями (DeepSeek, Kimi…) шлют «мысли» отдельно — не показываем, но учитываем
         const thought = ev.choices?.[0]?.delta?.reasoning_content || ev.choices?.[0]?.delta?.reasoning || "";
         if (thought) reasoningChars += thought.length;
+        if (ev.choices?.[0]?.finish_reason === "length") console.warn(`[llm] ответ обрезан по лимиту токенов (${acc.length} символов текста, ${reasoningChars} рассуждений)`);
         if (ev.usage) usage = { inputTokens: ev.usage.prompt_tokens || 0, outputTokens: ev.usage.completion_tokens || 0, estimated: false };
       } catch { /* keep-alive / мусор */ }
     }
