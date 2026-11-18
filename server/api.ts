@@ -181,7 +181,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   //  claim/actions/roll — игрок (секрет устройства);
   //  всё остальное — только мастер, и изменения истории идут через очередь сессии.
   const PLAYER_ROUTES = /^\/(claim|actions|use|loot\/take|actions\/[^/]+\/reroll)\/?$/;
-  const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore|oracle\/generate)\/?$/;
+  // заявки игроков не трогают историю — не ждут, пока ИИ допишет ход
+  const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore|oracle\/generate|claims\/[^/]+\/(approve|reject|release))\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
     const row = db.prepare("SELECT workspace_id, created_by FROM sessions WHERE id = ?").get(id) as { workspace_id: string | null; created_by: string | null } | undefined;
