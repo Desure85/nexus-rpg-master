@@ -868,3 +868,22 @@ describe('кампания: магазин, поиск, кутёж, квесты
   });
 });
 
+describe('сказка и гайд', () => {
+  it('глава без вариантов получает запасную развилку', async () => {
+    const id = await createSession({ mode: 'tale', setting: 'Лес', plotHook: '', style: 'fairytale', characters: [{ name: 'Ёжик', concept: 'храбрый', gender: 'М' }], tale: { age: '6-8', chapters: 5 } });
+    await gm().post(`/api/sessions/${id}/turn`, { content: '[TALE_CHOICE] Идти в лес #nochoices' });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const last = s.history[s.history.length - 1];
+    expect(last.choices.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('гайд: мастеру — кампания и советы, игроку — без них; у всех есть «Об ИИ»', async () => {
+    const { guideFor, guideDisclaimer } = await import('../shared/guide');
+    expect(guideFor('gm').map(s => s.id)).toEqual(expect.arrayContaining(['start', 'rolls', 'hero', 'scene', 'campaign', 'gm', 'tale']));
+    expect(guideFor('player').map(s => s.id)).not.toContain('campaign');
+    for (const s of guideFor('gm')) expect(s.items.length).toBeGreaterThan(0);
+    expect(guideDisclaimer('player').items.length).toBeGreaterThan(2);
+  });
+});
+

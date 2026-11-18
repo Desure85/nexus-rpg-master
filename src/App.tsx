@@ -19,6 +19,7 @@ import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
 import { RichParagraphs, UserContent, renderInline } from './components/RichText';
+import { GuideButton } from './components/GuideModal';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -951,6 +952,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                <GuideButton audience="gm" label="" className="shrink-0 p-1.5 rounded-lg text-white/40 hover:text-amber-300 hover:bg-white/5" />
                 <span className="shrink-0 hidden xl:inline text-[10px] uppercase tracking-widest font-bold text-white/30">
                   {isTale
                     ? `📖 Глава ${currentSession.history.filter(m => m.role === 'assistant').length} из ${currentSession.config?.tale?.chapters ?? '?'}`
@@ -1573,9 +1575,12 @@ export default function App() {
                 <p className="text-white/40 text-xs mt-2">Интерактивная сказка с выборами — для детей или взрослых. В конце получается книга.</p>
               </button>
             </div>
-            <button onClick={() => setIsSettingsOpen(true)} className="text-xs text-white/40 hover:text-white flex items-center gap-2">
-              <SettingsIcon size={14} /> Настройки
-            </button>
+            <div className="flex items-center gap-6">
+              <GuideButton audience="gm" className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2" />
+              <button onClick={() => setIsSettingsOpen(true)} className="text-xs text-white/40 hover:text-white flex items-center gap-2">
+                <SettingsIcon size={14} /> Настройки
+              </button>
+            </div>
           </div>
         )}
       </main>

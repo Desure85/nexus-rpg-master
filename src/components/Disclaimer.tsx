@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { DISCLAIMER_SHORT, DISCLAIMER_VERSION, disclaimerFor, type DisclaimerAudience } from '../../shared/disclaimer';
 import { api } from '../api';
+import { Portal } from './Portal';
 
 const ackKey = (audience: DisclaimerAudience) => `nexus_disclaimer_${audience}_v${DISCLAIMER_VERSION}`;
 const acknowledged = (audience: DisclaimerAudience) => { try { return localStorage.getItem(ackKey(audience)) === '1'; } catch { return true; } };
@@ -20,6 +21,7 @@ export const DisclaimerModal: React.FC<{ audience: DisclaimerAudience; requireAc
   const note = useOperatorNote();
   const close = () => { acknowledge(audience); onClose(); };
   return (
+    <Portal>
     <div className="fixed inset-0 z-[10001] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm" onClick={requireAck ? undefined : close}>
       <div className="w-full max-w-lg bg-[#1a1614] border border-white/10 rounded-2xl p-6 space-y-4 max-h-[88vh] overflow-y-auto text-left" onClick={e => e.stopPropagation()}>
         <h2 className="font-display text-xl text-white flex items-center gap-2"><ShieldAlert size={20} className="text-amber-400" /> {requireAck ? 'Перед игрой' : 'Об ИИ и контенте'}</h2>
@@ -34,6 +36,7 @@ export const DisclaimerModal: React.FC<{ audience: DisclaimerAudience; requireAc
         <button onClick={close} className="w-full py-3 bg-white text-black rounded-xl font-semibold">{requireAck ? 'Понятно, играть' : 'Закрыть'}</button>
       </div>
     </div>
+    </Portal>
   );
 };
 
