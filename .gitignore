@@ -14,3 +14,4 @@ game.db-*
 data/
 exports/
 eval-report.md
+dist-demo/

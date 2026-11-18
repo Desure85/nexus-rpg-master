@@ -101,7 +101,7 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
       return {
         url: env("OPENCODE_API_URL") || "https://opencode.ai/zen/go/v1",
         key: s.apiKey || env("OPENCODE_API_KEY"),
-        model: (s.modelName && s.modelName !== "local-model" ? s.modelName : "") || env("OPENCODE_MODEL") || "deepseek-v4-flash",
+        model: (s.modelName && s.modelName !== "local-model" ? s.modelName : "") || env("OPENCODE_MODEL") || "deepseek-v4.1-flash",
       };
     default:
       return {

@@ -85,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
         <div className="px-4 py-2 text-[10px] uppercase tracking-widest text-white/40 font-bold">
-          Chronicles
+          Мои игры
         </div>
         {sessions.map((session) => (
           <div

@@ -13,7 +13,7 @@ import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as Se
 import { motion, AnimatePresence } from 'motion/react';
 import { DEFAULT_MECHANICS, SYSTEM_PROMPT, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
 import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
-import { api, ApiError, useSessionSocket, characterLink, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
+import { api, ApiError, useSessionSocket, characterLink, locationSearch, clearLocationSearch, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
 import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
@@ -225,10 +225,10 @@ export default function App() {
     if (authState !== 'ready') return;
     fetchSettings();
     // возврат с оплаты: перепроверяем платёж и показываем результат
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(locationSearch());
     const pid = params.get('payment');
     if (pid && workspaceIdRef.current) {
-      window.history.replaceState(null, '', window.location.pathname);
+      clearLocationSearch();
       api<any>(`/api/workspaces/${workspaceIdRef.current}/payments/${pid}/refresh`, { body: {} })
         .then(p => { showToast(p.status === 'succeeded' ? `Оплата прошла: +${p.credits} кредитов` : p.status === 'pending' ? 'Платёж ещё обрабатывается — баланс обновится автоматически' : 'Оплата не завершена'); loadMe(); })
         .catch(() => undefined);

@@ -11,7 +11,7 @@ export const PROVIDERS: { id: AppSettings['provider']; label: string }[] = [
   { id: 'mock', label: 'Демо (без ИИ)' },
 ];
 
-export const OPENCODE_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro', 'mimo-v2.5', 'mimo-v2-omni', 'minimax-m2.5', 'minimax-m2.7', 'minimax-m3', 'kimi-k2.5', 'kimi-k2.6', 'qwen3.5-plus', 'qwen3.6-plus', 'glm-5.2'];
+export const OPENCODE_MODELS = ['deepseek-v4.1-flash', 'mimo-v2.6-flash', 'deepseek-v4-pro', 'mimo-v2.6-pro', 'kimi-k2.6', 'kimi-k3', 'glm-5.2', 'qwen3.7-plus', 'minimax-m3', 'deepseek-v4-flash', 'mimo-v2.5'];
 export const GEMINI_MODELS = [
   { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (быстрая, по умолчанию)' },
   { id: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (умнее, медленнее)' },
@@ -115,7 +115,7 @@ export const PlatformAiForm: React.FC<Props> = ({ local, setLocal, serverLlm }) 
               {local.provider === 'opencode' && (
                 <div className="space-y-2">
                   <label className={labelCls}><Cpu size={12} /> Модель OpenCode (ключ — OPENCODE_API_KEY на сервере)</label>
-                  <select disabled={readOnlyModel} value={OPENCODE_MODELS.includes(local.modelName) ? local.modelName : 'deepseek-v4-flash'} onChange={e => setLocal({ ...local, modelName: e.target.value })} className={inputCls}>
+                  <select disabled={readOnlyModel} value={OPENCODE_MODELS.includes(local.modelName) ? local.modelName : 'deepseek-v4.1-flash'} onChange={e => setLocal({ ...local, modelName: e.target.value })} className={inputCls}>
                     {OPENCODE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>

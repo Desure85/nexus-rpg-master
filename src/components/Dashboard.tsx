@@ -6,6 +6,7 @@ import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, Rot
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
 import { EquipmentVisualizer } from './EquipmentVisualizer';
+import { characterLink } from '../api';
 
 interface DashboardProps {
   data: DashboardData;
@@ -80,8 +81,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
 
   const showQr = async (charName: string) => {
     if (!sessionId) return;
-    const encodedName = encodeURIComponent(btoa(unescape(encodeURIComponent(charName))));
-    const url = `${window.location.origin}/character/${sessionId}/${encodedName}`;
+    const url = characterLink(sessionId, charName);
     const img = await QRCode.toDataURL(url, { width: 260, margin: 1 });
     setQrData({ char: charName, url, img });
     setQrCopied(false);
@@ -201,12 +201,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       <button 
                         onClick={async () => {
                           if (!sessionId) return;
-                          // Use Base64 encoding for the character name to handle special characters safely
-                          // We must encodeURIComponent the Base64 string because it can contain '/' which breaks routing
-                          const encodedName = encodeURIComponent(btoa(unescape(encodeURIComponent(char.name))));
-                          const url = `${window.location.origin}/character/${sessionId}/${encodedName}`;
-                          navigator.clipboard.writeText(url);
-                          alert(`Link for ${char.name} copied to clipboard!`);
+                          showQr(char.name);
                         }}
                         className="p-1 hover:bg-white/10 rounded text-white/20 hover:text-emerald-400 transition-all"
                         title="Share Character Link"
