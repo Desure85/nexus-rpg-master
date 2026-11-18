@@ -26,6 +26,15 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Check key
+        env:
+          P: ${{ inputs.provider }}
+          K1: ${{ secrets.OPENCODE_API_KEY }}
+          K2: ${{ secrets.OPENROUTER_API_KEY }}
+          K3: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          case "$P" in opencode) K="$K1"; N=OPENCODE_API_KEY;; openrouter) K="$K2"; N=OPENROUTER_API_KEY;; gemini) K="$K3"; N=GEMINI_API_KEY;; *) echo "Неизвестный провайдер $P"; exit 1;; esac
+          if [ -z "$K" ]; then echo "::error::Нет секрета $N. Добавьте его: Settings → Secrets and variables → Actions → New repository secret."; exit 1; fi
       - run: npm ci
       - run: npm i --no-save playwright@1 && npx playwright install --with-deps chromium
       - run: npm run build
@@ -47,6 +56,13 @@ jobs:
         run: |
           nohup node dist-server/server.mjs > server.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/health && break; sleep 1; done
+      - name: Preflight (модель отвечает)
+        run: |
+          curl -s -c c.txt -H 'x-nexus-client: 1' -H 'Content-Type: application/json' -d '{"email":"pre@e2e.local","password":"password123","name":"pre"}' http://127.0.0.1:3000/api/auth/register > /dev/null
+          WID=$(curl -s -b c.txt http://127.0.0.1:3000/api/auth/me | node -pe 'JSON.parse(require("fs").readFileSync(0)).workspaces[0].id')
+          R=$(curl -s -b c.txt -H 'x-nexus-client: 1' -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:3000/api/workspaces/$WID/ai/test)
+          echo "$R"
+          echo "$R" | grep -q '"ok":true' || { echo "::error::Модель не отвечает: $R"; exit 1; }
       - name: Play
         env:
           BASE_URL: http://127.0.0.1:3000
