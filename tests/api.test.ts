@@ -4,8 +4,6 @@ import { WebSocket } from 'ws';
 import type { AddressInfo } from 'net';
 import { createApp } from '../server/app';
 
-const GM = 'gm-key-0123456789abcdef';
-const OTHER = 'other-key-0123456789abcd';
 const DEV_A = 'device-a-0123456789abcdef';
 const DEV_B = 'device-b-0123456789abcdef';
 
@@ -13,27 +11,44 @@ type Ctx = Awaited<ReturnType<typeof createApp>>;
 let ctx: Ctx;
 
 beforeEach(async () => {
-  delete process.env.ADMIN_TOKEN;
-  delete process.env.GM_ACCESS_CODE;
+  delete process.env.REGISTRATION;
+  delete process.env.SUPERADMIN_EMAILS;
+  delete process.env.PAYMENTS_PROVIDER;
+  process.env.FREE_CREDITS = '1000';
   ctx = await createApp({ dbPath: ':memory:' });
 });
 afterEach(async () => {
   await ctx.close();
 });
 
-const gm = (key = GM) => ({
-  get: (u: string) => request(ctx.app).get(u).set('x-owner-key', key),
-  post: (u: string, b: any = {}) => request(ctx.app).post(u).set('x-owner-key', key).send(b),
-  patch: (u: string, b: any = {}) => request(ctx.app).patch(u).set('x-owner-key', key).send(b),
-  del: (u: string) => request(ctx.app).delete(u).set('x-owner-key', key),
-});
+/** Зарегистрированный пользователь с cookie-сессией. */
+const account = async (email: string, extra: any = {}) => {
+  const agent = request.agent(ctx.app);
+  const r = await agent.post('/api/auth/register').set('x-nexus-client', '1').send({ email, password: 'password123', name: email.split('@')[0], ...extra });
+  if (r.status !== 201) throw new Error(`register ${email}: ${r.status} ${JSON.stringify(r.body)}`);
+  const me = (await agent.get('/api/auth/me')).body;
+  const h = (t: any) => t.set('x-nexus-client', '1');
+  return {
+    me,
+    wid: me.workspaces[0]?.id as string,
+    get: (u: string) => agent.get(u),
+    post: (u: string, b: any = {}) => h(agent.post(u)).send(b),
+    patch: (u: string, b: any = {}) => h(agent.patch(u)).send(b),
+    del: (u: string) => h(agent.delete(u)),
+  };
+};
+type Account = Awaited<ReturnType<typeof account>>;
+let gmAcc: Account;
+const gm = () => gmAcc;
+beforeEach(async () => { gmAcc = await account('gm@example.com'); });
+
 const player = (dev: string) => ({
   get: (u: string) => request(ctx.app).get(u).set('x-device-id', dev),
   post: (u: string, b: any = {}) => request(ctx.app).post(u).set('x-device-id', dev).send(b),
 });
 
-const createSession = async (setup: any, config: any = {}) => {
-  const res = await gm().post('/api/sessions', { setup, config });
+const createSession = async (setup: any, config: any = {}, who: Account = gm()) => {
+  const res = await who.post('/api/sessions', { setup, config, workspaceId: who.wid });
   expect(res.status).toBe(201);
   await ctx.engine.whenIdle(res.body.id);
   return res.body.id as string;
@@ -111,40 +126,68 @@ describe('соло', () => {
 });
 
 describe('доступ', () => {
-  it('чужой мастер не видит и не меняет сессию', async () => {
+  it('чужой мастер из другого пространства не видит и не меняет сессию', async () => {
     const id = await createSession(rpgSetup());
-    expect((await gm(OTHER).get('/api/sessions')).body).toEqual([]);
-    expect((await gm().get('/api/sessions')).body.map((s: any) => s.id)).toEqual([id]);
-    expect((await gm(OTHER).del(`/api/sessions/${id}`)).status).toBe(403);
-    expect((await gm(OTHER).post(`/api/sessions/${id}/turn`, { content: 'взлом' })).status).toBe(403);
-    expect((await gm(OTHER).post(`/api/sessions/${id}/economy`, { action: 'rest', charName: 'Арн' })).status).toBe(403);
-    const viewer = (await gm(OTHER).get(`/api/sessions/${id}`)).body;
+    const other = await account('other@example.com');
+    expect((await other.get(`/api/workspaces/${gm().wid}/sessions`)).status).toBe(403);
+    expect((await other.get(`/api/workspaces/${other.wid}/sessions`)).body).toEqual([]);
+    expect((await gm().get(`/api/workspaces/${gm().wid}/sessions`)).body.map((s: any) => s.id)).toEqual([id]);
+    expect((await other.del(`/api/sessions/${id}`)).status).toBe(403);
+    expect((await other.post(`/api/sessions/${id}/turn`, { content: 'взлом' })).status).toBe(403);
+    expect((await other.post(`/api/sessions/${id}/economy`, { action: 'rest', charName: 'Арн' })).status).toBe(403);
+    expect((await other.post('/api/sessions', { setup: rpgSetup(), workspaceId: gm().wid })).status).toBe(403);
+    const viewer = (await other.get(`/api/sessions/${id}`)).body;
     expect(viewer.isOwner).toBe(false);
     expect(viewer.config.systemPrompt).toBeUndefined();
   });
 
-  it('без ключа мастера сессию не создать; с GM_ACCESS_CODE нужен код', async () => {
+  it('без входа нельзя создать сессию; мутирующие запросы с cookie требуют заголовок клиента', async () => {
     expect((await request(ctx.app).post('/api/sessions').send({ setup: rpgSetup() })).status).toBe(401);
-    process.env.GM_ACCESS_CODE = 'secret';
-    expect((await gm().post('/api/sessions', { setup: rpgSetup() })).status).toBe(403);
-    const ok = await request(ctx.app).post('/api/sessions').set('x-owner-key', GM).set('x-access-code', 'secret').send({ setup: rpgSetup() });
-    expect(ok.status).toBe(201);
-    await ctx.engine.whenIdle(ok.body.id);
+    const agent = request.agent(ctx.app);
+    await agent.post('/api/auth/login').set('x-nexus-client', '1').send({ email: 'gm@example.com', password: 'password123' });
+    const noHeader = await agent.post('/api/sessions').send({ setup: rpgSetup(), workspaceId: gm().wid });
+    expect(noHeader.status).toBe(403);
+    expect(noHeader.body.error).toBe('csrf');
   });
 
-  it('с ADMIN_TOKEN настройки ИИ меняет только админ и ключи не утекают', async () => {
-    process.env.ADMIN_TOKEN = 'admin-secret';
-    expect((await gm().post('/api/settings', { provider: 'local' })).status).toBe(403);
-    expect((await gm().get('/api/logs')).status).toBe(403);
-    const saved = await request(ctx.app).post('/api/settings').set('x-admin-token', 'admin-secret').send({ provider: 'gemini', apiKey: 'AIzaSECRETKEY1234' });
-    expect(saved.status).toBe(200);
-    expect(saved.body.apiKey).toBe('••••1234');
-    const pub = (await request(ctx.app).get('/api/settings')).body;
-    expect(JSON.stringify(pub)).not.toContain('SECRET');
-    expect(pub.canEdit).toBe(false);
-    // маска при повторном сохранении ключ не затирает
-    await request(ctx.app).post('/api/settings').set('x-admin-token', 'admin-secret').send({ apiKey: '••••1234' });
-    expect((await request(ctx.app).get('/api/settings').set('x-admin-token', 'admin-secret')).body.apiKey).toBe('••••1234');
+  it('вход, неверный пароль, выход', async () => {
+    const agent = request.agent(ctx.app);
+    expect((await agent.post('/api/auth/login').set('x-nexus-client', '1').send({ email: 'gm@example.com', password: 'wrong-pass' })).status).toBe(401);
+    expect((await agent.post('/api/auth/login').set('x-nexus-client', '1').send({ email: 'GM@example.com', password: 'password123' })).status).toBe(200);
+    expect((await agent.get('/api/auth/me')).body.user.email).toBe('gm@example.com');
+    await agent.post('/api/auth/logout').set('x-nexus-client', '1');
+    expect((await agent.get('/api/auth/me')).status).toBe(401);
+  });
+
+  it('первый пользователь — суперадмин, остальные нет; регистрация по приглашению', async () => {
+    expect(gm().me.user.isSuperadmin).toBe(true);
+    const u2 = await account('u2@example.com');
+    expect(u2.me.user.isSuperadmin).toBe(false);
+    expect((await u2.get('/api/admin/workspaces')).status).toBe(403);
+    process.env.REGISTRATION = 'invite';
+    expect((await request(ctx.app).post('/api/auth/register').send({ email: 'x@example.com', password: 'password123' })).status).toBe(403);
+    const inv = (await gm().post(`/api/workspaces/${gm().wid}/invites`, { role: 'gm' })).body;
+    expect((await request(ctx.app).get(`/api/invites/${inv.token}`)).body.workspace).toContain('Пространство');
+    const u3 = await account('u3@example.com', { invite: inv.token });
+    expect(u3.me.workspaces.map((w: any) => w.id)).toEqual([gm().wid]);
+    expect(u3.me.workspaces[0].role).toBe('gm');
+  });
+
+  it('роли: гм видит сессии пространства, но управляет только своими; админ — всеми', async () => {
+    const inv = (await gm().post(`/api/workspaces/${gm().wid}/invites`, { role: 'gm' })).body;
+    const colleague = await account('colleague@example.com', { invite: inv.token });
+    const id = await createSession(rpgSetup());
+    const list = (await colleague.get(`/api/workspaces/${gm().wid}/sessions`)).body;
+    expect(list[0]).toMatchObject({ id, canManage: false });
+    expect((await colleague.post(`/api/sessions/${id}/turn`, { content: 'x' })).status).toBe(403);
+    const own = await createSession(rpgSetup(), {}, colleague);
+    expect((await gm().post(`/api/sessions/${own}/turn`, { content: 'админ может' })).status).toBe(202);
+    await ctx.engine.whenIdle(own);
+    // гм не может приглашать и менять ИИ
+    expect((await colleague.post(`/api/workspaces/${gm().wid}/invites`, { role: 'admin' })).status).toBe(403);
+    expect((await colleague.patch(`/api/workspaces/${gm().wid}`, { ai: { mode: 'platform' } })).status).toBe(403);
+    // последний владелец не может уйти
+    expect((await gm().del(`/api/workspaces/${gm().wid}/members/${gm().me.user.id}`)).status).toBe(400);
   });
 
   it('несуществующая сессия — 404, мусор в WebSocket не роняет сервер', async () => {
@@ -158,6 +201,126 @@ describe('доступ', () => {
     await new Promise(r => setTimeout(r, 50));
     expect((await request(ctx.app).get('/api/health')).body.status).toBe('ok');
     ws.close();
+  });
+});
+
+describe('ИИ пространства и биллинг', () => {
+  it('ключ ИИ платформы и логи — только суперадмину, ключи не утекают', async () => {
+    const u2 = await account('u2@example.com');
+    expect((await u2.post('/api/settings', { provider: 'local' })).status).toBe(403);
+    expect((await u2.get('/api/logs')).status).toBe(403);
+    const saved = await gm().post('/api/settings', { provider: 'gemini', apiKey: 'AIzaSECRETKEY1234' });
+    expect(saved.body.apiKey).toBe('••••1234');
+    expect(JSON.stringify((await u2.get('/api/settings')).body)).not.toContain('SECRET');
+    await gm().post('/api/settings', { apiKey: '••••1234' });
+    expect((await gm().get('/api/settings')).body.apiKey).toBe('••••1234');
+  });
+
+  it('BYOK: ключ шифруется, отдаётся маской, ходы не тратят кредиты', async () => {
+    const r = await gm().patch(`/api/workspaces/${gm().wid}`, { ai: { mode: 'byok', provider: 'openrouter', model: 'x/y', key: 'sk-or-SECRET9999' } });
+    expect(r.status).toBe(200);
+    expect(r.body.ai).toMatchObject({ mode: 'byok', provider: 'openrouter', key: '••••9999' });
+    const raw = ctx.db.prepare('SELECT ai_key_enc FROM workspaces WHERE id = ?').get(gm().wid) as any;
+    expect(raw.ai_key_enc).toMatch(/^v1:/);
+    expect(raw.ai_key_enc).not.toContain('SECRET');
+    // провайдер «свой URL» запрещён без ALLOW_BYOK_CUSTOM_URL (защита от SSRF)
+    expect((await gm().patch(`/api/workspaces/${gm().wid}`, { ai: { mode: 'byok', provider: 'local', url: 'http://169.254.169.254/' } })).status).toBe(400);
+    // в тестах LLM_PROVIDER=mock принудительно, поэтому проверяем учёт: режим byok → 0 кредитов
+    const before = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
+    await createSession(rpgSetup());
+    const after = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
+    expect(after).toBe(before);
+    const usage = ctx.db.prepare('SELECT mode, credits FROM usage WHERE workspace_id = ?').all(gm().wid) as any[];
+    expect(usage.every(u => u.mode === 'byok' && u.credits === 0)).toBe(true);
+  });
+
+  it('ключ платформы: ходы списывают кредиты, без кредитов — 402', async () => {
+    const before = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
+    const id = await createSession(rpgSetup());
+    const after = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
+    expect(after).toBeLessThan(before);
+    const billing = (await gm().get(`/api/workspaces/${gm().wid}/billing`)).body;
+    expect(billing.ledger[0].reason).toBe('usage:turn');
+    // обнуляем баланс
+    ctx.db.prepare('UPDATE workspaces SET credits = 0 WHERE id = ?').run(gm().wid);
+    const blocked = await gm().post('/api/sessions', { setup: rpgSetup(), workspaceId: gm().wid });
+    expect(blocked.status).toBe(402);
+    expect(blocked.body.error).toBe('insufficient_credits');
+    // ход в существующей сессии — ошибка хода с кодом, а не падение
+    await new Promise<void>(resolve => ctx.server.listen(0, resolve));
+    const port = (ctx.server.address() as AddressInfo).port;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+    const events: any[] = [];
+    ws.on('message', d => events.push(JSON.parse(d.toString())));
+    await new Promise(r => ws.once('open', r));
+    ws.send(JSON.stringify({ type: 'join', sessionId: id }));
+    await new Promise(r => setTimeout(r, 30));
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'ещё ход' });
+    await ctx.engine.whenIdle(id);
+    await new Promise(r => setTimeout(r, 50));
+    expect(events.find(e => e.type === 'turn_error')).toMatchObject({ code: 'insufficient_credits' });
+    ws.close();
+  });
+
+  it('оплата (mock-провайдер): пакет и подписка зачисляются один раз', async () => {
+    process.env.PAYMENTS_PROVIDER = 'mock';
+    const products = (await gm().get('/api/billing/products')).body;
+    expect(products.products.map((p: any) => p.id)).toContain('pack_s');
+    const before = (await gm().get(`/api/workspaces/${gm().wid}`)).body.credits;
+    const co = (await gm().post(`/api/workspaces/${gm().wid}/checkout`, { productId: 'sub_master' })).body;
+    expect(co.confirmationUrl).toMatch(/^\/api\/billing\/mock\/confirm\//);
+    await request(ctx.app).get(co.confirmationUrl).expect(302);
+    await request(ctx.app).get(co.confirmationUrl).expect(302); // повторное подтверждение не начисляет дважды
+    const ws = (await gm().get(`/api/workspaces/${gm().wid}`)).body;
+    expect(ws.credits).toBe(before + 4000);
+    expect(ws.plan).toBe('pro');
+    expect(ws.limits.maxHeroes).toBe(8);
+    const u2 = await account('u2@example.com');
+    expect((await u2.post(`/api/workspaces/${gm().wid}/checkout`, { productId: 'pack_s' })).status).toBe(403);
+  });
+
+  it('лимиты бесплатного тарифа: не больше 4 героев', async () => {
+    const setup = { ...rpgSetup(), characters: ['А', 'Б', 'В', 'Г', 'Д'].map(n => ({ name: n, concept: 'x' })) };
+    const r = await gm().post('/api/sessions', { setup, workspaceId: gm().wid });
+    expect(r.status).toBe(402);
+    expect(r.body.error).toBe('plan_limit');
+  });
+
+  it('суперадмин: начисление кредитов и блокировка пространства', async () => {
+    const u2 = await account('u2@example.com');
+    const list = (await gm().get('/api/admin/workspaces')).body.workspaces;
+    expect(list.length).toBe(2);
+    await gm().post(`/api/admin/workspaces/${u2.wid}/credits`, { delta: 500, reason: 'промо' });
+    expect((await u2.get(`/api/workspaces/${u2.wid}`)).body.credits).toBe(1500);
+    await gm().post(`/api/admin/workspaces/${u2.wid}/status`, { status: 'suspended' });
+    const r = await u2.post('/api/sessions', { setup: rpgSetup(), workspaceId: u2.wid });
+    expect(r.status).toBe(403);
+    expect(r.body.error).toBe('workspace_suspended');
+  });
+});
+
+describe('движок после аудита промптов', () => {
+  it('стресс из метки броска и +2 max HP за уровень применяет движок', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт', rolls: ['**Арн** performs *удар*: [ROLL: Stress Resonance (3d20) = [3,9,17] | Stress: +2 (Max used)]'] });
+    await ctx.engine.whenIdle(id);
+    let st = (await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'];
+    expect(st.stress).toBe(2);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Тренируюсь #xp' });
+    await ctx.engine.whenIdle(id);
+    st = (await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'];
+    expect(st.hp_max).toBe(14);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const userMsg = s.history.find((m: any) => m.content.startsWith('Тренируюсь')).content;
+    expect(userMsg).toMatch(/\[ACTION SLOTS: Арн: [^;]+; Лиса: /);
+  });
+
+  it('дубль Хаоса поднимает Пул Рока', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Лиса рискует', rolls: ['**Лиса** performs *прыжок*: [ROLL: Chaos Roll (2d20) = [9,9] | DOUBLE! Doom +1]'] });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(lastDash(s).doomPool).toBe(1);
   });
 });
 
@@ -175,7 +338,7 @@ describe('мультиплеер', () => {
 
     // до одобрения ходить нельзя, одобрять может только мастер
     expect((await player(DEV_A).post(`/api/sessions/${id}/actions`, { charName: 'Арн', action: 'иду' })).status).toBe(403);
-    expect((await gm(OTHER).post(`/api/sessions/${id}/claims/${claims[0].id}/approve`)).status).toBe(403);
+    expect((await (await account('other@example.com')).post(`/api/sessions/${id}/claims/${claims[0].id}/approve`)).status).toBe(403);
     expect((await gm().post(`/api/sessions/${id}/claims/${claims[0].id}/approve`)).status).toBe(200);
 
     // второй игрок не может занять того же героя и ходить за него

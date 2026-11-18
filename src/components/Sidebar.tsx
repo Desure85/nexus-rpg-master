@@ -1,7 +1,10 @@
 import React from 'react';
 import { Settings as SettingsIcon, Save, Trash2, Plus, Play, ChevronRight, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-export interface SidebarSession { id: string; name: string; mode?: string; updated_at: string; busy?: boolean }
+import { WorkspaceInfo, CurrentUser } from '../types';
+import { Building2, Shield, Wallet } from 'lucide-react';
+
+export interface SidebarSession { id: string; name: string; mode?: string; updated_at: string; busy?: boolean; author?: string; canManage?: boolean }
 
 interface SidebarProps {
   sessions: SidebarSession[];
@@ -10,6 +13,13 @@ interface SidebarProps {
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onOpenSettings: () => void;
+  user: CurrentUser | null;
+  workspaces: WorkspaceInfo[];
+  workspace: WorkspaceInfo | null;
+  onSwitchWorkspace: (id: string) => void;
+  onCreateWorkspace: () => void;
+  onOpenWorkspace: (tab?: 'members' | 'ai' | 'billing' | 'logs') => void;
+  onOpenAdmin: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -19,6 +29,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewSession,
   onDeleteSession,
   onOpenSettings,
+  user,
+  workspaces,
+  workspace,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onOpenWorkspace,
+  onOpenAdmin,
 }) => {
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
@@ -33,6 +50,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <SettingsIcon size={20} />
         </button>
       </div>
+
+      {workspace && (
+        <div className="px-4 mb-4 space-y-2">
+          <div className="flex gap-1">
+            <select
+              value={workspace.id}
+              onChange={e => (e.target.value === '__new' ? onCreateWorkspace() : onSwitchWorkspace(e.target.value))}
+              className="flex-1 min-w-0 bg-white/5 border border-white/10 rounded-lg px-2 py-2 text-xs text-white"
+              title="Пространство"
+            >
+              {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              <option value="__new">+ Новое пространство</option>
+            </select>
+            <button onClick={() => onOpenWorkspace('members')} className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/60" title="Участники и настройки пространства"><Building2 size={16} /></button>
+          </div>
+          <button onClick={() => onOpenWorkspace('billing')} className="w-full flex items-center justify-between px-3 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-[11px] text-white/70" title="Баланс и тариф">
+            <span className="flex items-center gap-2"><Wallet size={12} /> {workspace.ai.mode === 'byok' ? 'Свой ключ ИИ' : `${workspace.credits} кредитов`}</span>
+            <span className={`text-[10px] uppercase tracking-widest font-bold ${workspace.plan === 'pro' ? 'text-amber-300' : 'text-white/40'}`}>{workspace.limits.title}</span>
+          </button>
+          {workspace.status === 'suspended' && <p className="text-[10px] text-red-400">Пространство заблокировано администратором</p>}
+        </div>
+      )}
 
       <div className="px-4 mb-6">
         <button
@@ -60,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{session.name || 'Untitled Story'}</p>
-              <p className="text-[10px] opacity-50 truncate">{session.mode === 'tale' ? '📖 Сказка' : session.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Вечер'} • {new Date(String(session.updated_at).replace(' ', 'T') + (String(session.updated_at).includes('Z') ? '' : 'Z')).toLocaleDateString()}{session.busy ? ' • ✍️' : ''}</p>
+              <p className="text-[10px] opacity-50 truncate">{session.canManage === false && session.author ? `${session.author} • ` : ''}{session.mode === 'tale' ? '📖 Сказка' : session.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Вечер'} • {new Date(String(session.updated_at).replace(' ', 'T') + (String(session.updated_at).includes('Z') ? '' : 'Z')).toLocaleDateString()}{session.busy ? ' • ✍️' : ''}</p>
             </div>
             
             <div className="flex items-center gap-1">
@@ -104,6 +143,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="p-4 border-t border-white/10 space-y-1">
+        {user?.isSuperadmin && (
+          <button onClick={onOpenAdmin} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-amber-300/80 hover:bg-white/5"><Shield size={14} /> Администрирование</button>
+        )}
+        {user && <p className="px-3 text-[10px] text-white/30 truncate">{user.email}</p>}
       </div>
     </div>
   );

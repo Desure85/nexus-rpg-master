@@ -84,3 +84,60 @@ describe('dice', () => {
     expect(rollTag({ type: 'triple', charName: 'Арн', actionName: 'x', stress: 0 }, rng)).toMatch(/Stress Resonance \(3d20\) = \[\d+,\d+,\d+\] \| Stress: \+2/);
   });
 });
+
+describe('аудит промптов: устойчивость парсера', () => {
+  it('понимает юникодный минус, запятую и хвосты в тегах', () => {
+    const r = parseStateTags('[DAMAGE: Арн −3] [STRESS: Лиса, +2 стресса] [GOLD: Арн: 15 золота] [TOKEN: Лиса -1] [HEAL: Мира Светлая +4 HP]');
+    expect(r.changes).toEqual([
+      { field: 'hp', name: 'Арн', delta: -3 },
+      { field: 'stress', name: 'Лиса', delta: 2 },
+      { field: 'gold', name: 'Арн', delta: 15 },
+      { field: 'tokens', name: 'Лиса', delta: -1 },
+      { field: 'hp', name: 'Мира Светлая', delta: 4 },
+    ]);
+  });
+
+  it('эффекты бросков: стресс из метки и дубли Хаоса', async () => {
+    const { extractRollEffects } = await import('../shared/parse');
+    const fx = extractRollEffects('**Арн** performs *удар*: [ROLL: Stress Resonance (3d20) = [1,2,3] | Stress: +2 (Max used)]\n[PLAYER ACTION: Лиса (Аня)] крадусь\n[ROLL: Chaos Roll (2d20) = [9,9] | DOUBLE! Doom +1]\n[PLAYER ACTION: Мира (Петя)] молюсь\n[ROLL: Fate Shift (3d20 + 1d6) = [1,2,3] | d6: 2 (Mod: -1) | Stress: -2 (Min used, Catharsis)]');
+    expect(fx.stress).toEqual([{ name: 'Арн', delta: 2 }, { name: 'Мира', delta: -2 }]);
+    expect(fx.doomDoubles).toBe(1);
+  });
+
+  it('способности не теряются, если модель прислала только новую', () => {
+    const cur = { ...base, characters: [{ ...base.characters[0], abilities: [{ name: 'Старая', desc: 'x' }] }] };
+    const r = parseDashboard('<dashboard_json>{"characters":[{"name":"Арн","abilities":[{"name":"Новая","desc":"y","type":"boon"}]}]}</dashboard_json>', cur as any);
+    expect(r.dashboard?.characters[0].abilities?.map(a => a.name)).toEqual(['Старая', 'Новая']);
+  });
+
+  it('оракул и слоты действий детерминированы от генератора случайных чисел', async () => {
+    const { actionSlotsTag, museTag } = await import('../shared/oracle');
+    const rng = () => 0.99;
+    expect(actionSlotsTag(['Арн'], 'balanced', rng)).toBe('[ACTION SLOTS: Арн: Искушение, Искушение, Искушение]');
+    expect(actionSlotsTag(['Арн'], 'balanced', () => 0)).toBe('[ACTION SLOTS: Арн: Профильный]');
+    expect(museTag('fairytale', () => 0)).toBe('[MUSE: «найти — говорящий зверёк»]');
+  });
+
+  it('скрывает служебные теги оракула у игроков', () => {
+    expect(displayUserContent('Иду\n\n[MUSE: «a — b»]\n\n[ACTION SLOTS: Арн: Профильный]')).toBe('Иду');
+  });
+});
+
+describe('миграция промптов', () => {
+  it('неизменённые старые тексты обновляются, правки пользователя остаются', async () => {
+    const { mergeMechanics, upgradeSystemPrompt } = await import('../server/store');
+    const { LEGACY_SYSTEM_PROMPTS, LEGACY_MECHANIC_DESCRIPTIONS } = await import('../shared/legacy-prompts');
+    const { SYSTEM_PROMPT, DEFAULT_MECHANICS } = await import('../shared/rules');
+    expect(upgradeSystemPrompt(LEGACY_SYSTEM_PROMPTS[0])).toBe(SYSTEM_PROMPT);
+    expect(upgradeSystemPrompt('мой промпт')).toBe('мой промпт');
+    const merged = mergeMechanics([
+      { id: 'doom_pool', name: 'x', enabled: false, description: LEGACY_MECHANIC_DESCRIPTIONS.doom_pool[0] },
+      { id: 'hp', name: 'x', enabled: true, description: 'своё описание' },
+    ]);
+    const doom = merged.find(m => m.id === 'doom_pool')!;
+    expect(doom.enabled).toBe(false);
+    expect(doom.description).toBe(DEFAULT_MECHANICS.find(m => m.id === 'doom_pool')!.description);
+    expect(merged.find(m => m.id === 'hp')!.description).toBe('своё описание');
+    expect(merged.some(m => m.id === 'equipment' && m.enabled)).toBe(true);
+  });
+});

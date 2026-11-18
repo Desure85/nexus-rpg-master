@@ -1,0 +1,34 @@
+name: Prompt eval
+
+# Ручной прогон оценки промптов на настоящей модели (тратит токены).
+# Нужен секрет репозитория с ключом выбранного провайдера.
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "gemini | openrouter | opencode"
+        default: opencode
+      runs:
+        description: "Сколько раз прогнать сценарии"
+        default: "2"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run prompt eval
+        env:
+          LLM_PROVIDER: ${{ inputs.provider }}
+          EVAL_RUNS: ${{ inputs.runs }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: npm run eval:prompts
+      - if: always()
+        run: cat eval-report.md >> "$GITHUB_STEP_SUMMARY"

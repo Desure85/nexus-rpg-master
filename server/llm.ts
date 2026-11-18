@@ -16,6 +16,12 @@ export interface LlmSettings {
 export interface ChatMessage { role: "user" | "assistant"; content: string }
 export interface LlmRequest { system: string; messages: ChatMessage[]; temperature?: number; maxTokens?: number }
 
+export interface LlmUsage { inputTokens: number; outputTokens: number; estimated: boolean }
+export interface LlmResult { text: string; usage: LlmUsage; provider: Provider; model: string }
+
+/** Грубая оценка токенов, если провайдер не вернул usage (кириллица ≈ 3 символа на токен). */
+export const estimateTokens = (s: string) => Math.ceil((s || "").length / 3);
+
 export class LlmError extends Error {
   constructor(message: string, public status = 502) { super(message); }
 }
@@ -94,7 +100,7 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
     case "opencode":
       return {
         url: env("OPENCODE_API_URL") || "https://opencode.ai/zen/go/v1",
-        key: env("OPENCODE_API_KEY"),
+        key: s.apiKey || env("OPENCODE_API_KEY"),
         model: (s.modelName && s.modelName !== "local-model" ? s.modelName : "") || env("OPENCODE_MODEL") || "deepseek-v4-flash",
       };
     default:
@@ -106,7 +112,7 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
   }
 };
 
-async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal): Promise<string> {
+async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal, wantUsage: boolean): Promise<{ text: string; usage?: LlmUsage }> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(t.extraHeaders || {}) };
   if (t.key && t.key !== "not-needed") headers.Authorization = `Bearer ${t.key}`;
   const res = await fetch(`${t.url.replace(/\/$/, "")}/chat/completions`, {
@@ -119,6 +125,7 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       temperature: req.temperature ?? 0.7,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
       stream: true,
+      ...(wantUsage ? { stream_options: { include_usage: true } } : {}),
     }),
   });
   if (!res.ok) {
@@ -131,12 +138,14 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
     const data: any = await res.json();
     const text = data.choices?.[0]?.message?.content || "";
     onDelta(text);
-    return text;
+    const u = data.usage;
+    return { text, usage: u ? { inputTokens: u.prompt_tokens || 0, outputTokens: u.completion_tokens || 0, estimated: false } : undefined };
   }
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   let acc = "";
+  let usage: LlmUsage | undefined;
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -147,18 +156,19 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       buf = buf.slice(nl + 1);
       if (!line.startsWith("data:")) continue;
       const payload = line.slice(5).trim();
-      if (payload === "[DONE]") return acc;
+      if (payload === "[DONE]") return { text: acc, usage };
       try {
         const ev = JSON.parse(payload);
         const delta = ev.choices?.[0]?.delta?.content || "";
         if (delta) { acc += delta; onDelta(delta); }
+        if (ev.usage) usage = { inputTokens: ev.usage.prompt_tokens || 0, outputTokens: ev.usage.completion_tokens || 0, estimated: false };
       } catch { /* keep-alive / мусор */ }
     }
   }
-  return acc;
+  return { text: acc, usage };
 }
 
-async function geminiStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal): Promise<string> {
+async function geminiStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal): Promise<{ text: string; usage?: LlmUsage }> {
   const apiKey = s.apiKey || env("GEMINI_API_KEY");
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY") throw new LlmError("GEMINI_API_KEY не настроен на сервере", 500);
   const ai = new GoogleGenAI({ apiKey });
@@ -170,11 +180,14 @@ async function geminiStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string
     config: { systemInstruction: req.system, temperature: req.temperature ?? 0.7, abortSignal: signal, ...(req.maxTokens ? { maxOutputTokens: req.maxTokens } : {}) },
   });
   let acc = "";
+  let usage: LlmUsage | undefined;
   for await (const chunk of stream) {
     const t = chunk.text || "";
     if (t) { acc += t; onDelta(t); }
+    const um = (chunk as any).usageMetadata;
+    if (um) usage = { inputTokens: um.promptTokenCount || 0, outputTokens: um.candidatesTokenCount || 0, estimated: false };
   }
-  return acc;
+  return { text: acc, usage };
 }
 
 /**
@@ -182,20 +195,36 @@ async function geminiStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string
  * (уже без мета-абзацев модели).
  */
 export async function complete(settings: LlmSettings, reqIn: LlmRequest, onDelta?: (d: string) => void): Promise<string> {
+  return (await completeWithUsage(settings, reqIn, onDelta)).text;
+}
+
+export const modelNameFor = (s: LlmSettings): string => {
+  const p = resolveProvider(s);
+  if (p === "mock") return "mock";
+  if (p === "gemini") return s.modelName && s.modelName !== "local-model" ? s.modelName : env("GEMINI_MODEL") || "gemini-3-flash-preview";
+  return openAiTarget(p, s).model;
+};
+
+export async function completeWithUsage(settings: LlmSettings, reqIn: LlmRequest, onDelta?: (d: string) => void): Promise<LlmResult> {
   const req: LlmRequest = { ...reqIn, messages: normalizeMessages(reqIn.messages) };
   const provider = resolveProvider(settings);
   const filter = metaFilter(onDelta);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS());
   try {
-    let text: string;
-    if (provider === "mock") text = await mockComplete(req, d => filter.push(d));
-    else if (provider === "gemini") text = await geminiStream(settings, req, d => filter.push(d), ctrl.signal);
-    else text = await openAiStream(openAiTarget(provider, settings), req, d => filter.push(d), ctrl.signal);
+    let r: { text: string; usage?: LlmUsage };
+    if (provider === "mock") r = { text: await mockComplete(req, d => filter.push(d)) };
+    else if (provider === "gemini") r = await geminiStream(settings, req, d => filter.push(d), ctrl.signal);
+    else r = await openAiStream(openAiTarget(provider, settings), req, d => filter.push(d), ctrl.signal, provider !== "local");
     filter.flush();
-    const clean = stripMetaPrefix(text);
+    const clean = stripMetaPrefix(r.text);
     if (!clean.trim()) throw new LlmError("Модель вернула пустой ответ");
-    return clean;
+    const usage = r.usage && (r.usage.inputTokens || r.usage.outputTokens) ? r.usage : {
+      inputTokens: estimateTokens(req.system) + req.messages.reduce((a, m) => a + estimateTokens(m.content), 0),
+      outputTokens: estimateTokens(r.text),
+      estimated: true,
+    };
+    return { text: clean, usage, provider, model: modelNameFor(settings) };
   } catch (e: any) {
     if (e?.name === "AbortError" || ctrl.signal.aborted) throw new LlmError(`Модель не ответила за ${Math.round(TIMEOUT_MS() / 1000)} с`, 504);
     if (e instanceof LlmError) throw e;
@@ -213,7 +242,7 @@ export const describeProvider = (s: LlmSettings) => {
     provider === "mock" ? true
     : provider === "gemini" ? !!(s.apiKey || env("GEMINI_API_KEY"))
     : provider === "openrouter" ? !!(s.openRouterApiKey || env("OPENROUTER_API_KEY"))
-    : provider === "opencode" ? !!env("OPENCODE_API_KEY")
+    : provider === "opencode" ? !!(s.apiKey || env("OPENCODE_API_KEY"))
     : true;
   return { provider, forcedByEnv: !!env("LLM_PROVIDER"), keyPresent };
 };

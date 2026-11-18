@@ -54,9 +54,21 @@ export const parseDashboard = (text: string, currentDashboard: DashboardData): {
               });
             }
 
+            // Способности не теряются, даже если модель перечислила только новые
+            const mergedAbilities = [...(currentChar.abilities || [])];
+            if (Array.isArray(parsedChar.abilities)) {
+              for (const ab of parsedChar.abilities) {
+                if (!ab?.name) continue;
+                const i = mergedAbilities.findIndex(x => x.name === ab.name);
+                if (i >= 0) mergedAbilities[i] = { ...mergedAbilities[i], ...ab };
+                else mergedAbilities.push(ab);
+              }
+            }
+
             mergedCharacters[index] = {
               ...currentChar,
               ...parsedChar,
+              abilities: mergedAbilities,
               inventory: parsedChar.inventory || currentChar.inventory || [],
               equipment: mergedEquipment,
               relationships: mergedRelationships,
@@ -133,21 +145,51 @@ export const parseDashboard = (text: string, currentDashboard: DashboardData): {
   return { cleanText, dashboard, codexUpdates, loreUpdate: loreMatch ? loreMatch[1].trim() : undefined, finalDraft: finalDraftMatch ? finalDraftMatch[1].trim() : undefined, sessionSummary: sessionSummaryMatch ? sessionSummaryMatch[1].trim() : undefined };
 };
 
+const STATE_FIELDS: Record<string, StateChange['field']> = {
+  DAMAGE: 'hp', HEAL: 'hp', STRESS: 'stress', GOLD: 'gold', XP: 'xp', TOKEN: 'tokens', TOKENS: 'tokens',
+};
+
+/**
+ * Теги изменения чисел. Терпимо к вариациям модели: «−»/«–» вместо минуса, запятая или двоеточие
+ * после имени, хвост вроде «HP» или «золота». Одно изменение — один тег.
+ */
 export const parseStateTags = (text: string): { clean: string; changes: StateChange[] } => {
   const changes: StateChange[] = [];
   const clean = text
-    .replace(/\[DAMAGE:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'hp', name: name.trim(), delta: -Math.abs(parseInt(d)) }); return ''; })
-    .replace(/\[HEAL:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'hp', name: name.trim(), delta: Math.abs(parseInt(d)) }); return ''; })
-    .replace(/\[STRESS:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'stress', name: name.trim(), delta: parseInt(d) }); return ''; })
-    .replace(/\[GOLD:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'gold', name: name.trim(), delta: parseInt(d) }); return ''; })
-    .replace(/\[XP:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'xp', name: name.trim(), delta: parseInt(d) }); return ''; })
-    .replace(/\[TOKEN:\s*([^\]\d+-]+?)\s*([+-]?\d+)\]/gi, (m, name, d) => { changes.push({ field: 'tokens', name: name.trim(), delta: parseInt(d) }); return ''; })
+    .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKENS?):\s*([^\]\d]+?)\s*[,:]?\s*([+\-−–]?)\s*(\d+)[^\]]*\]/gi, (_m, tag: string, rawName: string, sign: string, num: string) => {
+      const kind = tag.toUpperCase();
+      const name = rawName.replace(/[\s,:+\-−–]+$/, '').trim();
+      const n = parseInt(num, 10);
+      if (!name || !Number.isFinite(n)) return '';
+      const negative = sign === '-' || sign === '−' || sign === '–';
+      const delta = kind === 'DAMAGE' ? -Math.abs(n) : kind === 'HEAL' ? Math.abs(n) : negative ? -n : n;
+      changes.push({ field: STATE_FIELDS[kind], name, delta });
+      return '';
+    })
     .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi, '')
-    .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '');
+    .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
+    .replace(/[ \t]{2,}/g, ' ');
   return { clean, changes };
 };
 
+/** Стресс из меток бросков ([ROLL: ... | Stress: +2 ...]) и дубли Хаоса — применяет движок, а не модель. */
+export const extractRollEffects = (text: string): { stress: { name: string; delta: number }[]; doomDoubles: number } => {
+  const stress: { name: string; delta: number }[] = [];
+  let doomDoubles = 0;
+  let currentActor = '';
+  for (const line of text.split('\n')) {
+    const actor = line.match(/\[PLAYER ACTION: ([^\](]+?)\s*(?:\(|\])/)?.[1];
+    if (actor) currentActor = actor.trim();
+    if (!line.includes('[ROLL:')) continue;
+    if (/DOUBLE!/i.test(line)) doomDoubles++;
+    const m = line.match(/Stress:\s*([+\-−]?\d+)/);
+    if (!m) continue;
+    const name = line.match(/\*\*(.+?)\*\*/)?.[1] || currentActor;
+    if (name) stress.push({ name: name.trim(), delta: parseInt(m[1].replace('−', '-'), 10) });
+  }
+  return { stress, doomDoubles };
+};
 
 export interface SideTags {
   trophies: { name: string; desc: string }[];
@@ -220,7 +262,7 @@ export const displayUserContent = (content: string): string => {
     .replace(/^\[TALE_CHOICE\]\s*/, '✦ ')
     .replace(/^\[ROUND\][\s\S]*/, '⚔ Ход раунда')
     .replace(/^\[LEVEL UP\]([^.]*)\.[\s\S]*/, '⬆ Новый уровень:$1')
-    .replace(/\n*\[(STATE|ENCOUNTER|WORLD EVENT)[^\]]*\]/g, '')
+    .replace(/\n*\[(STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS)[^\]]*\]/g, '')
     .trim();
 };
 

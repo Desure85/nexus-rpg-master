@@ -7,10 +7,11 @@ import fs from "fs";
 import { openDatabase, deleteSessionCascade, type DB } from "./db";
 import { registerGameRoutes } from "./game";
 import { Engine } from "./engine";
-import { complete, describeProvider, LlmError } from "./llm";
-import {
-  authMiddleware, requireAdmin, requireAccess, rateLimit, securityHeaders, adminConfigured,
-} from "./security";
+import { completeWithUsage, describeProvider, LlmError } from "./llm";
+import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
+import { initSecret } from "./crypto";
+import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
+import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
 import {
   loadSession, saveSession, publicSession, sessionSummary, lastDashboard, readSettings, settingsForClient, writeSettings, mergeMechanics,
   type SessionConfig, type StoredSession,
@@ -30,7 +31,11 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max
 const MAX_CHARACTERS = 8;
 
 export async function createApp(opts: AppOptions = {}) {
-  const db = opts.db || openDatabase(opts.dbPath || process.env.DB_PATH || "game.db");
+  const dbPath = opts.dbPath || process.env.DB_PATH || "game.db";
+  const db = opts.db || openDatabase(dbPath);
+  initSecret(opts.db ? ":memory:" : dbPath);
+  const billing = createBilling(db);
+  const tenancy = createTenancy(db, billing);
   const app = express();
   app.disable("x-powered-by");
   if (process.env.TRUST_PROXY) app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : process.env.TRUST_PROXY);
@@ -39,7 +44,8 @@ export async function createApp(opts: AppOptions = {}) {
 
   app.use(securityHeaders);
   app.use(express.json({ limit: "2mb" }));
-  app.use(authMiddleware);
+  app.use(authMiddleware(db));
+  app.use(csrfGuard);
 
   // ------------------------------- WebSocket -------------------------------
   const rooms = new Map<string, Set<WebSocket>>();
@@ -97,35 +103,49 @@ export async function createApp(opts: AppOptions = {}) {
   });
 
   app.get("/api/config", (req, res) => {
-    const s = readSettings(db);
     res.json({
-      adminConfigured: adminConfigured(),
-      isAdmin: req.auth.isAdmin,
-      accessCodeRequired: !!process.env.GM_ACCESS_CODE,
-      hasAccess: req.auth.hasAccess,
-      llm: describeProvider(s.llm),
+      registration: registrationMode(),
+      payments: paymentsProvider(),
+      llm: describeProvider(readSettings(db).llm),
       taleAges: TALE_AGES,
+      user: req.auth.user || null,
     });
   });
 
-  const llmLimiter = rateLimit({ windowMs: 60_000, max: Number(process.env.RATE_LIMIT_PER_MIN || 30) });
-  const createLimiter = rateLimit({ windowMs: 60 * 60_000, max: Number(process.env.SESSIONS_PER_HOUR || 30) });
+  const byUser = (req: Request) => req.auth.user?.id || req.ip || "anon";
+  const llmLimiter = rateLimit({ windowMs: 60_000, max: Number(process.env.RATE_LIMIT_PER_MIN || 30), key: byUser });
+  const createLimiter = rateLimit({ windowMs: 60 * 60_000, max: Number(process.env.SESSIONS_PER_HOUR || 30), key: byUser });
+
+  registerTenancyRoutes(app, db, tenancy, billing);
+  registerBillingRoutes(app, db, billing, tenancy.requireWsRole);
 
   // ------------------------------- сессии -------------------------------
   let engine!: Engine;
 
-  app.get("/api/sessions", (req, res) => {
-    const owner = req.auth.ownerHash;
-    if (!owner) return res.json([]);
-    // Сессии, созданные до появления ключей мастера, достаются первому мастеру (локальный режим) или админу
-    if (!adminConfigured() || (req.auth.isAdmin && req.header("x-admin-token"))) {
-      db.prepare("UPDATE sessions SET owner_hash = ? WHERE owner_hash IS NULL").run(owner);
-    }
-    const rows = db.prepare("SELECT * FROM sessions WHERE owner_hash = ? ORDER BY updated_at DESC LIMIT 200").all(owner) as any[];
-    res.json(rows.map(r => sessionSummary(loadSession(db, r.id)!, engine.isBusy(r.id))));
+  app.get("/api/workspaces/:wid/sessions", requireUser, tenancy.requireWsRole("gm"), (req, res) => {
+    const role = (req as any).wsRole;
+    const mineOnly = req.query.mine === "1";
+    const rows = db.prepare(`SELECT s.id, u.name AS author FROM sessions s LEFT JOIN users u ON u.id = s.created_by
+      WHERE s.workspace_id = ? ${mineOnly ? "AND s.created_by = ?" : ""} ORDER BY s.updated_at DESC LIMIT 300`)
+      .all(...(mineOnly ? [req.params.wid, req.auth.user!.id] : [req.params.wid])) as any[];
+    res.json(rows.map(r => {
+      const s = loadSession(db, r.id)!;
+      const canManage = s.created_by === req.auth.user!.id || tenancy.roleAtLeast(role, "admin");
+      return { ...sessionSummary(s, engine.isBusy(r.id)), author: r.author, canManage };
+    }));
   });
 
-  app.post("/api/sessions", requireAccess, createLimiter, (req, res) => {
+  app.post("/api/sessions", requireUser, createLimiter, (req, res) => {
+    const workspaceId = str(req.body?.workspaceId, 64);
+    const m = tenancy.membership(workspaceId, req.auth.user!.id);
+    if (!m && !req.auth.user!.isSuperadmin) return res.status(403).json({ error: "forbidden", message: "Нет доступа к пространству" });
+    const ws = billing.getWs(workspaceId);
+    if (!ws) return res.status(404).json({ error: "workspace_not_found" });
+    const limits = PLANS[effectivePlan(ws)];
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE workspace_id = ?").get(workspaceId) as any).n;
+    if (count >= limits.maxSessions) return res.status(402).json({ error: "plan_limit", message: `На тарифе «${limits.title}» не больше ${limits.maxSessions} сессий. Удалите старые или оформите подписку.` });
+    try { billing.assertCanSpend(workspaceId, tenancy.resolveLlm(workspaceId).mode); }
+    catch (e) { if (e instanceof BillingError) return res.status(e.status).json({ error: e.code, message: e.message }); throw e; }
     const setup = req.body?.setup || {};
     const mode: StoredSession["mode"] = ["short", "campaign", "tale"].includes(setup.mode) ? setup.mode : "short";
     const setting = str(setup.setting, 2000).trim();
@@ -135,6 +155,7 @@ export async function createApp(opts: AppOptions = {}) {
       .map((c: any) => ({ name: str(c?.name, 60).trim(), concept: str(c?.concept, 300).trim(), gender: c?.gender === "Ж" ? "Ж" : "М" }))
       .filter((c: any) => c.name)
       .slice(0, MAX_CHARACTERS);
+    if (characters.length > limits.maxHeroes) return res.status(402).json({ error: "plan_limit", message: `На тарифе «${limits.title}» — до ${limits.maxHeroes} героев` });
     if (!setting) return res.status(400).json({ error: "setting_required", message: "Укажите сеттинг" });
     if (!characters.length) return res.status(400).json({ error: "characters_required", message: "Добавьте хотя бы одного героя" });
     if (new Set(characters.map((c: any) => c.name)).size !== characters.length) return res.status(400).json({ error: "duplicate_names", message: "Имена героев должны различаться" });
@@ -158,27 +179,33 @@ export async function createApp(opts: AppOptions = {}) {
     const initialHistory = mode === "tale"
       ? [{ role: "system", content: "Герои сказки", dashboard: { ...structuredClone(INITIAL_DASHBOARD), atmosphere: "", characters: characters.map((c: any) => ({ name: c.name, hp: "", stress: 0, tokens: 0, condition: "", goal: c.concept })) } }]
       : [];
-    db.prepare(`INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, mode, owner_hash, config)
-      VALUES (?, ?, 'Custom', ?, ?, '', ?, ?, '[]', '', ?, ?, ?)`)
-      .run(id, name, setting, style, JSON.stringify(initialHistory), lore, mode, req.auth.ownerHash, JSON.stringify(config));
+    db.prepare(`INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, mode, workspace_id, created_by, config)
+      VALUES (?, ?, 'Custom', ?, ?, '', ?, ?, '[]', '', ?, ?, ?, ?)`)
+      .run(id, name, setting, style, JSON.stringify(initialHistory), lore, mode, workspaceId, req.auth.user!.id, JSON.stringify(config));
     const prompt = mode === "tale" ? buildTaleStartPrompt(setting, plotHook, characters) : buildGameStartPrompt(setting, plotHook, style, characters);
     engine.enqueueTurn(id, prompt);
     res.status(201).json(publicSession(loadSession(db, id)!, true, true));
   });
 
-  app.post("/api/generate", requireAccess, llmLimiter, async (req, res) => {
+  app.post("/api/generate", requireUser, llmLimiter, async (req, res) => {
     const prompt = str(req.body?.prompt, 2000);
+    const workspaceId = str(req.body?.workspaceId, 64);
     if (!prompt.trim()) return res.status(400).json({ error: "prompt_required" });
+    if (!tenancy.membership(workspaceId, req.auth.user!.id) && !req.auth.user!.isSuperadmin) return res.status(403).json({ error: "forbidden" });
+    const { llm, mode } = tenancy.resolveLlm(workspaceId);
     try {
-      const text = await complete(readSettings(db).llm, {
+      billing.assertCanSpend(workspaceId, mode);
+      const r = await completeWithUsage(llm, {
         system: "Ты креативный помощник для настольных ролевых игр и сказок. Отвечай кратко, ёмко и атмосферно, на русском. Не используй markdown.",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.9,
         maxTokens: 400,
       });
-      res.json({ text });
+      billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
+      res.json({ text: r.text });
     } catch (e: any) {
-      res.status(e instanceof LlmError ? e.status : 502).json({ error: "llm_error", message: e?.message });
+      const status = e instanceof BillingError || e instanceof LlmError ? e.status : 502;
+      res.status(status).json({ error: e?.code || "llm_error", message: e?.message });
     }
   });
 
@@ -190,9 +217,12 @@ export async function createApp(opts: AppOptions = {}) {
   const UNLOCKED_ROUTES = /^\/(turn|commit)\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
-    const row = db.prepare("SELECT owner_hash FROM sessions WHERE id = ?").get(id) as { owner_hash: string | null } | undefined;
+    const row = db.prepare("SELECT workspace_id, created_by FROM sessions WHERE id = ?").get(id) as { workspace_id: string | null; created_by: string | null } | undefined;
     if (!row) return res.status(404).json({ error: "session_not_found", message: "Сессия не найдена" });
-    (req as any).isOwner = !!req.auth.ownerHash && row.owner_hash === req.auth.ownerHash;
+    const user = req.auth.user;
+    const role = user && row.workspace_id ? tenancy.membership(row.workspace_id, user.id)?.role : undefined;
+    // мастер сессии — её автор, админ/владелец пространства или суперадмин
+    (req as any).isOwner = !!user && (user.isSuperadmin || (!!role && (row.created_by === user.id || tenancy.roleAtLeast(role, "admin"))));
     if (req.method === "GET" || req.method === "HEAD" || PLAYER_ROUTES.test(req.path)) return next();
     if (!(req as any).isOwner) return res.status(403).json({ error: "owner_required", message: "Это действие доступно только мастеру сессии" });
     if (UNLOCKED_ROUTES.test(req.path)) return next();
@@ -295,7 +325,9 @@ export async function createApp(opts: AppOptions = {}) {
     const mine = claims.find(c => c.device_id === deviceId);
     if (mine) return res.json({ status: mine.status, claim: sanitizeClaim(mine, deviceId) });
     const id = crypto.randomUUID();
-    const status = s.config.autoApprove ? "approved" : "pending";
+    const approvedCount = (db.prepare("SELECT COUNT(*) AS n FROM claims WHERE session_id = ? AND status = 'approved'").get(req.params.id) as any).n;
+    const maxPlayers = PLANS[effectivePlan(billing.getWs(String(s.workspace_id)))].maxPlayers;
+    const status = s.config.autoApprove && approvedCount < maxPlayers ? "approved" : "pending";
     db.prepare("INSERT INTO claims (id, session_id, char_name, player_name, device_id, status) VALUES (?,?,?,?,?,?)")
       .run(id, req.params.id, charName, playerName, deviceId, status);
     broadcast(req.params.id, { type: "claims_changed", sessionId: req.params.id });
@@ -311,6 +343,10 @@ export async function createApp(opts: AppOptions = {}) {
     const c = db.prepare("SELECT * FROM claims WHERE id = ? AND session_id = ?").get(req.params.cid, req.params.id) as any;
     if (!c) return res.status(404).json({ error: "claim_not_found" });
     if (status === "approved") {
+      const s = loadSession(db, c.session_id)!;
+      const maxPlayers = PLANS[effectivePlan(billing.getWs(String(s.workspace_id)))].maxPlayers;
+      const approved = (db.prepare("SELECT COUNT(*) AS n FROM claims WHERE session_id = ? AND status = 'approved' AND char_name != ?").get(c.session_id, c.char_name) as any).n;
+      if (approved >= maxPlayers) return res.status(402).json({ error: "plan_limit", message: `На этом тарифе — до ${maxPlayers} игроков в сессии` });
       // одобрение одного — снимает другие одобренные заявки на того же персонажа
       db.prepare("UPDATE claims SET status = 'released' WHERE session_id = ? AND char_name = ? AND status = 'approved' AND id != ?").run(c.session_id, c.char_name, c.id);
     }
@@ -372,26 +408,27 @@ export async function createApp(opts: AppOptions = {}) {
 
   // ------------------------------- игровые сервисы -------------------------------
   const gameApi = registerGameRoutes(app, { db, broadcast });
-  engine = new Engine(db, gameApi, broadcast);
+  engine = new Engine(db, gameApi, broadcast, tenancy, billing);
 
   // ------------------------------- настройки (админ) -------------------------------
-  app.get("/api/settings", (req, res) => {
+  // Глобальные настройки: дефолтные промпт и механики видны всем вошедшим, ИИ платформы — суперадмину
+  app.get("/api/settings", requireUser, (req, res) => {
     const full = settingsForClient(db);
-    if (req.auth.isAdmin) return res.json({ ...full, canEdit: true });
-    res.json({ systemPrompt: full.systemPrompt, mechanics: full.mechanics, idlePlayerAction: full.idlePlayerAction, provider: full.provider, canEdit: false });
+    if (req.auth.user!.isSuperadmin) return res.json({ ...full, canEdit: true });
+    res.json({ systemPrompt: full.systemPrompt, mechanics: full.mechanics, idlePlayerAction: full.idlePlayerAction, canEdit: false });
   });
 
-  app.post("/api/settings", requireAdmin, (req, res) => {
+  app.post("/api/settings", requireUser, requireSuperadmin, (req, res) => {
     writeSettings(db, req.body || {});
     res.json({ ...settingsForClient(db), canEdit: true });
   });
 
-  app.get("/api/logs", requireAdmin, (_req, res) => {
+  app.get("/api/logs", requireUser, requireSuperadmin, (_req, res) => {
     res.json(db.prepare("SELECT * FROM logs ORDER BY id DESC LIMIT 100").all());
   });
 
-  app.post("/api/llm/test", requireAdmin, llmLimiter, async (req, res) => {
-    // проверяем либо сохранённые настройки, либо присланные (без сохранения)
+  app.post("/api/llm/test", requireUser, requireSuperadmin, llmLimiter, async (req, res) => {
+    // проверяем либо сохранённые настройки платформы, либо присланные (без сохранения)
     const current = readSettings(db).llm;
     const b = req.body || {};
     const llm = {
@@ -405,8 +442,8 @@ export async function createApp(opts: AppOptions = {}) {
     };
     const started = Date.now();
     try {
-      const text = await complete(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 20 });
-      res.json({ ok: true, ms: Date.now() - started, sample: text.slice(0, 80), ...describeProvider(llm) });
+      const r = await completeWithUsage(llm, { system: "Ответь одним словом.", messages: [{ role: "user", content: "Скажи «готов»." }], maxTokens: 20 });
+      res.json({ ok: true, ms: Date.now() - started, sample: r.text.slice(0, 80), ...describeProvider(llm) });
     } catch (e: any) {
       res.json({ ok: false, ms: Date.now() - started, error: e?.message, ...describeProvider(llm) });
     }
@@ -441,5 +478,5 @@ export async function createApp(opts: AppOptions = {}) {
     db.close();
   };
 
-  return { app, server, wss, db, engine, close };
+  return { app, server, wss, db, engine, billing, tenancy, close };
 }

@@ -274,19 +274,32 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     });
     return dash;
   };
+  /** Имя из тега модели → ключ движка: точное, без регистра, затем однозначное вхождение («Арн» → «Арн Железный»). */
+  const resolveName = (chars: any, raw: string): string | null => {
+    if (chars[raw]) return raw;
+    const names = Object.keys(chars);
+    const low = raw.toLowerCase().replace(/ё/g, "е");
+    const norm = (n: string) => n.toLowerCase().replace(/ё/g, "е");
+    const exact = names.find(n => norm(n) === low);
+    if (exact) return exact;
+    const partial = names.filter(n => norm(n).includes(low) || low.includes(norm(n)));
+    return partial.length === 1 ? partial[0] : null;
+  };
+  const LIMITS: Record<string, number> = { stress: 10, tokens: 3 };
   const applyStateChanges = (chars: any, changes: any[]) => {
     const applied: any[] = [];
     for (const ch of changes || []) {
-      const { field, name, delta } = ch;
-      const c = chars[name];
+      const { field, delta } = ch;
+      const name = resolveName(chars, String(ch.name || ""));
+      const c = name ? chars[name] : null;
       if (!c || typeof delta !== "number" || isNaN(delta)) continue;
       if (field === "hp") {
         const before = c.hp_cur;
         c.hp_cur = Math.max(0, Math.min(c.hp_max, c.hp_cur + delta));
         applied.push({ field, name, delta, from: before, to: c.hp_cur });
       } else if (["stress", "gold", "xp", "tokens"].includes(field)) {
-        const before = c[field];
-        c[field] = Math.max(0, c[field] + delta);
+        const before = c[field] || 0;
+        c[field] = Math.max(0, Math.min(LIMITS[field] ?? Infinity, before + delta));
         applied.push({ field, name, delta, from: before, to: c[field] });
       }
     }
@@ -568,7 +581,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       changed = true;
     }
     if (dash && doomUp) {
-      dash.doomPool = Math.min(20, (Number(dash.doomPool) || 0) + doomUp);
+      dash.doomPool = Math.min(10, (Number(dash.doomPool) || 0) + doomUp);
       if (dashIdx >= 0) { history[dashIdx].dashboard = dash; }
       changed = true;
     }
@@ -702,7 +715,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   });
 
 
-  return { encounterCheck, ensureEngineState, saveEngineState, stateToTag, mergeStateIntoDashboard, applyStateChanges, partyLevel, getBase };
+  return { encounterCheck, resolveName, ensureEngineState, saveEngineState, stateToTag, mergeStateIntoDashboard, applyStateChanges, partyLevel, getBase };
 }
 
 export type GameApi = ReturnType<typeof registerGameRoutes>;
