@@ -217,7 +217,8 @@ export class Engine {
   private async callLlm(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, kind: string, onDelta: (d: string) => void) {
     if (s.workspace_id) this.billing.assertCanSpend(s.workspace_id, cfg.aiMode);
     // один разговор на сессию и вид запроса: стабильный id помогает кэшу промптов у провайдера
-    const r = await completeWithUsage(cfg.llm, { ...request, conversationId: request.conversationId || `${s.id}:${kind}` }, onDelta);
+    // явный лимит: иначе часть провайдеров режет ответ на ~2k токенов (у reasoning-моделей туда входят и «мысли»)
+    const r = await completeWithUsage(cfg.llm, { maxTokens: 8192, ...request, conversationId: request.conversationId || `${s.id}:${kind}` }, onDelta);
     if (s.workspace_id) this.billing.recordUsage({ workspaceId: s.workspace_id, sessionId: s.id, userId: s.created_by, kind, mode: cfg.aiMode, llm: cfg.llm as LlmSettings, usage: r.usage });
     this.log(cfg.loggingEnabled, s, request, r.text);
     return r.text;
