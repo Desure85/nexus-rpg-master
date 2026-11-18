@@ -39,21 +39,27 @@ export async function bootServer(emit: (data: any) => void): Promise<DemoServer>
   ]);
   const db = openDatabase(':memory:');
   const app = createApp();
-  const { engine } = buildApi(app, { db, broadcast: (_room, data) => emit(data) });
+  let flushTimer: ReturnType<typeof setTimeout> | undefined;
+  const flushSoon = () => { clearTimeout(flushTimer); flushTimer = setTimeout(() => { void flush(); }, 60); };
+  const { engine } = buildApi(app, { db, broadcast: (_room, data) => { emit(data); if (data?.type !== 'delta') flushSoon(); } });
   app.use(apiErrorHandler);
 
-  let saving: Promise<void> | null = null;
-  const flush = async () => {
+  // сохраняем сразу после изменений: вкладку-лидера могут закрыть или перезагрузить в любой момент
+  let chain: Promise<void> = Promise.resolve();
+  const flush = () => (chain = chain.then(async () => {
     if (stopped || !takeDirty()) return;
-    const data = (db as any).export() as Uint8Array;
-    saving = idbSet('db', data);
-    await saving;
-  };
-  setInterval(() => { if (!saving) flush().finally(() => { saving = null; }); }, 1500);
+    await idbSet('db', (db as any).export() as Uint8Array);
+  }).catch(e => console.warn('[demo] save failed', e)));
+  setInterval(() => { void flush(); }, 3000);
   addEventListener('pagehide', () => { void flush(); });
+  addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void flush(); });
 
   return {
-    handle: async r => { const out = await app.handle(r); return out; },
+    handle: async r => {
+      const out = await app.handle(r);
+      await flush(); // дёшево, если ничего не менялось (в т.ч. GET-подтверждение тестовой оплаты)
+      return out;
+    },
     join: sessionId => {
       const exists = db.prepare('SELECT 1 FROM sessions WHERE id = ?').get(sessionId);
       return exists ? { type: 'joined', sessionId, busy: engine.isBusy(sessionId) } : null;

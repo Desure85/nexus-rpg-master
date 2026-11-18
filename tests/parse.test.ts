@@ -176,3 +176,15 @@ describe('дисклеймер', () => {
     expect(disclaimerMarkdown()).toContain('**Это вымысел, созданный ИИ.**');
   });
 });
+
+describe('normalizeCharacter', () => {
+  it('equipment объектом и предметы строками приводятся к схеме', async () => {
+    const { parseDashboard } = await import('../shared/parse');
+    const raw = '<dashboard_json>{"characters":[{"name":"Мира","equipment":{"Оружие":"Меч","Броня":"Пусто"},"inventory":"факел"}],"threats":{"x":1}}</dashboard_json>';
+    const r = parseDashboard(raw, { characters: [{ name: 'Мира', inventory: ['Фляга'] }], threats: [{ name: 'Волк', hp: '5/5' }] } as any);
+    const c = r.dashboard!.characters[0] as any;
+    expect(c.equipment).toEqual([{ slot: 'Оружие', item: { name: 'Меч' } }, { slot: 'Броня', item: null }]);
+    expect(c.inventory).toEqual(['Фляга']);
+    expect(r.dashboard!.threats).toHaveLength(1);
+  });
+});

@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, Save, Trash2, Plus, Play, ChevronRight, Loade
 import { motion, AnimatePresence } from 'motion/react';
 import { WorkspaceInfo, CurrentUser } from '../types';
 import { Building2, Shield, Wallet } from 'lucide-react';
+import { DemoBadge } from './DemoBanner';
 
 export interface SidebarSession { id: string; name: string; mode?: string; updated_at: string; busy?: boolean; author?: string; canManage?: boolean }
 
@@ -119,7 +120,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       }}
                       className="px-2 py-1 bg-red-500 text-white text-[9px] font-bold uppercase rounded hover:bg-red-600 transition-colors"
                     >
-                      Delete
+                      Удалить
                     </button>
                     <button
                       onClick={() => setDeletingId(null)}
@@ -150,6 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button onClick={onOpenAdmin} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-amber-300/80 hover:bg-white/5"><Shield size={14} /> Администрирование</button>
         )}
         {user && <p className="px-3 text-[10px] text-white/30 truncate">{user.email}</p>}
+        <div className="pt-2"><DemoBadge compact /></div>
       </div>
     </div>
   );

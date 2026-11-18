@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { DashboardData, MechanicConfig, Character, stressValue, itemName } from '../types';
+import { DashboardData, MechanicConfig, Character, stressValue, itemName, slotLabel } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode, Search } from 'lucide-react';
 import { customPrompt, customConfirm } from './PromptModal';
 import { LocationMap } from './LocationMap';
-import { EquipmentVisualizer } from './EquipmentVisualizer';
 import { characterLink } from '../api';
 
 interface DashboardProps {
@@ -150,11 +149,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
       <section>
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-            <Activity size={12} /> Party Status
+            <Activity size={12} /> Партия
           </h3>
           <button 
             onClick={async () => {
-              const name = await customPrompt("Character Name");
+              const name = await customPrompt("Имя персонажа");
               if (name) {
                 onUpdate?.({ 
                   ...data, 
@@ -163,8 +162,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     hp: "10/10", 
                     stress: 0, 
                     tokens: 0, 
-                    condition: "Healthy", 
-                    goal: "Survive",
+                    condition: "Полон сил", 
+                    goal: "Выжить",
                     inventory: [],
                     equipment: [],
                     relationships: [],
@@ -187,45 +186,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               key={char.name} 
               className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-3"
             >
-              <div className="flex justify-between items-start">
-                <div className="flex items-center gap-2">
-                  <div className="flex flex-col items-end">
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => showQr(char.name)}
-                        className="p-1 hover:bg-white/10 rounded text-white/20 hover:text-amber-400 transition-all"
-                        title="Show QR to connect a player"
-                      >
-                        <QrCode size={12} />
-                      </button>
-                      <button 
-                        onClick={async () => {
-                          if (!sessionId) return;
-                          showQr(char.name);
-                        }}
-                        className="p-1 hover:bg-white/10 rounded text-white/20 hover:text-emerald-400 transition-all"
-                        title="Share Character Link"
-                      >
-                        <Share2 size={12} />
-                      </button>
-                      <h4 className="font-display text-lg text-white flex items-center gap-2 group">
-                        {char.name}
+              <div className="flex justify-between items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-col items-start min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <h4 className="font-display text-lg leading-tight text-white flex items-center gap-1 group min-w-0">
+                        <span className="truncate">{char.name}</span>
                         <button 
                           onClick={async () => {
-                            const next = await customPrompt(`Rename ${char.name}`, char.name);
+                            const next = await customPrompt(`Новое имя для ${char.name}`, char.name);
                             if (next) updateChar(char.name, { name: next });
                           }}
                           className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-white/10 rounded"
+                          title="Переименовать"
                         >
                           <Edit2 size={10} className="text-white/40" />
                         </button>
                       </h4>
+                      <button 
+                        onClick={() => showQr(char.name)}
+                        className="p-1 hover:bg-white/10 rounded text-white/30 hover:text-amber-400 transition-all shrink-0"
+                        title="Пригласить игрока: QR и ссылка на героя"
+                      >
+                        <QrCode size={13} />
+                      </button>
                     </div>
                     {isMechanicEnabled('goal') && (
                       <p 
-                        className="text-[10px] text-white/40 uppercase tracking-tighter cursor-pointer hover:text-white transition-colors"
+                        className="text-[11px] text-white/45 leading-snug cursor-pointer hover:text-white transition-colors line-clamp-2"
+                        title="Концепт / цель героя (клик — изменить)"
                         onClick={async () => {
-                          const next = await customPrompt(`Update goal for ${char.name}`, char.goal);
+                          const next = await customPrompt(`Концепт или цель: ${char.name}`, char.goal);
                           if (next) updateChar(char.name, { goal: next });
                         }}
                       >
@@ -262,7 +253,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                             className="absolute right-0 top-full mt-2 w-48 bg-[#1a1614] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden"
                           >
                             <div className="p-2 border-b border-white/5 bg-white/5">
-                              <p className="text-[8px] uppercase tracking-widest text-white/40 font-bold">Token Actions</p>
+                              <p className="text-[8px] uppercase tracking-widest text-white/40 font-bold">Жетоны</p>
                             </div>
                             <div className="p-1">
                               <button 
@@ -273,7 +264,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
-                                <RotateCcw size={12} /> Use for Reroll
+                                <RotateCcw size={12} /> Переброс
                               </button>
                               <button 
                                 onClick={async () => {
@@ -283,7 +274,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
-                                <ZapOff size={12} /> Use for Flashback
+                                <ZapOff size={12} /> Флешбэк
                               </button>
                               <button 
                                 onClick={async () => {
@@ -293,18 +284,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                                 disabled={char.tokens === 0}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-white/70 hover:bg-white/5 hover:text-white rounded-lg transition-all disabled:opacity-30"
                               >
-                                <MessageSquarePlus size={12} /> Narrative Right
+                                <MessageSquarePlus size={12} /> Право на сюжет
                               </button>
                               <div className="h-px bg-white/5 my-1" />
                               <button 
                                 onClick={async () => {
-                                  const next = await customPrompt(`Set tokens for ${char.name} (0-3)`, char.tokens.toString());
+                                  const next = await customPrompt(`Жетоны: ${char.name} (0–3)`, char.tokens.toString());
                                   if (next !== null) updateChar(char.name, { tokens: Math.min(3, Math.max(0, parseInt(next))) });
                                   setActiveTokenMenu(null);
                                 }}
                                 className="w-full flex items-center gap-3 px-3 py-2 text-[10px] text-amber-400/70 hover:bg-amber-400/10 hover:text-amber-400 rounded-lg transition-all"
                               >
-                                <MoreHorizontal size={12} /> Manual Set
+                                <MoreHorizontal size={12} /> Вручную
                               </button>
                             </div>
                           </motion.div>
@@ -313,7 +304,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </div>
                     <button 
                       onClick={async () => {
-                        if (await customConfirm(`Delete character ${char.name}?`)) {
+                        if (await customConfirm(`Удалить героя ${char.name}?`)) {
                           onUpdate?.({ ...data, characters: data.characters.filter(c => c.name !== char.name) });
                         }
                       }}
@@ -323,29 +314,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </button>
                   </div>
                 )}
-                <div className="flex items-center gap-1.5 ml-auto">
+              </div>
+                <div className="flex flex-wrap items-center gap-1.5">
                   <span
-                    className="text-[10px] font-mono text-amber-300/80 cursor-pointer hover:text-amber-200"
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300/90 cursor-pointer hover:text-amber-200"
                     title="Золото (клик — задать вручную)"
                     onClick={async () => {
-                      const next = await customPrompt(`Set gold for ${char.name}`, String(char.gold ?? 0));
+                      const next = await customPrompt(`Золото: ${char.name}`, String(char.gold ?? 0));
                       if (next !== null) updateChar(char.name, { gold: Math.max(0, parseInt(next) || 0) });
                     }}
                   >
                     🪙 {char.gold ?? 0}
                   </span>
                   <span
-                    className="text-[10px] font-mono text-sky-300/70 cursor-pointer hover:text-sky-200"
+                    className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300/90 cursor-pointer hover:text-sky-200 whitespace-nowrap"
                     title={`XP (клик — задать вручную). Уровень = floor(sqrt(xp/50))+1`}
                     onClick={async () => {
-                      const next = await customPrompt(`Set xp for ${char.name}`, String(char.xp ?? 0));
+                      const next = await customPrompt(`Опыт: ${char.name}`, String(char.xp ?? 0));
                       if (next !== null) {
                         const xp = Math.max(0, parseInt(next) || 0);
                         updateChar(char.name, { xp });
                       }
                     }}
                   >
-                    Ур. {Math.floor(Math.sqrt(Math.max(0, (char.xp || 0)) / 50)) + 1} · {char.xp ?? 0} XP
+                    Ур. {Math.floor(Math.sqrt(Math.max(0, (char.xp || 0)) / 50)) + 1} · {char.xp ?? 0} опыта
                   </span>
                   {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
                     <div className="flex gap-1">
@@ -355,7 +347,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
                           title="Таверна: 10 золота → HP макс, стресс -2"
                         >
-                          Таверна
+                          🍺 Таверна · 10
                         </button>
                       )}
                       {hasInn && (char.gold ?? 0) >= 20 && (
@@ -364,7 +356,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-all"
                           title="Постоялый двор: 20 золота → полное восстановление (HP макс, стресс 0)"
                         >
-                          Ночлег
+                          🛏️ Ночлег · 20
                         </button>
                       )}
                       {hasHealer && (char.gold ?? 0) >= 12 && (
@@ -373,7 +365,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all"
                           title="Лекарь: 12 золота → +5 HP"
                         >
-                          Лекарь
+                          ⚕️ Лекарь · 12
                         </button>
                       )}
                     </div>
@@ -388,14 +380,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     </button>
                   )}
                 </div>
-              </div>
-              
+
               <div className="grid grid-cols-2 gap-4">
                 {isMechanicEnabled('hp') && (
                   <div className="space-y-1 group/stat cursor-pointer" onClick={async () => {
                     const current = parseInt(char.hp.split('/')[0]);
                     const max = parseInt(char.hp.split('/')[1]);
-                    const next = await customPrompt(`Update HP for ${char.name} (Current: ${char.hp})`, char.hp);
+                    const next = await customPrompt(`HP: ${char.name} (сейчас ${char.hp})`, char.hp);
                     if (next) updateChar(char.name, { hp: next });
                   }}>
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/60">
@@ -412,11 +403,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 )}
                 {isMechanicEnabled('stress') && (
                   <div className="space-y-1 group/stat cursor-pointer" onClick={async () => {
-                    const next = await customPrompt(`Update Stress for ${char.name} (0-10)`, char.stress.toString());
+                    const next = await customPrompt(`Стресс: ${char.name} (0–10)`, char.stress.toString());
                     if (next !== null) updateChar(char.name, { stress: Math.min(10, Math.max(0, parseInt(next))) });
                   }}>
                     <div className="flex justify-between text-[10px] uppercase font-bold text-white/60">
-                      <span>Stress</span>
+                      <span>Стресс</span>
                       <span className="group-hover/stat:text-orange-400 transition-colors">{char.stress}/10</span>
                     </div>
                     <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
@@ -429,25 +420,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 )}
               </div>
 
-              <EquipmentVisualizer 
-                equipment={char.equipment} 
-                onUpdate={(slot, item) => {
-                  const newEquip = [...(char.equipment || [])];
-                  const idx = newEquip.findIndex(s => s.slot === slot);
-                  if (idx !== -1) {
-                    newEquip[idx] = { ...newEquip[idx], item };
-                  } else {
-                    newEquip.push({ slot: slot as any, item });
-                  }
-                  updateChar(char.name, { equipment: newEquip });
-                }}
-              />
               
               {isMechanicEnabled('condition') && char.condition && (
                 <div 
                   className="text-[10px] italic text-orange-300/80 bg-orange-500/10 px-2 py-1 rounded border border-orange-500/20 cursor-pointer hover:bg-orange-500/20 transition-all"
                   onClick={async () => {
-                    const next = await customPrompt(`Update condition for ${char.name}`, char.condition);
+                    const next = await customPrompt(`Состояние: ${char.name}`, char.condition);
                     if (next !== null) updateChar(char.name, { condition: next });
                   }}
                 >
@@ -458,10 +436,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               {isMechanicEnabled('inventory') && (
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Inventory</h5>
+                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Инвентарь</h5>
                     <button 
                       onClick={async () => {
-                        const next = await customPrompt(`Add item to ${char.name}'s inventory`);
+                        const next = await customPrompt(`Новый предмет для ${char.name}`);
                         if (next) updateChar(char.name, { inventory: [...(char.inventory || []), next] });
                       }}
                       className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
@@ -493,7 +471,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         </button>
                       </span>
                     )) : (
-                      <span className="text-[9px] text-white/10 italic">Empty</span>
+                      <span className="text-[9px] text-white/10 italic">Пусто</span>
                     )}
                   </div>
                 </div>
@@ -502,10 +480,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               {isMechanicEnabled('inventory') && (
                 <div className="space-y-1 pt-2 border-t border-white/5">
                   <div className="flex justify-between items-center">
-                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Equipment</h5>
+                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Снаряжение</h5>
                     <button 
                       onClick={async () => {
-                        const slot = await customPrompt("New slot name (e.g. Ring, Spirit Bone):");
+                        const slot = await customPrompt("Название слота (напр. Кольцо, Имплант):");
                         if (slot) {
                           const newEq = [...(char.equipment || []), { slot, item: "Пусто" }];
                           updateChar(char.name, { equipment: newEq });
@@ -521,9 +499,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                       <div key={eqIdx} className="group/eq flex items-center justify-between bg-black/20 border border-white/5 rounded p-1.5">
                         <div className="flex items-center gap-2 overflow-hidden">
                           <span 
-                            className="text-[9px] text-white/40 uppercase font-bold cursor-pointer hover:text-white truncate min-w-[50px]"
+                            className="text-[9px] text-white/40 uppercase font-bold cursor-pointer hover:text-white truncate w-20 shrink-0"
                             onClick={async () => {
-                              const next = await customPrompt(`Rename slot:`, eq.slot);
+                              const next = await customPrompt(`Название слота:`, eq.slot);
                               if (next) {
                                 const newEq = [...(char.equipment || [])];
                                 newEq[eqIdx] = { ...eq, slot: next };
@@ -531,12 +509,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                               }
                             }}
                           >
-                            {eq.slot}
+                            {slotLabel(eq.slot)}
                           </span>
                           <span 
                             className="text-[10px] text-white/80 cursor-pointer hover:text-emerald-400 truncate"
                             onClick={async () => {
-                              const next = await customPrompt(`Equip item in ${eq.slot}:`, itemName(eq.item));
+                              const next = await customPrompt(`Предмет в слоте «${eq.slot}»:`, itemName(eq.item));
                               if (next !== null) {
                                 const newEq = [...(char.equipment || [])];
                                 newEq[eqIdx] = { ...eq, item: next || "Пусто" };
@@ -566,12 +544,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               {isMechanicEnabled('relationships') && (
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
-                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Relationships</h5>
+                    <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Отношения</h5>
                     <button 
                       onClick={async () => {
-                        const target = await customPrompt("NPC Name");
-                        const status = await customPrompt("Status (e.g. Friend, Enemy)", "Neutral");
-                        const level = await customPrompt("Level (-10 to 10)", "0");
+                        const target = await customPrompt("Имя NPC");
+                        const status = await customPrompt("Статус (напр. друг, враг)", "Neutral");
+                        const level = await customPrompt("Отношение (от −10 до 10)", "0");
                         if (target && status && level) {
                           updateChar(char.name, { 
                             relationships: [...(char.relationships || []), { target, status, level: parseInt(level) }] 
@@ -628,7 +606,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         </div>
                       </div>
                     )) : (
-                      <span className="text-[9px] text-white/10 italic">No connections</span>
+                      <span className="text-[9px] text-white/10 italic">Нет путей</span>
                     )}
                   </div>
                 </div>
@@ -660,7 +638,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               )}
               {isMechanicEnabled('actions') && char.actions && char.actions.length > 0 && (
                 <div className="space-y-2 pt-2 border-t border-white/5">
-                  <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Available Actions</h5>
+                  <h5 className="text-[8px] uppercase tracking-widest text-white/30 font-bold">Доступные действия</h5>
                   <div className="grid grid-cols-1 gap-2">
                     {char.actions.map((action, idx) => (
                       <div 
@@ -728,20 +706,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-4">
             <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-              <MapPin size={12} /> Known Locations
+              <MapPin size={12} /> Локации
             </h3>
             <div className="flex gap-1 bg-white/5 p-0.5 rounded-lg border border-white/5">
               <button 
                 onClick={() => setLocationView('list')} 
                 className={`p-1 rounded transition-colors ${locationView === 'list' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'}`}
-                title="List View"
+                title="Списком"
               >
                 <Menu size={12} />
               </button>
               <button 
                 onClick={() => setLocationView('map')} 
                 className={`p-1 rounded transition-colors ${locationView === 'map' ? 'bg-white/10 text-white shadow-sm' : 'text-white/40 hover:text-white/60'}`}
-                title="Map View"
+                title="Картой"
               >
                 <MapPin size={12} />
               </button>
@@ -749,8 +727,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           </div>
           <button 
             onClick={async () => {
-              const name = await customPrompt("Location Name");
-              const description = await customPrompt("Short Description");
+              const name = await customPrompt("Название локации");
+              const description = await customPrompt("Краткое описание");
               if (name) {
                 onUpdate?.({ 
                   ...data, 
@@ -802,7 +780,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <div className="flex justify-between items-start mb-2">
                   <div className="flex items-center gap-2">
                     {isCurrent && (
-                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" title="Current Location" />
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" title="Текущая локация" />
                     )}
                     {isLocked && <Lock size={12} className="text-red-400" />}
                     {isKnown && !isCurrent && !isLocked && <Eye size={12} className="text-white/40" />}
@@ -811,7 +789,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         isCurrent ? 'text-emerald-400' : isLocked ? 'text-red-400/80' : 'text-white hover:text-emerald-400'
                       }`}
                       onClick={async () => {
-                        const next = await customPrompt("Rename Location", loc.name);
+                        const next = await customPrompt("Переименовать локацию", loc.name);
                         if (next) {
                           const newLocs = [...(data.locations || [])];
                           newLocs[idx] = { ...newLocs[idx], name: next };
@@ -826,9 +804,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                    {/* Danger Level Indicator */}
                    <div 
                      className="flex gap-0.5 cursor-pointer group/danger"
-                     title="Danger Level (1-5)"
+                     title="Опасность (1–5)"
                      onClick={async () => {
-                       const next = await customPrompt("Danger Level (1-5)", (loc.dangerLevel || 1).toString());
+                       const next = await customPrompt("Опасность (1–5)", (loc.dangerLevel || 1).toString());
                        if (next) {
                          const newLocs = [...(data.locations || [])];
                          newLocs[idx] = { ...newLocs[idx], dangerLevel: Math.min(5, Math.max(1, parseInt(next))) };
@@ -864,7 +842,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <p 
                 className="text-xs text-white/60 mb-3 cursor-pointer hover:text-white"
                 onClick={async () => {
-                  const next = await customPrompt("Update Description", loc.description);
+                  const next = await customPrompt("Описание", loc.description);
                   if (next) {
                     const newLocs = [...(data.locations || [])];
                     newLocs[idx] = { ...newLocs[idx], description: next };
@@ -880,12 +858,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     onClick={() => onTravel(loc.id)}
                     className="flex-1 py-2 bg-white/5 hover:bg-emerald-500/20 hover:text-emerald-400 border border-white/10 rounded-lg text-xs font-bold text-white/60 transition-all flex items-center justify-center gap-2 group/btn"
                   >
-                    <Footprints size={14} className="group-hover/btn:translate-x-1 transition-transform" /> {isKnown ? 'Travel (Unknown)' : 'Travel'}
+                    <Footprints size={14} className="group-hover/btn:translate-x-1 transition-transform" /> {isKnown ? 'В путь (неизведано)' : 'Отправиться'}
                   </button>
                 )}
                 {isLocked && (
                   <div className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-bold text-red-500/50 italic select-none border border-red-500/10 rounded-lg bg-red-500/5">
-                    <Lock size={12} /> Locked
+                    <Lock size={12} /> Закрыто
                   </div>
                 )}
                 {onExplore && isCurrent && (
@@ -893,12 +871,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     onClick={() => onExplore(loc.id)}
                     className="flex-1 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 group/btn shadow-[0_0_10px_rgba(16,185,129,0.1)]"
                   >
-                    <Target size={14} className="group-hover/btn:scale-110 transition-transform" /> Explore Area
+                    <Target size={14} className="group-hover/btn:scale-110 transition-transform" /> Исследовать
                   </button>
                 )}
                 {isCurrent && !onExplore && (
                   <div className="flex-1 py-2 flex items-center justify-center gap-2 text-xs font-bold text-emerald-500/50 italic select-none">
-                    <MapPin size={14} /> You are here
+                    <MapPin size={14} /> Вы здесь
                   </div>
                 )}
               </div>
@@ -907,7 +885,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           })}
           {(data.locations || []).length === 0 && (
             <div className="text-center py-8 border border-dashed border-white/10 rounded-lg">
-              <p className="text-xs text-white/20">No locations discovered yet.</p>
+              <p className="text-xs text-white/20">Локации ещё не открыты.</p>
             </div>
           )}
         </div>
@@ -919,7 +897,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         {isMechanicEnabled('threats_dash') && (
           <section>
             <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-4 flex items-center gap-2">
-              <Shield size={12} /> Active Threats
+              <Shield size={12} /> Угрозы
             </h3>
             <div className="space-y-2">
               {data.threats.map((threat, idx) => (
@@ -990,14 +968,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               ))}
               <button 
                 onClick={async () => {
-                  const name = await customPrompt("Threat Name");
+                  const name = await customPrompt("Имя угрозы");
                   if (name) {
                     onUpdate?.({ ...data, threats: [...(data.threats || []), { name, hp: "10/10", features: ["New threat"] }] });
                   }
                 }}
                 className="w-full py-2 border border-dashed border-white/10 rounded-lg text-[10px] text-white/20 hover:text-white/40 hover:border-white/20 transition-all flex items-center justify-center gap-2"
               >
-                <Plus size={12} /> Add Threat
+                <Plus size={12} /> Добавить угрозу
               </button>
             </div>
           </section>
@@ -1007,12 +985,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           <section>
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                <Zap size={12} /> Clocks
+                <Zap size={12} /> Часы
               </h3>
               <button 
                 onClick={async () => {
-                  const name = await customPrompt("Clock Name");
-                  const total = await customPrompt("Total Segments", "4");
+                  const name = await customPrompt("Название часов");
+                  const total = await customPrompt("Сколько делений", "4");
                   if (name && total) {
                     onUpdate?.({ ...data, clocks: [...(data.clocks || []), { name, progress: 0, total: parseInt(total) }] });
                   }
@@ -1082,23 +1060,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <AlertTriangle size={12} /> Doom Pool
+                    <AlertTriangle size={12} /> Doom
                   </h3>
                   {data.doomPool > 0 && (
                     <div className="flex gap-2">
                       <button 
                         onClick={(e) => { e.stopPropagation(); updateDoom(data.doomPool - 1); }}
                         className="text-[10px] text-white/20 hover:text-white transition-colors"
-                        title="Decrement Doom Pool"
+                        title="Уменьшить Doom"
                       >
                         -1
                       </button>
                       <button 
                         onClick={(e) => { e.stopPropagation(); updateDoom(0); }}
                         className="text-[10px] text-white/20 hover:text-red-400 transition-colors"
-                        title="Reset Doom Pool to 0"
+                        title="Сбросить Doom"
                       >
-                        Reset
+                        Сброс
                       </button>
                     </div>
                   )}
@@ -1128,16 +1106,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <Target size={12} /> Threat Level
+                    <Target size={12} /> Уровень угрозы
                   </h3>
                   <button 
                     onClick={async () => {
-                      const next = await customPrompt("Update Threat Level (0, 4, 6, 8, 12)", data.threatLevel?.toString());
+                      const next = await customPrompt("Уровень угрозы (0, 4, 6, 8, 12)", data.threatLevel?.toString());
                       if (next !== null) onUpdate?.({ ...data, threatLevel: parseInt(next) });
                     }}
                     className="text-[10px] text-white/20 hover:text-white transition-colors"
                   >
-                    Edit
+                    Изменить
                   </button>
                 </div>
                 <div className="flex items-end gap-2">
@@ -1149,7 +1127,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   }`}>
                     {data.threatLevel}
                   </span>
-                  <span className="text-[10px] text-white/20 uppercase mb-1">Penalty</span>
+                  <span className="text-[10px] text-white/20 uppercase mb-1">Штраф</span>
                 </div>
               </div>
             )}
@@ -1165,7 +1143,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
               </button>
               <div className="flex items-center gap-2">
                 <Zap size={12} className="text-amber-400" />
-                <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold">Suggested Roll</span>
+                <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold">Совет мастера</span>
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-sm font-bold text-white capitalize">{data.suggestedRoll.type} Roll</span>
@@ -1177,10 +1155,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           {isMechanicEnabled('scene_aspects') && (
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <h4 className="text-[10px] uppercase tracking-widest text-white/20 font-bold">Scene Aspects</h4>
+                <h4 className="text-[10px] uppercase tracking-widest text-white/20 font-bold">Аспекты сцены</h4>
                 <button 
                   onClick={async () => {
-                    const name = await customPrompt("Aspect Name");
+                    const name = await customPrompt("Аспект сцены");
                     if (name) {
                       onUpdate?.({ ...data, sceneAspects: [...(data.sceneAspects || []), name] });
                     }
@@ -1229,11 +1207,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <h4 className="text-[10px] uppercase tracking-widest text-emerald-400/60 font-bold flex items-center gap-1.5">
-                  <Gem size={10} /> Scene Loot
+                  <Gem size={10} /> Добыча
                 </h4>
                 <button 
                   onClick={async () => {
-                    const name = await customPrompt("Add Loot Item");
+                    const name = await customPrompt("Добавить добычу");
                     if (name) {
                       onUpdate?.({ ...data, sceneLoot: [...(data.sceneLoot || []), name] });
                     }
@@ -1281,7 +1259,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         }
                       }}
                       className="opacity-0 group-hover/loot:opacity-100 transition-opacity text-emerald-500/50 hover:text-emerald-400"
-                      title="Take item"
+                      title="Забрать предмет"
                     >
                       <Download size={10} />
                     </button>
@@ -1298,7 +1276,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </span>
                 ))}
                 {(!data.sceneLoot || data.sceneLoot.length === 0) && (
-                  <span className="text-[10px] text-white/20 italic">No loot...</span>
+                  <span className="text-[10px] text-white/20 italic">Добычи нет</span>
                 )}
               </div>
             </div>
@@ -1567,7 +1545,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                     }`}
                     title="Переключить статус"
                   >
-                    {node.status === 'active' ? 'Active' : 'Resolved'}
+                    {node.status === 'active' ? 'Активно' : 'Решено'}
                   </button>
                   <button 
                     onClick={async () => {
@@ -1604,11 +1582,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           <div className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-3">
             <div className="flex justify-between items-center">
               <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                <ScrollText size={12} /> Narrative Echoes
+                <ScrollText size={12} /> Эхо прошлого
               </h3>
               <button 
                 onClick={async () => {
-                  const next = await customPrompt("Add Echo");
+                  const next = await customPrompt("Новое эхо");
                   if (next) onUpdate?.({ ...data, echoes: [...(data.echoes || []), next] });
                 }}
                 className="p-1 hover:bg-white/5 rounded text-white/20 hover:text-white transition-all"
@@ -1623,7 +1601,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <p 
                     className="text-[10px] text-white/60 leading-relaxed cursor-pointer hover:text-white"
                     onClick={async () => {
-                      const next = await customPrompt("Edit Echo", echo);
+                      const next = await customPrompt("Изменить эхо", echo);
                       if (next) {
                         const newEchoes = [...(data.echoes || [])];
                         newEchoes[idx] = next;
@@ -1652,11 +1630,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         <div className="p-4 border-t border-white/10 group/atmo">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-              <Wind size={12} /> Atmosphere
+              <Wind size={12} /> Атмосфера
             </h3>
             <button 
               onClick={async () => {
-                const next = await customPrompt("Update Atmosphere", data.atmosphere);
+                const next = await customPrompt("Атмосфера сцены", data.atmosphere);
                 if (next) onUpdate?.({ ...data, atmosphere: next });
               }}
               className="opacity-0 group-hover/atmo:opacity-100 transition-opacity p-1 hover:bg-white/5 rounded text-white/20 hover:text-white"

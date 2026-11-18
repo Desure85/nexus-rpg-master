@@ -18,6 +18,7 @@ import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
+import { RichParagraphs, renderInline } from './components/RichText';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -668,7 +669,7 @@ export default function App() {
     content += `**Setting:** ${currentSession.setting}\n`;
     content += `**Style:** ${currentSession.style}\n\n`;
     
-    content += `## 🌍 LORE & WORLD\n${currentSession.lore || 'No lore recorded yet.'}\n\n`;
+    content += `## 🌍 LORE & WORLD\n${currentSession.lore || 'Архив пока пуст.'}\n\n`;
     
     if (currentSession.codex.length > 0) {
       content += `## 📖 CODEX\n\n`;
@@ -879,13 +880,13 @@ export default function App() {
                   onClick={() => setMobileView('narrative')}
                   className={`px-3 py-1.5 rounded-md text-[10px] uppercase tracking-widest font-bold transition-all ${mobileView === 'narrative' ? 'bg-white/10 text-white' : 'text-white/40'}`}
                 >
-                  Story
+                  История
                 </button>
                 <button 
                   onClick={() => setMobileView('dashboard')}
                   className={`px-3 py-1.5 rounded-md text-[10px] uppercase tracking-widest font-bold transition-all ${mobileView === 'dashboard' ? 'bg-white/10 text-white' : 'text-white/40'}`}
                 >
-                  Stats
+                  Сцена
                 </button>
               </div>
               <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-white/60">
@@ -911,27 +912,26 @@ export default function App() {
                     </>
                   )}
                   <div className="h-4 w-px bg-white/10" />
-                  <button
-                    onClick={isTale ? downloadTale : exportBook}
-                    className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-all"
-                    title="Скачать в Markdown"
-                  >
-                    <Download size={12} /> Экспорт
-                  </button>
-                  {!isTale && (
-                    <>
-                      <div className="h-4 w-px bg-white/10" />
-                      <button
-                        onClick={exportSkillFormat}
-                        className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-emerald-400/80 hover:text-emerald-300 transition-all"
-                        title="Экспорт в формат скилла (session.json + archive.md + timeline.md)"
-                      >
-                        <ScrollText size={12} /> Nexus Export
-                      </button>
-                    </>
-                  )}
+                  <div className="relative group/dl">
+                    <button
+                      onClick={isTale ? downloadTale : exportBook}
+                      className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-all"
+                      title={isTale ? 'Скачать сказку (Markdown)' : 'Скачать книгу (Markdown)'}
+                    >
+                      <Download size={12} /> Скачать
+                    </button>
+                    {!isTale && (
+                      <div className="absolute left-0 top-full pt-2 hidden group-hover/dl:block group-focus-within/dl:block z-30">
+                        <div className="bg-neutral-900 border border-white/10 rounded-xl p-1 shadow-2xl w-60">
+                          <button onClick={exportBook} className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-white/80">📖 Книга — история в Markdown</button>
+                          <button onClick={exportSkillFormat} className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-white/80">🗂️ Архив сессии — JSON + летопись</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <div className="h-4 w-px bg-white/10" />
-                  <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
+                  <div className="hidden sm:flex items-center gap-1 bg-white/5 rounded-lg p-0.5" title="Размер текста">
+                    <span className="pl-1.5 text-[10px] font-serif text-white/40">Aa</span>
                     <button
                       onClick={() => updateAppearance({ fontSize: Math.max(12, settings.fontSize - 1) })}
                       className="p-1 hover:bg-white/10 rounded text-white/40 hover:text-white transition-all"
@@ -949,7 +949,7 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <span className="shrink-0 text-[10px] uppercase tracking-widest font-bold text-white/30">
+                <span className="shrink-0 hidden xl:inline text-[10px] uppercase tracking-widest font-bold text-white/30">
                   {isTale
                     ? `📖 Глава ${currentSession.history.filter(m => m.role === 'assistant').length} из ${currentSession.config?.tale?.chapters ?? '?'}`
                     : currentSession.mode === 'campaign' ? '🗺️ Кампания' : '⚡ Партия на вечер'}
@@ -996,9 +996,7 @@ export default function App() {
                             fontFamily: settings.fontFamily === 'serif' ? 'serif' : settings.fontFamily === 'mono' ? 'monospace' : 'inherit'
                           }}
                         >
-                          {(msg.content || '').split('\n\n').map((p, j) => (
-                            <p key={j}>{p}</p>
-                          ))}
+                          <RichParagraphs text={msg.content || ''} />
                           {isTale && msg.choices && msg.choices.length > 0 && i === currentSession.history.length - 1 && !taleFinished && (
                             <div className="pt-4 flex flex-col gap-2 not-italic">
                               <span className="text-[10px] uppercase tracking-widest font-bold text-amber-400/70 font-sans">Что дальше?</span>
@@ -1023,7 +1021,7 @@ export default function App() {
                   <div className="max-w-3xl mx-auto w-full">
                     <div className="narrative-text text-white/80" style={{ fontSize: `${settings.fontSize}px`, fontFamily: settings.fontFamily === 'serif' ? 'serif' : settings.fontFamily === 'mono' ? 'monospace' : 'inherit' }}>
                       <p className="whitespace-pre-wrap">
-                        {cleanStreamForDisplay(streamingText)}
+                        {renderInline(cleanStreamForDisplay(streamingText))}
                         <span className="inline-block w-1.5 h-4 bg-white/50 animate-pulse ml-0.5 align-middle rounded-sm" />
                       </p>
                     </div>
@@ -1220,7 +1218,7 @@ export default function App() {
                             setInput('');
                           }
                         }}
-                        title="Clarify Details (Updates Codex)"
+                        title="Уточнить детали (обновит Кодекс)"
                         disabled={isLoading || !input.trim()}
                         className="p-2 bg-white/5 text-white/40 hover:text-emerald-400 rounded-xl transition-all disabled:opacity-30"
                       >
@@ -1251,11 +1249,11 @@ export default function App() {
 3. Обнови decisionTree в <dashboard_json>: зафиксируй ключевые выборы игроков со статусами active/resolved.`);
                       }} 
                       disabled={!currentSession || isLoading}
-                      title="NEXUS SAVE: кристаллизует Story Archive + Final Draft + Древо Решений"
+                      title="Мастер запишет летопись, черновик главы и древо решений"
                       className="vector-btn text-[10px] lg:text-sm text-amber-400/80 border-amber-500/20 flex items-center gap-2"
                     >
                       {isLoading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                      {isLoading ? 'Crystallizing...' : 'Nexus Save'}
+                      {isLoading ? 'Сохраняем главу…' : 'Сохранить главу'}
                     </button>
                   </div>
                 </div>
@@ -1273,13 +1271,13 @@ export default function App() {
                       onClick={() => setRightPanelTab('dashboard')}
                       className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all ${rightPanelTab === 'dashboard' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
                     >
-                      <Sparkles size={12} /> Stats
+                      <Sparkles size={12} /> Сцена
                     </button>
                     <button
                       onClick={() => setRightPanelTab('codex')}
                       className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all ${rightPanelTab === 'codex' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
                     >
-                      <Library size={12} /> Codex
+                      <Library size={12} /> Кодекс
                     </button>
                   </>
                 )}
@@ -1287,7 +1285,7 @@ export default function App() {
                   onClick={() => setRightPanelTab('lore')}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] uppercase tracking-widest font-bold transition-all ${rightPanelTab === 'lore' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
                 >
-                  <History size={12} /> {isTale ? 'Книга' : 'Lore'}
+                  <History size={12} /> {isTale ? 'Книга' : 'Летопись'}
                 </button>
                 <button 
                   onClick={() => setRightPanelTab('players')}
@@ -1453,10 +1451,10 @@ export default function App() {
                 ) : rightPanelTab === 'lore' ? (
                   <div className="p-6 space-y-4 overflow-y-auto h-full">
                     <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                      <History size={12} /> Story Archive
+                      <History size={12} /> Архив истории
                     </h3>
                     <div className="text-sm text-white/60 font-serif leading-relaxed whitespace-pre-wrap">
-                      {currentSession.lore || "No lore recorded yet. Use 'Nexus Save' to crystallize the story."}
+                      {currentSession.lore || "Архив пока пуст. Нажмите «Сохранить главу» — мастер запишет летопись."}
                     </div>
                     {currentSession.isOwner && (
                       <div className="pt-4 border-t border-white/10"><OraclePanel sessionId={currentSession.id} status={oracleStatus} /></div>
@@ -1464,7 +1462,7 @@ export default function App() {
                     {currentSession.archive && (
                       <>
                         <h3 className="text-[10px] uppercase tracking-widest text-amber-400/70 font-bold flex items-center gap-2 pt-4 border-t border-white/10">
-                          <ScrollText size={12} /> Final Drafts (NEXUS SAVE)
+                          <ScrollText size={12} /> Черновики глав
                         </h3>
                         <div className="text-sm text-white/70 font-serif leading-relaxed whitespace-pre-wrap">
                           {currentSession.archive}
@@ -1604,7 +1602,7 @@ export default function App() {
               className="flex flex-col items-center gap-6"
             >
               <div className="text-white/40 uppercase tracking-widest text-sm font-bold">
-                Traveling to {travelEvent.locationName}
+                В пути: {travelEvent.locationName}
               </div>
               
               <div className="relative w-32 h-32 flex items-center justify-center">
@@ -1629,7 +1627,7 @@ export default function App() {
               
               <div className="text-white/60 text-sm max-w-xs text-center">
                 {travelEvent.type === 'encounter' && "Something blocks your path. Prepare yourself."}
-                {travelEvent.type === 'discovery' && "You notice something off the beaten path..."}
+                {travelEvent.type === 'discovery' && "Вы замечаете что-то в стороне от тропы…"}
                 {travelEvent.type === 'safe' && "The journey is uneventful. For now."}
               </div>
             </motion.div>

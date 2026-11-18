@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { GameSession, Character, DashboardData, MechanicConfig, stressValue, itemName } from '../types';
+import { GameSession, Character, DashboardData, MechanicConfig, stressValue, itemName, slotLabel } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, RotateCcw, ZapOff, MessageSquarePlus, Trash2, Plus, Send, LayoutDashboard, Library, History, User, BookOpen, Type } from 'lucide-react';
 import { Codex } from './Codex';
@@ -8,6 +8,7 @@ import { isUsableItem } from './Dashboard';
 import { DisclaimerFooter } from './Disclaimer';
 import { api, ApiError, useSessionSocket, characterLink, type SocketEvent } from '../api';
 import { cleanStreamForDisplay, displayUserContent } from '../../shared/parse';
+import { RichParagraphs } from './RichText';
 
 export const CharacterView: React.FC = () => {
   const { sessionId, charName: rawCharName } = useParams<{ sessionId: string; charName: string }>();
@@ -244,7 +245,7 @@ export const CharacterView: React.FC = () => {
         <button 
           onClick={handleManualRefresh}
           className="flex items-center justify-center p-3 rounded-xl text-white/40 hover:text-white bg-white/5 hover:bg-white/10 transition-all"
-          title="Refresh Data"
+          title="Обновить"
         >
           <RotateCcw size={14} />
         </button>
@@ -271,7 +272,7 @@ export const CharacterView: React.FC = () => {
           onClick={() => setActiveTab('lore')}
           className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-[10px] uppercase tracking-widest font-bold transition-all ${activeTab === 'lore' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}
         >
-          <History size={14} /> {isTale ? 'Память' : 'Лор'}
+          <History size={14} /> {isTale ? 'Память' : 'Летопись'}
         </button>
         {!isTale && <button 
           onClick={() => setActiveTab('codex')}
@@ -283,14 +284,14 @@ export const CharacterView: React.FC = () => {
           <button 
             onClick={() => setFontSize(Math.max(12, fontSize - 2))}
             className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"
-            title="Decrease Font Size"
+            title="Мельче шрифт"
           >
             <Type size={12} />
           </button>
           <button 
             onClick={() => setFontSize(Math.min(24, fontSize + 2))}
             className="p-2 rounded-lg text-white/40 hover:text-white hover:bg-white/5 transition-all"
-            title="Increase Font Size"
+            title="Крупнее шрифт"
           >
             <Type size={16} />
           </button>
@@ -535,7 +536,7 @@ export const CharacterView: React.FC = () => {
                   <div className="grid grid-cols-2 gap-2">
                     {character.equipment.map((eq, idx) => (
                       <div key={idx} className="bg-black/40 border border-white/10 rounded-lg p-2.5 flex flex-col gap-1">
-                        <span className="text-[8px] uppercase tracking-widest text-white/40 font-bold">{eq.slot}</span>
+                        <span className="text-[8px] uppercase tracking-widest text-white/40 font-bold">{slotLabel(eq.slot)}</span>
                         <span className={`text-xs ${!itemName(eq.item) || itemName(eq.item) === 'Пусто' ? 'text-white/20 italic' : 'text-emerald-400'}`}>
                           {itemName(eq.item) || 'Пусто'}
                         </span>
@@ -558,7 +559,7 @@ export const CharacterView: React.FC = () => {
                 {isMechanicEnabled('doom_pool') && (
                   <div className="space-y-2">
                     <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                      <AlertTriangle size={12} /> Doom Pool
+                      <AlertTriangle size={12} /> Doom
                     </h3>
                     <div className="flex gap-2">
                       {Array.from({ length: 10 }).map((_, i) => (
@@ -576,11 +577,11 @@ export const CharacterView: React.FC = () => {
                 {isMechanicEnabled('threat') && dashboard.threatLevel !== undefined && (
                   <div className="space-y-2">
                     <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                      <Target size={12} /> Threat Level
+                      <Target size={12} /> Уровень угрозы
                     </h3>
                     <div className="flex items-center gap-4">
                       <span className="text-3xl font-display font-bold text-red-400">{dashboard.threatLevel}</span>
-                      <span className="text-xs text-white/40">Current environmental or enemy threat modifier.</span>
+                      <span className="text-xs text-white/40">Текущий модификатор угрозы от врагов или обстановки.</span>
                     </div>
                   </div>
                 )}
@@ -589,7 +590,7 @@ export const CharacterView: React.FC = () => {
               {isMechanicEnabled('clocks') && dashboard.clocks && dashboard.clocks.length > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <Zap size={12} /> Active Clocks
+                    <Zap size={12} /> Часы
                   </h3>
                   <div className="space-y-3">
                     {dashboard.clocks.map((clock, idx) => (
@@ -617,7 +618,7 @@ export const CharacterView: React.FC = () => {
               {isMechanicEnabled('scene_aspects') && dashboard.sceneAspects && dashboard.sceneAspects.length > 0 && (
                 <div className="space-y-4">
                   <h3 className="text-[10px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
-                    <Wind size={12} /> Scene Aspects
+                    <Wind size={12} /> Аспекты сцены
                   </h3>
                   <div className="flex flex-wrap gap-2">
                     {dashboard.sceneAspects.map((aspect, idx) => (
@@ -664,9 +665,7 @@ export const CharacterView: React.FC = () => {
                       </div>
                     ) : (
                       <div className={`narrative-text space-y-4 ${isBookView ? 'text-white/90' : 'text-white/80'} font-serif leading-relaxed`}>
-                        {(msg.content || '').split('\n\n').map((p, j) => (
-                          <p key={j}>{p}</p>
-                        ))}
+                        <RichParagraphs text={msg.content || ''} />
                       </div>
                     )}
                   </div>

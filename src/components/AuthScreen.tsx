@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { LogIn, UserPlus, Loader2 } from 'lucide-react';
-import { api } from '../api';
+import { api, IS_DEMO } from '../api';
+import { DemoBadge } from './DemoBanner';
 
 interface Props {
   registration: 'open' | 'invite' | 'closed';
@@ -29,6 +30,22 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
       .then(setInvite)
       .catch(e => setError(e instanceof Error ? e.message : 'Приглашение недействительно'));
   }, [inviteToken]);
+
+  /** Демо: вход в один клик — аккаунт создаётся в этом браузере. */
+  const quickDemo = async () => {
+    setError('');
+    setBusy(true);
+    const creds = { email: 'master@demo.local', password: 'demo-password' };
+    try {
+      try { await api('/api/auth/login', { body: creds }); }
+      catch { await api('/api/auth/register', { body: { ...creds, name: 'Мастер' } }); }
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +86,16 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
           <h1 className="font-display text-3xl font-bold text-white tracking-tighter">Fate & Dragons</h1>
           <p className="text-xs text-white/40">Онлайн-НРИ с ИИ-мастером</p>
         </div>
+
+        {IS_DEMO && !inviteToken && (
+          <>
+            <button type="button" onClick={quickDemo} disabled={busy} className="w-full py-3.5 bg-violet-600 hover:bg-violet-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-violet-900/30">
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Попробовать без регистрации
+            </button>
+            <DemoBadge compact />
+            <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest text-white/25"><span className="h-px flex-1 bg-white/10" />или свой аккаунт<span className="h-px flex-1 bg-white/10" /></div>
+          </>
+        )}
 
         {invite && (
           <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-xs text-emerald-200">
@@ -120,6 +147,22 @@ export const ResetPasswordScreen: React.FC<{ token: string; onDone: () => void }
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Демо: вход в один клик — аккаунт создаётся в этом браузере. */
+  const quickDemo = async () => {
+    setError('');
+    setBusy(true);
+    const creds = { email: 'master@demo.local', password: 'demo-password' };
+    try {
+      try { await api('/api/auth/login', { body: creds }); }
+      catch { await api('/api/auth/register', { body: { ...creds, name: 'Мастер' } }); }
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);

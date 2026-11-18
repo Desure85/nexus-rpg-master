@@ -32,7 +32,7 @@ export const Codex: React.FC<CodexProps> = ({ entries }) => {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search Codex..."
+          placeholder="Поиск по Кодексу…"
           className="w-full bg-white/5 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-xs text-white focus:outline-none focus:border-white/30 transition-all"
         />
       </div>
@@ -65,7 +65,7 @@ export const Codex: React.FC<CodexProps> = ({ entries }) => {
           ))
         ) : (
           <div className="text-center py-12 text-white/20 italic text-sm">
-            The archives are empty...
+            Архив пока пуст
           </div>
         )}
       </div>
