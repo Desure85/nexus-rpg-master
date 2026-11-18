@@ -748,3 +748,56 @@ describe('ресурсы: жетоны, расходники', () => {
   });
 });
 
+describe('темп и драма: часы, добыча, эхо, отношения', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const setDash = async (id: string, fn: (d: any) => void) => {
+    const d = await dashOf(id);
+    fn(d);
+    expect((await gm().post(`/api/sessions/${id}/dashboard`, { dashboard: d })).status).toBe(200);
+  };
+  const turn = async (id: string, content: string, rolls?: string[]) => {
+    await gm().post(`/api/sessions/${id}/turn`, { content, rolls });
+    await ctx.engine.whenIdle(id);
+  };
+
+  it('часы: прогресс хранит движок, тикают тегом, заполненные уходят и шлют весть', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.clocks = [{ name: 'Тревога', progress: 2, total: 4 }]; });
+    await turn(id, 'Шумим #clock');
+    expect((await dashOf(id)).clocks).toEqual([{ name: 'Тревога', progress: 3, total: 4 }]);
+    await turn(id, 'Шумим ещё #clock');
+    expect((await dashOf(id)).clocks).toEqual([]);
+    await turn(id, 'Что происходит?');
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.find((m: any) => m.content.startsWith('Что происходит?')).content).toContain('[CLOCK FILLED: «Тревога»]');
+  });
+
+  it('добыча: [TAKE] от модели и кнопка игрока переносят предмет в инвентарь', async () => {
+    const id = await createSession(rpgSetup());
+    await setDash(id, d => { d.sceneLoot = ['Ключ', 'Кинжал']; d.characters[0].inventory = []; });
+    await turn(id, 'Арн берёт ключ #take');
+    let d = await dashOf(id);
+    expect(d.sceneLoot).toEqual(['Кинжал']);
+    expect(d.characters[0].inventory).toEqual(['Ключ']);
+    await player('dev-loot-0000000001').post(`/api/sessions/${id}/claim`, { charName: 'Лиса', playerName: 'Аня' });
+    const cid = (await request(ctx.app).get(`/api/sessions/${id}/claims`)).body[0].id;
+    await gm().post(`/api/sessions/${id}/claims/${cid}/approve`);
+    expect((await player('dev-loot-0000000001').post(`/api/sessions/${id}/loot/take`, { charName: 'Арн', item: 'Кинжал' })).status).toBe(403);
+    expect((await player('dev-loot-0000000001').post(`/api/sessions/${id}/loot/take`, { charName: 'Лиса', item: 'Кинжал' })).status).toBe(200);
+    d = await dashOf(id);
+    expect(d.sceneLoot).toEqual([]);
+    expect(d.characters[1].inventory).toContain('Кинжал');
+  });
+
+  it('эхо возвращается раз в 4 хода; отношения дают бонус к броску', async () => {
+    const id = await createSession(rpgSetup(), { mechanics: undefined });
+    await setDash(id, d => { d.echoes = ['Пощадили разбойника Грана']; d.characters[0].relationships = [{ target: 'Гран', level: 7, status: 'друг' }]; });
+    for (let i = 0; i < 4; i++) await turn(id, `Ход ${i}`);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.history.filter((m: any) => m.role === 'user' && m.content.includes('[ECHO RETURN: «Пощадили разбойника Грана»]')).length).toBeGreaterThanOrEqual(1);
+    const { resolveRolls } = await import('../shared/resolve');
+    const r = resolveRolls('**Арн** performs *уговариваю Грана*: [ROLL: 1d20 = 10]', { characters: [{ name: 'Арн', relationships: [{ target: 'Гран', level: 7, status: 'друг' }] } as any], relationsEnabled: true });
+    expect(r.text).toContain('Итог: 12 = 10 (d20) +2 Гран');
+  });
+});
+

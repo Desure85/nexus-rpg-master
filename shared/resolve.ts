@@ -70,6 +70,23 @@ export const gearBonus = (char: Partial<Character> | undefined, actionText: stri
   return { total, parts };
 };
 
+/** Отношения с NPC: каждые 3 пункта — ±1 к броску, если NPC назван в действии (до ±3). */
+export const relationshipBonus = (char: Partial<Character> | undefined, actionText: string): { total: number; parts: string[] } => {
+  const low = actionText.toLowerCase().replace(/ё/g, 'е');
+  let total = 0;
+  const parts: string[] = [];
+  for (const r of char?.relationships || []) {
+    const name = String(r.target || '').toLowerCase().replace(/ё/g, 'е').trim();
+    if (!name || name.length < 3) continue;
+    const stem = name.split(/\s+/)[0].slice(0, Math.max(3, name.split(/\s+/)[0].length - 2));
+    if (!low.includes(stem)) continue;
+    const v = Math.trunc((Number(r.level) || 0) / 3);
+    if (v) { total += v; parts.push(`${v > 0 ? '+' : ''}${v} ${r.target}`); }
+  }
+  total = Math.max(-MAX_GEAR_BONUS, Math.min(MAX_GEAR_BONUS, total));
+  return { total, parts };
+};
+
 export interface ParsedRoll { type: 'classic' | 'triple' | 'shifted' | 'taint'; die: number; label: string; shift: number; threat: number }
 
 /** Разбор тега [ROLL: …] в выбранный кубик (с учётом метки стресса) и модификаторы. */
@@ -93,6 +110,7 @@ export interface ResolveContext {
   /** Состояние движка: статусы героев (downed — спасбросок смерти) */
   status?: Record<string, string | undefined>;
   gearEnabled?: boolean;
+  relationsEnabled?: boolean;
   /** Сложность, объявленная мастером до броска (suggestedRoll.dc) */
   dc?: number;
 }
@@ -122,13 +140,15 @@ export function resolveRolls(text: string, ctx: ResolveContext): { text: string;
       const r = parseRoll(full);
       if (!r) return full;
       const gear = ctx.gearEnabled === false ? { total: 0, parts: [] } : gearBonus(char, actionText);
-      const total = r.die + r.shift + gear.total - r.threat;
+      const rel = ctx.relationsEnabled ? relationshipBonus(char, actionText) : { total: 0, parts: [] };
+      const total = r.die + r.shift + gear.total + rel.total - r.threat;
       const downed = !!who && ctx.status?.[char?.name || who] === 'downed';
       const dc = downed ? 10 : clampDc(ctx.dc);
       const outcome = outcomeOf(r.die, total, dc);
       const math = [`${r.die} (${r.label})`];
       if (r.shift) math.push(`${r.shift > 0 ? '+' : ''}${r.shift} сдвиг`);
       if (gear.total) math.push(gear.parts.join(' '));
+      if (rel.total) math.push(rel.parts.join(' '));
       if (r.threat) math.push(`−${r.threat} угроза`);
       let death: RollResult['deathSave'];
       if (downed) death = (total >= 10 && r.die !== 1) || r.die === 20 ? 'stabilized' : 'failed';

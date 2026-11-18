@@ -190,12 +190,24 @@ export const parseStateTags = (text: string): { clean: string; changes: StateCha
       changes.push({ field: STATE_FIELDS[kind], name, delta });
       return '';
     })
-    .replace(/\[(HIT|USE):[^\]]*\]/gi, '')
+    .replace(/\[(HIT|USE|CLOCK|TAKE):[^\]]*\]/gi, '')
     .replace(/\[TROPHY:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/\[FRONT:\s*([^\]|]+)\|([^\]|]*)\|([^\]|]+)\|([^\]]*)\]/gi, '')
     .replace(/\[MEMORIAL:\s*([^\]|]+)(?:\|([^\]]*))?\]/gi, '')
     .replace(/[ \t]{2,}/g, ' ');
   return { clean, changes };
+};
+
+/** Часы [CLOCK: Название +N] и подбор добычи [TAKE: Герой|Предмет]. */
+export const parseDramaTags = (text: string): { clocks: { name: string; delta: number }[]; takes: { name: string; item: string }[] } => {
+  const clocks: { name: string; delta: number }[] = [];
+  const takes: { name: string; item: string }[] = [];
+  for (const m of text.matchAll(/\[CLOCK:\s*([^\]]+?)\s*([+\-−–])\s*(\d+)\s*\]/gi)) {
+    const n = parseInt(m[3], 10);
+    if (n) clocks.push({ name: m[1].replace(/[«»"]/g, '').trim(), delta: m[2] === '+' ? n : -n });
+  }
+  for (const m of text.matchAll(/\[TAKE:\s*([^\]|]+)\|([^\]]+)\]/gi)) takes.push({ name: m[1].trim(), item: m[2].trim() });
+  return { clocks, takes };
 };
 
 /** Урон по врагам [HIT: Враг -N] и использование расходников [USE: Герой|Предмет]. */

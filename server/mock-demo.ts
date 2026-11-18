@@ -252,11 +252,18 @@ function turn(req: LlmRequest, user: string) {
     fail: ["Не вышло: в последний миг всё идёт наперекосяк.", "Расчёт оказался неверным, и мир отвечает жёстко."],
     critfail: ["Хуже некуда: ошибка оборачивается новой бедой.", "Провал настолько громкий, что его услышали все вокруг."],
   };
+  const newEchoes: string[] = [];
+  const firstClock = (dash.clocks || [])[0]?.name;
+  for (const m of user.matchAll(/\[ECHO RETURN: «([^»]+)»\]/g)) parts.push(`Прошлое напоминает о себе: ${m[1].charAt(0).toLowerCase() + m[1].slice(1)} — и это меняет расклад.`);
+  for (const m of user.matchAll(/\[CLOCK FILLED: «([^»]+)»\]/g)) parts.push(`Часы «${m[1]}» пробили. То, чего все боялись, случилось: ${pick(["ворота распахиваются", "в городе бьют тревогу", "враг выходит из тени", "мост рушится"])}.`);
+  for (const m of user.matchAll(/\[LOOT TAKEN: ([^\]]+)\]/g)) parts.push(`${m[1].replace(/забирает/, "прячет в сумку")}.`);
   const spent = [...user.matchAll(/\[TOKEN SPENT: ([^→\]]+)→ ([^\]:]+)(?::\s*([^\]]+))?\]/g)];
   for (const m of spent) parts.push(m[2].trim() === "флешбэк" ? `*Вспышка памяти.* ${m[1].trim()} вспоминает: ${m[3] || "подготовка не прошла даром"} — и сейчас это решает дело.` : m[2].trim() === "право на истину" ? `Оказывается, ${m[3] || "мир устроен чуть иначе, чем казалось"}.` : `${m[1].trim()} рывком поднимает союзника на ноги.`);
   for (const a of acts) {
     if (/\[FLASHBACK/.test(a.text)) { parts.push(`*Вспышка памяти.* **${a.who}** ${a.text.replace(/\[[^\]]*\]\s*/g, "").replace(/^./, c => c.toLowerCase())} — и вот теперь это пригодилось.`); tags.push(`[XP: ${a.who} +10]`); continue; }
     if (/\[NARRATIVE RIGHT/.test(a.text)) { parts.push(`Мир послушно меняется: ${a.text.replace(/\[[^\]]*\]\s*/g, "").replace(/^./, c => c.toLowerCase())}. **${a.who}** знал это с самого начала.`); continue; }
+    const takeItem = /подобра|забира|бер[уё]|взять|возьм/i.test(a.text) ? (dash.sceneLoot || []).find((l: string) => a.text.toLowerCase().includes(l.toLowerCase().split(" ")[0].slice(0, 5))) : undefined;
+    if (takeItem) { parts.push(`**${a.who}** забирает ${takeItem}.`); tags.push(`[TAKE: ${a.who}|${takeItem}]`); continue; }
     const kind = reaction(a.text);
     const rolled = outcomes.find(o => o.actor === a.who) || (acts.length === 1 ? outcomes[0] : undefined);
     const good = !rolled || rolled.outcome === "crit" || rolled.outcome === "success" || rolled.outcome === "partial";
@@ -267,13 +274,14 @@ function turn(req: LlmRequest, user: string) {
     if (rolled) {
       parts.push(`**${a.who}**: ${pick(OUT[rolled.outcome])}`);
       if (!good) {
+        if (firstClock) tags.push(`[CLOCK: ${firstClock} +1]`);
         tags.push(`[DAMAGE: ${a.who} -${rolled.outcome === "critfail" ? between(3, 5) : between(1, 3)}]`);
         if (chance(0.5)) tags.push(`[STRESS: ${a.who} +1]`);
         tags.push(`[XP: ${a.who} +${between(5, 10)}]`);
         continue;
       }
       if (rolled.outcome === "partial") tags.push(chance(0.5) ? `[STRESS: ${a.who} +1]` : `[DAMAGE: ${a.who} -1]`);
-      if (rolled.outcome === "crit") tags.push(`[TOKEN: ${a.who} +1]`);
+      if (rolled.outcome === "crit") newEchoes.push(`${a.who} совершил то, о чём будут говорить`);
     }
     const clean = a.text.replace(/#\w+/g, "").replace(/\s+/g, " ").trim();
     const short = clean.length > 70 ? clean.slice(0, 70) + "…" : clean;
@@ -320,6 +328,7 @@ function turn(req: LlmRequest, user: string) {
     sceneLoot: loot,
     suggestedRoll: { type: pick(["classic", "triple", "shifted"]), reason: pick(["Ловкость", "Сила воли", "Внимательность", "Хитрость"]), dc: pick([10, 12, 12, 15]) },
   };
+  if (newEchoes.length || /talk/.test(acts.map(a => reaction(a.text)).join())) out.echoes = [...(dash.echoes || []), ...newEchoes, ...(acts.some(a => reaction(a.text) === "talk") ? [`${acts[0].who} дал слово, и его запомнили`] : [])].slice(-6);
   if (newThreats.length) out.threats = [...(dash.threats || []), ...newThreats];
   if (Object.keys(slots).length) out.characters = chars.map(c => ({ name: c.name, actions: actionsFor(g, c.name, slots[c.name]) }));
   let tail = `\n\n<dashboard_json>${JSON.stringify(out)}</dashboard_json>`;

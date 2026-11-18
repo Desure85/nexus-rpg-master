@@ -9,7 +9,7 @@ import {
   CLARIFY_SYSTEM_PROMPT, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
-import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags } from "../shared/parse";
+import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags } from "../shared/parse";
 import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
 import { actionSlotsTag } from "../shared/oracle";
 import { createOracleStore, tablesFor, buildOraclePrompt, parseOracleResponse, type OracleStore, type OracleTableDef } from "./oracle";
@@ -258,6 +258,7 @@ export class Engine {
       characters: dash.characters || [],
       status: Object.fromEntries(Object.entries(engineChars).map(([n, c]: [string, any]) => [n, c.status])),
       gearEnabled: this.isEnabled(this.effectiveConfig(s).mechanics, "equipment"),
+      relationsEnabled: this.isEnabled(this.effectiveConfig(s).mechanics, "relationships"),
       dc: (dash.suggestedRoll as any)?.dc,
     };
   }
@@ -273,11 +274,24 @@ export class Engine {
 
     if (finalContent) {
       const isMetaCmd = META_COMMAND_RE.test(finalContent);
+      // Броски мастера разрешаем сразу: провал героя повышает шанс встречи
+      if (!isTale && finalContent.includes("[ROLL:")) finalContent = resolveRolls(finalContent, this.rollContext(s)).text;
       if (!isTale && !isMetaCmd) {
-        const ec = this.game.encounterCheck(sessionId, s.style || "balanced", false);
+        let lastA = -1;
+        for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].role === "assistant") { lastA = i; break; }
+        const sinceMaster = s.history.slice(lastA + 1).filter(m => m.role === "user").map(m => m.content).join("\n") + "\n" + finalContent;
+        const playerFailed = resolvedOutcomes(sinceMaster).some(o => o.outcome === "fail" || o.outcome === "critfail");
+        const ec = this.game.encounterCheck(sessionId, s.style || "balanced", playerFailed);
         if (ec.tag) finalContent += `\n\n${ec.tag}`;
         // Оракул: случайный мотив — всегда при событии, иначе примерно в каждом третьем ходе
         if (ec.result !== "none" || Math.random() < 0.35) finalContent += `\n\n${this.museFor(s, ec.result !== "none")}`;
+        // Эхо прошлых решений: раз в 4 хода движок возвращает одно из них в сюжет
+        const dashNow = lastDashboard(s.history);
+        const round = s.history.filter(m => m.role === "assistant").length;
+        if (this.isEnabled(cfg.mechanics, "echoes") && (dashNow.echoes || []).length && round > 0 && round % 4 === 0) {
+          const echo = dashNow.echoes[Math.floor(Math.random() * dashNow.echoes.length)];
+          finalContent += `\n\n[ECHO RETURN: «${echo}»]`;
+        }
         const chars = this.game.ensureEngineState(sessionId);
         const stateTag = this.game.stateToTag(chars);
         if (stateTag) finalContent += `\n\n[STATE: ${stateTag}]`;
@@ -441,6 +455,40 @@ export class Engine {
         // побеждённые угрозы уходят со сцены
         threats = threats.filter(t => { const m = String(t.hp).match(hpRe); return !m || +m[1] > 0; });
         dashboard.threats = threats;
+      }
+
+      // Часы принадлежат движку: прогресс известных часов меняется только тегами [CLOCK]
+      if (this.isEnabled(mechanics, "clocks")) {
+        const norm = (n: string) => String(n || "").toLowerCase().replace(/ё/g, "е").replace(/[«»"]/g, "").trim();
+        const prevClocks = currentDashboard.clocks || [];
+        let clocks = (dashboard.clocks || []).map(c => {
+          const p = prevClocks.find(x => norm(x.name) === norm(c.name));
+          const total = Math.max(2, Math.min(12, Number(p?.total ?? c.total) || 6));
+          return { ...c, total, progress: p ? Number(p.progress) || 0 : Math.max(0, Math.min(total - 1, Number(c.progress) || 0)) };
+        });
+        for (const t of parseDramaTags(aiContent).clocks) {
+          let i = clocks.findIndex(c => norm(c.name) === norm(t.name));
+          if (i < 0) i = clocks.findIndex(c => norm(c.name).includes(norm(t.name)) || norm(t.name).includes(norm(c.name)));
+          if (i < 0) continue;
+          clocks[i] = { ...clocks[i], progress: Math.max(0, Math.min(clocks[i].total, clocks[i].progress + t.delta)) };
+        }
+        // заполненные часы: событие наступает в следующем ходе, часы уходят с доски
+        for (const c of clocks.filter(c => c.progress >= c.total)) {
+          this.game.queueNews(sessionId, `[CLOCK FILLED: «${c.name}»] Часы заполнились — событие наступает прямо сейчас. Опиши его последствия.`);
+        }
+        dashboard.clocks = clocks.filter(c => c.progress < c.total);
+      }
+
+      // Добыча: [TAKE: Герой|Предмет] переносит предмет со сцены в инвентарь
+      for (const t of parseDramaTags(aiContent).takes) {
+        const name = this.game.resolveName(chars, t.name);
+        const ch = (dashboard.characters || []).find(c => c.name === name);
+        const loot = dashboard.sceneLoot || [];
+        const q = t.item.toLowerCase();
+        const idx = loot.findIndex(l => l.toLowerCase() === q || l.toLowerCase().includes(q) || q.includes(l.toLowerCase()));
+        if (!ch || idx < 0) continue;
+        ch.inventory = [...(ch.inventory || []), loot[idx]];
+        dashboard.sceneLoot = loot.filter((_, i) => i !== idx);
       }
 
       // Пул Рока: обнуление после мирового события и дубли Хаоса — движком

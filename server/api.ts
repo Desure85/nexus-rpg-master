@@ -157,7 +157,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   //  GET — по ссылке (UUID сессии — секрет приглашения);
   //  claim/actions/roll — игрок (секрет устройства);
   //  всё остальное — только мастер, и изменения истории идут через очередь сессии.
-  const PLAYER_ROUTES = /^\/(claim|actions|use|actions\/[^/]+\/reroll)\/?$/;
+  const PLAYER_ROUTES = /^\/(claim|actions|use|loot\/take|actions\/[^/]+\/reroll)\/?$/;
   const UNLOCKED_ROUTES = /^\/(turn|commit|travel|explore|oracle\/generate)\/?$/;
   app.use("/api/sessions/:id", (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id;
@@ -452,6 +452,33 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       gameApi.queueNews(req.params.id, r.tag);
       broadcast(req.params.id, { type: "update", sessionId: req.params.id });
       res.json({ status: "ok", tag: r.tag });
+    });
+  });
+
+  // Подобрать добычу со сцены: мастер — любому герою, игрок — своему. ИИ узнает со следующим ходом.
+  app.post("/api/sessions/:id/loot/take", (req, res) => {
+    const charName = str(req.body?.charName, 60);
+    const item = str(req.body?.item, 200);
+    if (!charName || !item) return res.status(400).json({ error: "charName/item required" });
+    if (!(req as any).isOwner) {
+      const claim = req.auth.deviceId && db.prepare("SELECT 1 FROM claims WHERE session_id = ? AND char_name = ? AND status = 'approved' AND device_id = ?").get(req.params.id, charName, req.auth.deviceId);
+      if (!claim) return res.status(403).json({ error: "not_your_character", message: "Персонаж не закреплён за этим устройством" });
+    }
+    engine.withLock(req.params.id, () => {
+      const s = loadSession(db, req.params.id)!;
+      let idx = -1;
+      for (let i = s.history.length - 1; i >= 0; i--) if (s.history[i].dashboard) { idx = i; break; }
+      const dash = idx >= 0 ? structuredClone(s.history[idx].dashboard!) : null;
+      const ch = dash?.characters?.find(c => c.name === charName);
+      const li = (dash?.sceneLoot || []).indexOf(item);
+      if (!dash || !ch || li < 0) return res.status(404).json({ error: "not_found", message: "Этого предмета уже нет на сцене" });
+      dash.sceneLoot = dash.sceneLoot!.filter((_, i) => i !== li);
+      ch.inventory = [...(ch.inventory || []), item];
+      s.history[idx] = { ...s.history[idx], dashboard: dash };
+      saveSession(db, s);
+      gameApi.queueNews(req.params.id, `[LOOT TAKEN: ${charName} забирает «${item}»]`);
+      broadcast(req.params.id, { type: "update", sessionId: req.params.id });
+      res.json({ status: "ok" });
     });
   });
 
