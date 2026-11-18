@@ -21,7 +21,8 @@ const idbSet = async (k: string, v: any) => {
   return new Promise<void>(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => res(); });
 };
 let stopped = false;
-export const resetDemoStorage = async () => { stopped = true; const db = await idb(); await new Promise<void>(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').clear(); t.oncomplete = () => res(); }); };
+export const resetDemoStorage = async () => { stopped = true;
+  await (await import('./shims/app-crypto')).forgetVault().catch(() => undefined); const db = await idb(); await new Promise<void>(res => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').clear(); t.oncomplete = () => res(); }); };
 
 export interface DemoServer {
   handle: (r: DemoRequest) => Promise<DemoResponse>;
@@ -34,9 +35,10 @@ export async function bootServer(emit: (data: any) => void): Promise<DemoServer>
   const saved = await idbGet('db');
   setSqlJs(SQL, saved instanceof Uint8Array ? saved : null);
 
-  const [{ openDatabase }, { buildApi, apiErrorHandler }, { createApp }] = await Promise.all([
-    import('../server/db'), import('../server/api'), import('./express-shim'),
+  const [{ openDatabase }, { buildApi, apiErrorHandler }, { createApp }, vault] = await Promise.all([
+    import('../server/db'), import('../server/api'), import('./express-shim'), import('./shims/app-crypto'),
   ]);
+  await vault.loadVault();
   const db = openDatabase(':memory:');
   const app = createApp();
   let flushTimer: ReturnType<typeof setTimeout> | undefined;

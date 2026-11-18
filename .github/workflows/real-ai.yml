@@ -1,0 +1,65 @@
+name: Real AI play-test
+
+# Сквозной прогон интерфейса на настоящей модели: соло, мультиплеер (игрок с телефона), сказка.
+# Отчёт с ответами мастера и проверками + скриншоты — в артефакте «play-test».
+# Нужен секрет репозитория с ключом провайдера (OPENCODE_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY).
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "opencode | openrouter | gemini"
+        default: opencode
+      model:
+        description: "Модель (opencode Go: deepseek-v4.1-flash, mimo-v2.6-flash; OpenRouter: id модели)"
+        default: deepseek-v4.1-flash
+      only:
+        description: "Сценарии: solo,mp,tale"
+        default: solo,mp,tale
+
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm i --no-save playwright@1 && npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Start server
+        env:
+          LLM_PROVIDER: ${{ inputs.provider }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENCODE_MODEL: ${{ inputs.provider == 'opencode' && inputs.model || '' }}
+          OPENROUTER_MODEL: ${{ inputs.provider == 'openrouter' && inputs.model || '' }}
+          GEMINI_MODEL: ${{ inputs.provider == 'gemini' && inputs.model || '' }}
+          GEMINI_REST: "1"
+          DB_PATH: /tmp/play.db
+          PORT: "3000"
+          APP_SECRET: ${{ github.run_id }}-play-test
+          COOKIE_SECURE: "false"
+          FREE_CREDITS: "100000"
+        run: |
+          nohup node dist-server/server.mjs > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:3000/api/health && break; sleep 1; done
+      - name: Play
+        env:
+          BASE_URL: http://127.0.0.1:3000
+          OUT_DIR: e2e-report
+          ONLY: ${{ inputs.only }}
+          REPORT_TITLE: ${{ inputs.provider }} / ${{ inputs.model }}
+        run: node e2e/play.mjs
+      - if: always()
+        run: |
+          cp server.log e2e-report/ || true
+          cat e2e-report/report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-test
+          path: e2e-report

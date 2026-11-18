@@ -168,6 +168,47 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   return { text: acc, usage };
 }
 
+/** Gemini через REST (SSE) — без SDK: работает и в Node, и прямо в браузере (демо). */
+async function geminiRestStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal): Promise<{ text: string; usage?: LlmUsage }> {
+  const apiKey = s.apiKey || env("GEMINI_API_KEY");
+  if (!apiKey) throw new LlmError("Не задан ключ Gemini", 500);
+  const model = s.modelName && s.modelName !== "local-model" ? s.modelName : env("GEMINI_MODEL") || "gemini-3-flash-preview";
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: req.system }] },
+      contents: normalizeMessages(req.messages).map(m => ({ role: m.role === "user" ? "user" : "model", parts: [{ text: m.content }] })),
+      generationConfig: { temperature: req.temperature ?? 0.7, ...(req.maxTokens ? { maxOutputTokens: req.maxTokens } : {}) },
+    }),
+  });
+  if (!res.ok) throw new LlmError(`Gemini ответил HTTP ${res.status}: ${(await res.text().catch(() => "")).slice(0, 300)}`);
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buf = "", acc = "";
+  let usage: LlmUsage | undefined;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      try {
+        const ev = JSON.parse(line.slice(5).trim());
+        const t = (ev.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || "").join("");
+        if (t) { acc += t; onDelta(t); }
+        const um = ev.usageMetadata;
+        if (um) usage = { inputTokens: um.promptTokenCount || 0, outputTokens: um.candidatesTokenCount || 0, estimated: false };
+      } catch { /* неполная строка */ }
+    }
+  }
+  return { text: acc, usage };
+}
+
 async function geminiStream(s: LlmSettings, req: LlmRequest, onDelta: (d: string) => void, signal: AbortSignal): Promise<{ text: string; usage?: LlmUsage }> {
   const apiKey = s.apiKey || env("GEMINI_API_KEY");
   if (!apiKey || apiKey === "MY_GEMINI_API_KEY") throw new LlmError("GEMINI_API_KEY не настроен на сервере", 500);
@@ -213,8 +254,14 @@ export async function completeWithUsage(settings: LlmSettings, reqIn: LlmRequest
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS());
   try {
     let r: { text: string; usage?: LlmUsage };
+    const needsKey = provider === "openrouter" ? !(settings.openRouterApiKey || env("OPENROUTER_API_KEY"))
+      : provider === "opencode" ? !(settings.apiKey || env("OPENCODE_API_KEY"))
+      : provider === "gemini" ? !(settings.apiKey || env("GEMINI_API_KEY")) : false;
+    if (needsKey) throw new LlmError(env("NODE_ENV") === "demo"
+      ? "Ключ ИИ не сохранён на этом устройстве. Откройте «Пространство → ИИ» и введите ключ заново (или включите «Запомнить на этом устройстве»)."
+      : `Не задан API-ключ для ${provider}. Укажите ключ в настройках пространства или платформы.`, 400);
     if (provider === "mock") r = { text: await mockComplete(req, d => filter.push(d)) };
-    else if (provider === "gemini") r = await geminiStream(settings, req, d => filter.push(d), ctrl.signal);
+    else if (provider === "gemini") r = await (env("GEMINI_REST") === "1" ? geminiRestStream : geminiStream)(settings, req, d => filter.push(d), ctrl.signal);
     else r = await openAiStream(openAiTarget(provider, settings), req, d => filter.push(d), ctrl.signal, provider !== "local");
     filter.flush();
     const clean = stripMetaPrefix(r.text);
@@ -229,6 +276,10 @@ export async function completeWithUsage(settings: LlmSettings, reqIn: LlmRequest
     if (e?.name === "AbortError" || ctrl.signal.aborted) throw new LlmError(`Модель не ответила за ${Math.round(TIMEOUT_MS() / 1000)} с`, 504);
     if (e instanceof LlmError) throw e;
     const cause = e?.cause?.code || e?.cause?.message;
+    // В браузере (демо) сетевой отказ почти всегда означает, что провайдер не принимает запросы со сторонних сайтов (CORS)
+    if (env("NODE_ENV") === "demo" && /Failed to fetch|NetworkError|Load failed/i.test(String(e?.message))) {
+      throw new LlmError(`Браузер не смог обратиться к ${provider}: провайдер не принимает запросы со сторонних сайтов или сеть недоступна. В демо работают OpenRouter и Gemini; opencode — только на своём сервере игры.`);
+    }
     throw new LlmError(`Ошибка ИИ-провайдера (${provider}): ${e?.message || e}${cause ? ` [${cause}]` : ""}`);
   } finally {
     clearTimeout(timer);

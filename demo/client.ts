@@ -129,3 +129,15 @@ bus?.addEventListener('message', async ev => {
 
 // стартуем выборы сразу, чтобы первая отрисовка не ждала
 void electLeader();
+
+/** «Забыть ключ ИИ»: стираем ключи в ведущей вкладке (где живёт сервер) и на устройстве. */
+export async function demoForgetKeys() {
+  if (server) { const { forgetVault } = await import('./shims/app-crypto'); await forgetVault(); }
+  else bus?.postMessage({ kind: 'forget-keys' });
+  try { localStorage.removeItem('nexus_demo_remember_key'); } catch { /* */ }
+}
+bus?.addEventListener('message', async ev => {
+  if (ev.data?.kind !== 'forget-keys' || !server) return;
+  const { forgetVault } = await import('./shims/app-crypto');
+  await forgetVault();
+});

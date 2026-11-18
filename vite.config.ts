@@ -4,10 +4,27 @@ import fs from 'fs';
 import path from 'path';
 import { defineConfig } from 'vite';
 
+/**
+ * CSP демо: ключ ИИ пользователя может уйти только провайдерам ИИ (и на локальную модель).
+ * 'wasm-unsafe-eval' — для sql.js, inline-скрипт — окружение демо.
+ */
+const DEMO_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self' https://openrouter.ai https://generativelanguage.googleapis.com https://opencode.ai http://localhost:* http://127.0.0.1:*",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join('; ');
+
 /** Демо: окружение «сервера» задаётся инлайн-скриптом раньше любых модулей. */
 const demoEnvPlugin = () => ({
   name: 'nexus-demo-env',
-  transformIndexHtml: (html: string) => html.replace('<head>', `<head>\n    <script>${fs.readFileSync(path.resolve(__dirname, 'demo/env.js'), 'utf8')}</script>`),
+  transformIndexHtml: (html: string) => html.replace('<head>', `<head>
+    <meta http-equiv="Content-Security-Policy" content="${DEMO_CSP}">
+    <script>${fs.readFileSync(path.resolve(__dirname, 'demo/env.js'), 'utf8')}</script>`),
 });
 
 // ВАЖНО: никаких секретов в define — всё, что попадает сюда, видно в браузере.
