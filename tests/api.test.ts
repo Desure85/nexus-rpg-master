@@ -887,3 +887,50 @@ describe('сказка и гайд', () => {
   });
 });
 
+
+describe('архетипы, зал героев, достижения', () => {
+  const dashOf = async (id: string) => lastDash((await gm().get(`/api/sessions/${id}`)).body);
+  const withArchetypes = () => ({ ...rpgSetup(), setting: 'Киберпанк. Мегаполис под дождём', characters: [
+    { name: 'Арн', concept: 'боец', gender: 'М', archetype: 'warrior' },
+    { name: 'Лиса', concept: 'взломщица', gender: 'Ж', archetype: 'hacker' },
+  ] });
+
+  it('архетип задаёт стартовые числа, снаряжение жанра и способность с бонусом', async () => {
+    const id = await createSession(withArchetypes());
+    const d = await dashOf(id);
+    const arn = d.characters.find((c: any) => c.name === 'Арн');
+    expect(arn.hp).toBe('14/14');
+    expect(arn.equipment[0].item.name).toBe('Моноклинок');
+    expect(arn.abilities[0]).toMatchObject({ name: 'Стальная хватка', bonus: '+1 к атаке' });
+    expect((await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'].hp_max).toBe(14);
+    const { gearBonus } = await import('../shared/resolve');
+    const lisa = d.characters.find((c: any) => c.name === 'Лиса');
+    expect(gearBonus(lisa, 'взламываю терминал').total).toBe(3);
+  });
+
+  it('герой сохраняется в зал и приходит ветераном в новую игру', async () => {
+    const id = await createSession(withArchetypes());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн учится #xp' });
+    await ctx.engine.whenIdle(id);
+    const saved = await gm().post(`/api/sessions/${id}/heroes/save`, { charName: 'Арн' });
+    expect(saved.status).toBe(200);
+    expect(saved.body.hero).toMatchObject({ name: 'Арн', archetype: 'warrior', adventures: 1 });
+    const list = (await gm().get('/api/heroes')).body;
+    const hero = list.find((h: any) => h.name === 'Арн');
+    const id2 = await createSession({ ...rpgSetup(), characters: [{ veteranId: hero.id, name: '', concept: '' }] });
+    const s2 = (await gm().get(`/api/sessions/${id2}`)).body;
+    expect(s2.history[0].content).toContain('[ветеран: уровень');
+    const arn = lastDash(s2).characters.find((c: any) => c.name === 'Арн');
+    expect(arn.xp).toBe(hero.xp);
+    expect(arn.abilities.some((a: any) => a.name === 'Стальная хватка')).toBe(true);
+  });
+
+  it('крит открывает достижение', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт', rolls: ['**Арн** performs *удар*: [ROLL: 1d20 = 20]'] });
+    await ctx.engine.whenIdle(id);
+    const list = (await gm().get('/api/achievements')).body;
+    expect(list.find((a: any) => a.code === 'crit').unlocked_at).toBeTruthy();
+    expect(list.find((a: any) => a.code === 'storyteller').unlocked_at).toBeNull();
+  });
+});

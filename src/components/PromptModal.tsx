@@ -4,6 +4,8 @@ interface PromptOptions {
   message: string;
   defaultValue?: string;
   isConfirm?: boolean;
+  /** Просто сообщение с одной кнопкой «Понятно» */
+  isAlert?: boolean;
 }
 
 let promptResolver: ((value: string | null) => void) | null = null;
@@ -24,6 +26,13 @@ export const customConfirm = (message: string): Promise<boolean> => {
     window.dispatchEvent(new Event('custom-prompt'));
   });
 };
+
+/** Сообщение без выбора (вместо window.alert). */
+export const customAlert = (message: string): Promise<void> => new Promise(resolve => {
+  promptResolver = () => resolve();
+  promptOptions = { message, isConfirm: true, isAlert: true };
+  window.dispatchEvent(new Event('custom-prompt'));
+});
 
 export const PromptModal: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -47,6 +56,17 @@ export const PromptModal: React.FC = () => {
     return () => window.removeEventListener('custom-prompt', handlePrompt);
   }, []);
 
+  // Enter — подтвердить, Esc — отменить (и для подтверждений без поля ввода)
+  useEffect(() => {
+    if (!isOpen || !options?.isConfirm) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); setIsOpen(false); promptResolver?.('true'); }
+      if (e.key === 'Escape') { setIsOpen(false); promptResolver?.(options.isAlert ? 'true' : null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, options]);
+
   if (!isOpen || !options) return null;
 
   const handleClose = (value: string | null) => {
@@ -55,9 +75,11 @@ export const PromptModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[10002] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" role="dialog" aria-modal="true">
       <div className="bg-zinc-900 border border-white/10 rounded-xl p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-lg font-bold text-white mb-4">{options.message}</h3>
+        {options.message.length > 90
+          ? <p className="text-sm text-white/85 leading-relaxed mb-5 whitespace-pre-line">{options.message}</p>
+          : <h3 className="text-lg font-bold text-white mb-4 whitespace-pre-line">{options.message}</h3>}
         {!options.isConfirm && (
           <input
             ref={inputRef}
@@ -72,17 +94,19 @@ export const PromptModal: React.FC = () => {
           />
         )}
         <div className="flex justify-end gap-3">
-          <button
-            onClick={() => handleClose(null)}
-            className="px-4 py-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
-          >
-            Отмена
-          </button>
+          {!options.isAlert && (
+            <button
+              onClick={() => handleClose(null)}
+              className="px-4 py-2 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
+            >
+              Отмена
+            </button>
+          )}
           <button
             onClick={() => handleClose(options.isConfirm ? 'true' : inputValue)}
             className="px-4 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 transition-all font-bold"
           >
-            {options.isConfirm ? 'Confirm' : 'OK'}
+            {options.isAlert ? 'Понятно' : options.isConfirm ? 'Да' : 'Готово'}
           </button>
         </div>
       </div>

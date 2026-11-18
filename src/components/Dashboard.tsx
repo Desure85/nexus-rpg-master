@@ -3,9 +3,10 @@ import { DashboardData, MechanicConfig, Character, stressValue, itemName, slotLa
 import { motion, AnimatePresence } from 'motion/react';
 import QRCode from 'qrcode';
 import { Activity, Shield, Zap, Target, Wind, AlertTriangle, MoreHorizontal, RotateCcw, ZapOff, MessageSquarePlus, Edit2, Plus, Trash2, ScrollText, Share2, Gem, Download, X, MapPin, Footprints, Lock, Eye, Menu, GitBranch, QrCode, Search } from 'lucide-react';
-import { customPrompt, customConfirm } from './PromptModal';
+import { customPrompt, customConfirm, customAlert } from './PromptModal';
 import { LocationMap } from './LocationMap';
 import { api, characterLink } from '../api';
+import { archetypeById } from '../../shared/archetypes';
 import { isConsumable, describeEffect } from '../../shared/items';
 import { levelFromXp } from '../../shared/rules';
 import { Portal } from './Portal';
@@ -115,7 +116,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
         ok();
       } catch (e2) {
         console.error("Copy failed", e2);
-        alert("Ссылка: " + qrData.url);
+        void customAlert("Ссылка: " + qrData.url);
       }
     }
   };
@@ -158,9 +159,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
     if ((kind === 'flashback' || kind === 'narrative' || kind === 'stabilize') && !note.trim()) return;
     try {
       await api(`/api/sessions/${sessionId}/tokens`, { body: { charName, kind, note } });
-      if (kind === 'reroll') await customConfirm(`Жетон потрачен. Брось кубик за ${charName} ещё раз в лотке кубиков — прежний бросок можно не отправлять.`);
+      if (kind === 'reroll') await customAlert(`Жетон потрачен. Брось кубик за ${charName} ещё раз в лотке кубиков — прежний бросок можно не отправлять.`);
     } catch (e) {
-      await customConfirm(e instanceof Error ? e.message : 'Не удалось потратить жетон');
+      await customAlert(e instanceof Error ? e.message : 'Не удалось потратить жетон');
     }
   };
 
@@ -217,6 +218,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   <div className="flex flex-col items-start min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <h4 className="font-display text-lg leading-tight text-white flex items-center gap-1 group min-w-0">
+                        {archetypeById((char as any).archetype) && <span className="shrink-0 text-sm" title={archetypeById((char as any).archetype)!.name}>{archetypeById((char as any).archetype)!.icon}</span>}
                         <span className="truncate">{char.name}</span>
                         {(char as any).status === 'downed' && <span className="shrink-0 text-[9px] font-sans font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/20 text-red-300" title="0 HP: выбыл. Спасбросок d20 (10+) или помощь союзника вернут его с 1 HP">💀 Повержен</span>}
                         <button 
@@ -230,6 +232,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           <Edit2 size={10} className="text-white/40" />
                         </button>
                       </h4>
+                      {sessionId && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const r = await api<any>(`/api/sessions/${sessionId}/heroes/save`, { body: { charName: char.name } });
+                              await customAlert(`${char.name} в зале героев: уровень ${r.hero.level}, приключений ${r.hero.adventures}. В новой игре выберите «Ветеран из зала» — герой придёт со своим опытом, способностями и вещами.`);
+                            } catch (e) { await customAlert(e instanceof Error ? e.message : 'Не удалось сохранить'); }
+                          }}
+                          className="p-1 hover:bg-white/10 rounded text-white/30 hover:text-amber-300 transition-all shrink-0"
+                          title="Сохранить героя в зал героев (для следующих игр)"
+                        >🎖️</button>
+                      )}
                       <button 
                         onClick={() => showQr(char.name)}
                         className="p-1 hover:bg-white/10 rounded text-white/30 hover:text-amber-400 transition-all shrink-0"
@@ -656,7 +670,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           className={`px-2 py-1 border rounded-full text-[9px] cursor-help ${typeCls}`}
                           title={`${ab.type || 'boon'}${ab.desc ? '\n' + ab.desc : ''}${ab.effect && ab.effect !== '—' ? '\n' + ab.effect : ''}`}
                         >
-                          {ab.type === 'curse' ? '✚' : '✦'} {ab.name}
+                          {ab.type === 'curse' ? '✚' : '✦'} {ab.name}{ab.bonus ? <b className="ml-1 opacity-80">{ab.bonus}</b> : null}
                         </span>
                       );
                     })}
@@ -1295,7 +1309,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                             );
                             onUpdate?.({ ...data, sceneLoot: newLoot, characters: newChars });
                           } else {
-                            alert("Character not found.");
+                            void customAlert("Герой не найден.");
                           }
                         }
                       }}

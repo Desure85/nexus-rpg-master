@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Wand2, Swords, UserPlus, Trash2, X, Sparkles } from 'lucide-react';
+import { ARCHETYPES } from '../../shared/archetypes';
+import { api } from '../api';
+import { customAlert } from './PromptModal';
 
 export type SessionMode = 'short' | 'campaign' | 'tale';
 
@@ -9,7 +12,8 @@ export interface SetupData {
   plotHook: string;
   style: string;
   mode: SessionMode;
-  characters: { id: string; name: string; concept: string; gender: string }[];
+  title?: string;
+  characters: { id: string; name: string; concept: string; gender: string; archetype?: string; veteranId?: string }[];
   multiplayer?: boolean;
   autoApprove?: boolean;
   tale?: { age: string; chapters: number; moral?: string };
@@ -48,7 +52,9 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
   const [taleMoral, setTaleMoral] = useState('');
   const [isStarting, setIsStarting] = useState(false);
   const isTale = mode === 'tale';
-  const [characters, setCharacters] = useState<{ id: string; name: string; concept: string; gender: string }[]>([
+  const [veterans, setVeterans] = useState<{ id: string; name: string; concept: string; gender: string; archetype?: string; level: number; adventures: number }[]>([]);
+  useEffect(() => { api<any[]>('/api/heroes').then(setVeterans).catch(() => undefined); }, []);
+  const [characters, setCharacters] = useState<{ id: string; name: string; concept: string; gender: string; archetype?: string; veteranId?: string }[]>([
     { id: Date.now().toString() + Math.random().toString(), name: '', concept: '', gender: 'М' }
   ]);
   
@@ -69,7 +75,7 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
     } catch (e) { 
       console.error(e);
       const msg = e instanceof Error ? e.message : "Неизвестная ошибка";
-      alert(`Ошибка генерации сеттинга: ${msg}`);
+      void customAlert(`Ошибка генерации сеттинга: ${msg}`);
     }
     setIsGenSetting(false);
   };
@@ -84,7 +90,7 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
     } catch (e) { 
       console.error(e);
       const msg = e instanceof Error ? e.message : "Неизвестная ошибка";
-      alert(`Ошибка генерации сюжета: ${msg}`);
+      void customAlert(`Ошибка генерации сюжета: ${msg}`);
     }
     setIsGenPlot(false);
   };
@@ -133,23 +139,23 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
       setCharacters(chars => chars.map(c => c.id === id ? { ...c, name, concept } : c));
     } catch (e) { 
       console.error(e);
-      alert("Ошибка генерации персонажа.");
+      void customAlert("Ошибка генерации персонажа.");
     }
     setGenCharId(null);
   };
 
   const handleStart = async () => {
     if (!setting.trim()) {
-      alert(isTale ? "Опишите мир сказки!" : "Пожалуйста, укажите сеттинг!");
+      void customAlert(isTale ? "Опишите мир сказки!" : "Пожалуйста, укажите сеттинг!");
       return;
     }
-    const validChars = characters.filter(c => c.name.trim() && (isTale || c.concept.trim()));
+    const validChars = characters.filter(c => c.veteranId || (c.name.trim() && (isTale || c.concept.trim())));
     if (validChars.length === 0) {
-      alert(isTale ? "Добавьте хотя бы одного героя сказки!" : "Добавьте хотя бы одного персонажа с именем и концептом!");
+      void customAlert(isTale ? "Добавьте хотя бы одного героя сказки!" : "Добавьте хотя бы одного персонажа с именем и концептом!");
       return;
     }
     if (new Set(validChars.map(c => c.name.trim())).size !== validChars.length) {
-      alert("Имена героев должны различаться.");
+      void customAlert("Имена героев должны различаться.");
       return;
     }
     setIsStarting(true);
@@ -224,7 +230,7 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
         {/* Plot Hook Section */}
         <section className="space-y-3">
           <div className="flex justify-between items-end">
-            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Завязка (необязательно)' : 'Завязка сюжета (Plot Hook)'}</label>
+            <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Завязка (необязательно)' : 'Завязка сюжета'}</label>
             <button 
               onClick={handleGenPlot}
               disabled={isGenPlot}
@@ -375,6 +381,36 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
                       className="w-full sm:w-auto sm:flex-1 min-w-0 bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-emerald-500/50"
                     />
                   </div>
+                  {!isTale && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ARCHETYPES.map(a => (
+                        <button
+                          key={a.id}
+                          onClick={() => setCharacters(chars => chars.map(c => c.id === char.id ? { ...c, archetype: c.archetype === a.id ? undefined : a.id } : c))}
+                          title={`${a.pitch}. HP ${a.hp}, жетонов ${a.tokens}, золота ${a.gold}. «${a.ability.name}»: ${a.ability.bonus}. ${a.ability.desc}`}
+                          className={`px-2 py-1 rounded-full text-[11px] border transition-all ${char.archetype === a.id ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200' : 'border-white/10 text-white/50 hover:text-white'}`}
+                        >{a.icon} {a.name}</button>
+                      ))}
+                      {veterans.length > 0 && (
+                        <select
+                          value={char.veteranId || ''}
+                          onChange={e => {
+                            const v = veterans.find(h => h.id === e.target.value);
+                            setCharacters(chars => chars.map(c => c.id === char.id ? (v ? { ...c, veteranId: v.id, name: v.name, concept: v.concept, gender: v.gender, archetype: v.archetype } : { ...c, veteranId: undefined }) : c));
+                          }}
+                          className="px-2 py-1 rounded-full text-[11px] bg-amber-400/10 border border-amber-400/30 text-amber-100"
+                          title="Взять героя из зала: он придёт со своим опытом, способностями и вещами"
+                        >
+                          <option value="">🎖️ Ветеран из зала…</option>
+                          {veterans.map(h => <option key={h.id} value={h.id}>{h.name} · ур. {h.level} · приключений: {h.adventures}</option>)}
+                        </select>
+                      )}
+                    </div>
+                  )}
+                  {!isTale && char.archetype && (() => {
+                    const a = ARCHETYPES.find(x => x.id === char.archetype)!;
+                    return <p className="text-[11px] text-white/45">{a.icon} <b className="text-white/70">{a.name}</b>: HP {a.hp} · жетонов {a.tokens} · 🪙 {a.gold} · «{a.ability.name}» ({a.ability.bonus}) — {a.ability.desc}</p>;
+                  })()}
                 </div>
                 <div className="flex flex-col gap-2 pt-1">
                   <button 
