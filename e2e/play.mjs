@@ -1,0 +1,232 @@
+// Сквозной прогон всех режимов через настоящий интерфейс (Playwright) — на любом ИИ-провайдере сервера.
+// Локально: LLM_PROVIDER=mock MOCK_STYLE=demo npm start; BASE_URL=http://localhost:3000 node e2e/play.mjs
+// В CI (workflow «Real AI play-test»): сервер на opencode/OpenRouter/Gemini, отчёт и скриншоты — в артефактах.
+import { chromium } from 'playwright';
+import fs from 'fs';
+import path from 'path';
+
+const BASE = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const OUT = path.resolve(process.env.OUT_DIR || 'e2e-report');
+const TURN_TIMEOUT = Number(process.env.TURN_TIMEOUT_MS || 240_000);
+fs.mkdirSync(OUT, { recursive: true });
+
+const report = [];
+const checks = [];
+let shot = 0;
+const log = (...a) => { console.log(...a); };
+const check = (name, ok, detail = '') => { checks.push({ name, ok: !!ok, detail }); log(`${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`); };
+const snap = async (page, name) => { const f = `${String(++shot).padStart(2, '0')}_${name}.png`; await page.screenshot({ path: path.join(OUT, f), fullPage: false }); return f; };
+
+const api = async (page, url, opts = {}) => page.evaluate(async ([u, o]) => {
+  const r = await fetch(u, { credentials: 'same-origin', headers: { 'x-nexus-client': '1', 'Content-Type': 'application/json', 'x-device-id': localStorage.getItem('nexus_device_id') || 'e2e-device-0000000001' }, ...o });
+  return { status: r.status, body: await r.json().catch(() => null) };
+}, [url, opts]);
+
+/** Ждём конца хода мастера: сессия не занята и последний ответ — от мастера. */
+const waitTurn = async (page, sid, minAssistant) => {
+  const t0 = Date.now();
+  for (;;) {
+    const r = await api(page, `/api/sessions/${sid}`);
+    const s = r.body;
+    const n = (s?.history || []).filter(m => m.role === 'assistant').length;
+    if (s && !s.busy && n >= minAssistant) return { s, ms: Date.now() - t0 };
+    if (Date.now() - t0 > TURN_TIMEOUT) throw new Error(`ход не завершился за ${TURN_TIMEOUT / 1000} с`);
+    await page.waitForTimeout(1500);
+  }
+};
+
+const RAW_TAGS = /<\/?(dashboard_json|codex_json|lore_update|choices_json|session_summary|final_draft)|\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST):/;
+const lastAssistant = s => [...s.history].reverse().find(m => m.role === 'assistant');
+const lastDash = s => [...s.history].reverse().find(m => m.dashboard)?.dashboard;
+const assistantTexts = s => s.history.filter(m => m.role === 'assistant').map(m => m.content);
+
+const recordTurn = (title, s, ms) => {
+  const a = lastAssistant(s);
+  report.push(`### ${title} (${(ms / 1000).toFixed(1)} с)\n\n${(a?.content || '').slice(0, 900)}\n`);
+  check(`${title}: нет сырых тегов в тексте`, !RAW_TAGS.test(a?.content || ''), (a?.content || '').match(RAW_TAGS)?.[0]);
+};
+
+async function register(page) {
+  await page.goto(BASE);
+  await page.getByText('РЕГИСТРАЦИЯ', { exact: false }).click();
+  await page.fill("input[placeholder='Как вас называть']", 'Тестовый мастер');
+  await page.fill('input[type=email]', `gm-${Date.now()}@e2e.local`);
+  await page.fill('input[type=password]', 'password123');
+  await page.locator('form button[type=submit]').click();
+  await page.waitForTimeout(1500);
+  const ack = page.getByText('Понятно, играть');
+  if (await ack.count()) await ack.click();
+}
+
+async function newGame(page, mode, setting, heroes, { tale = false } = {}) {
+  await page.getByText(mode, { exact: true }).first().click();
+  await page.waitForTimeout(500);
+  await page.getByText(setting, { exact: true }).first().click();
+  // завязку и героев генерирует ИИ — проверяем и эти кнопки
+  await page.getByText('СГЕНЕРИРОВАТЬ ИИ', { exact: false }).nth(1).click();
+  await page.waitForFunction(() => (document.querySelectorAll('textarea')[1]?.value || '').length > 10, null, { timeout: TURN_TIMEOUT });
+  for (let i = 0; i < heroes; i++) {
+    if (i > 0) await page.getByText('Добавить', { exact: false }).first().click();
+    await page.locator("button[title='Сгенерировать персонажа']").nth(i).click();
+    await page.waitForFunction(i2 => (document.querySelectorAll("input[placeholder='Имя персонажа']")[i2])?.value.length > 1, i, { timeout: TURN_TIMEOUT });
+  }
+  await snap(page, `${tale ? 'tale' : mode.slice(0, 4)}_setup`);
+  await page.getByText(tale ? 'Начать сказку' : 'Начать приключение').click();
+  await page.waitForURL(/.*/);
+  await page.waitForTimeout(1500);
+  const me = (await api(page, '/api/auth/me')).body;
+  const sessions = (await api(page, `/api/workspaces/${me.workspaces[0].id}/sessions`)).body;
+  return [...sessions].sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0]?.id;
+}
+
+async function gmTurn(page, sid, text, n) {
+  const ta = page.locator('textarea').first();
+  await ta.fill(text);
+  await ta.press('Enter');
+  const { s, ms } = await waitTurn(page, sid, n);
+  await page.waitForTimeout(800);
+  return { s, ms };
+}
+
+async function solo(browser) {
+  log('\n== Соло ==');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await ctx.newPage();
+  await register(page);
+  const t0 = Date.now();
+  const sid = await newGame(page, 'Соло-приключение', 'Тёмное фэнтези', 1);
+  check('соло: сессия создана', !!sid);
+  let { s, ms } = await waitTurn(page, sid, 1);
+  ms = Date.now() - t0;
+  recordTurn('Соло: старт', s, ms);
+  const d = lastDash(s);
+  check('старт: герой в дашборде с HP', d?.characters?.[0]?.hp && /\d+\/\d+/.test(d.characters[0].hp), d?.characters?.[0]?.hp);
+  check('старт: есть локация и currentLocationId', (d?.locations || []).some(l => l.id === d.currentLocationId));
+  check('старт: варианты действий', (d?.characters?.[0]?.actions || []).length > 0);
+  check('старт: suggestedRoll с DC', typeof d?.suggestedRoll?.dc === 'number', JSON.stringify(d?.suggestedRoll));
+  await snap(page, 'solo_start');
+  const hero = d?.characters?.[0]?.name || '';
+
+  const turns = [
+    `${hero} осматривается и ищет следы, расспрашивает первого встречного`,
+    `${hero} атакует ближайшего противника`,
+  ];
+  let n = 1;
+  for (const t of turns) {
+    ({ s, ms } = await gmTurn(page, sid, t, ++n));
+    recordTurn(`Соло: «${t.slice(0, 50)}»`, s, ms);
+    await snap(page, `solo_turn${n}`);
+  }
+
+  // бросок мастера через лоток кубиков
+  await page.locator("button[title='Кубики: бросок за героя']").click();
+  await page.locator('text=Кто действует').locator('xpath=following::button[1]').click();
+  await page.locator('text=Выбор действия').locator('xpath=following::button[1]').click();
+  await page.getByText('Обычный', { exact: true }).click();
+  await page.waitForTimeout(1200);
+  await snap(page, 'solo_dice');
+  ({ s, ms } = await gmTurn(page, sid, `${hero} действует решительно`, ++n));
+  recordTurn('Соло: ход с броском', s, ms);
+  const rolled = s.history.filter(m => m.role === 'user').map(m => m.content).find(c => c.includes('[ROLL:'));
+  check('бросок: движок дописал итог и исход', /Итог: -?\d+ = .* против DC \d+ → /.test(rolled || ''), (rolled || '').match(/\[ROLL:[^\]]*\]/)?.[0]);
+  check('бросок: плашка исхода видна', await page.locator('text=/УСПЕХ|ПРОВАЛ/').count() > 0);
+  await snap(page, 'solo_roll_result');
+
+  // единство чисел: дашборд = состояние движка
+  const st = (await api(page, `/api/sessions/${sid}/state`)).body?.characters?.[hero];
+  const dc = lastDash(s)?.characters?.find(c => c.name === hero);
+  check('числа героя совпадают с движком', st && dc && dc.hp === `${st.hp_cur}/${st.hp_max}`, `${dc?.hp} vs ${st?.hp_cur}/${st?.hp_max}`);
+  check('ИИ отвечает на разные ходы по-разному', new Set(assistantTexts(s).map(t => t.slice(0, 80))).size === assistantTexts(s).length);
+  await ctx.close();
+}
+
+async function multiplayer(browser) {
+  log('\n== С друзьями ==');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  const gm = await ctx.newPage();
+  await register(gm);
+  const sid = await newGame(gm, 'Игра с друзьями', 'Киберпанк', 2);
+  let { s, ms } = await waitTurn(gm, sid, 1);
+  recordTurn('Мультиплеер: старт', s, ms);
+  const heroes = lastDash(s).characters.map(c => c.name);
+  await gm.getByText('Ссылка').first().click();
+  const link = await gm.evaluate(() => navigator.clipboard.readText());
+  check('ссылка на героя', /\/character\//.test(link), link);
+
+  // игрок — отдельный браузер (другое устройство), телефонный экран
+  const pctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const pl = await pctx.newPage();
+  await pl.goto(link);
+  await pl.waitForTimeout(1500);
+  if (await pl.getByText('Понятно, играть').count()) await pl.getByText('Понятно, играть').click();
+  await pl.locator('input').first().fill('Аня');
+  await pl.getByText('Запросить персонажа').click();
+  await gm.waitForTimeout(1500);
+  await gm.getByRole('button').filter({ hasText: /Принять|Одобрить|Пустить/ }).first().click();
+  await pl.waitForTimeout(2000);
+  await snap(pl, 'mp_player_sheet');
+  await pl.locator('textarea').first().fill('Взламываю терминал у двери, чтобы открыть проход');
+  await pl.getByRole('button', { name: 'd20', exact: true }).click();
+  await pl.getByRole('button').filter({ hasText: /^\s*Ход\s*$/ }).first().click();
+  await pl.waitForTimeout(1500);
+  const sent = await pl.locator('body').innerText();
+  check('игрок видит исход своего броска сразу', /УСПЕХ|ПРОВАЛ/.test(sent));
+  await snap(pl, 'mp_player_sent');
+
+  await gm.getByText(/Подтвердить ход/).click();
+  ({ s, ms } = await waitTurn(gm, sid, 2));
+  recordTurn('Мультиплеер: раунд', s, ms);
+  check('раунд: ответ упоминает героя игрока', lastAssistant(s).content.includes(heroes[0]) || lastAssistant(s).content.includes(heroes[0].split(' ')[0]));
+  await gm.waitForTimeout(1000);
+  await snap(gm, 'mp_gm_round');
+  await pl.waitForTimeout(2500);
+  await pl.getByRole('button').filter({ hasText: /История/ }).first().click().catch(() => undefined);
+  await snap(pl, 'mp_player_story');
+  await pctx.close();
+  await ctx.close();
+}
+
+async function tale(browser) {
+  log('\n== Сказка ==');
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const page = await ctx.newPage();
+  await register(page);
+  const sid = await newGame(page, 'Сказка', 'Волшебный лес', 1, { tale: true });
+  let { s, ms } = await waitTurn(page, sid, 1);
+  recordTurn('Сказка: глава 1', s, ms);
+  const chapters = s.config?.tale?.chapters || 6;
+  for (let i = 2; i <= chapters; i++) {
+    const a = lastAssistant(s);
+    check(`глава ${i - 1}: есть 2–3 варианта`, (a.choices || []).length >= 2 && a.choices.length <= 3, JSON.stringify(a.choices));
+    const btn = page.locator('button.text-left.px-4.py-3').first();
+    await btn.click();
+    ({ s, ms } = await waitTurn(page, sid, i));
+    recordTurn(`Сказка: глава ${i}`, s, ms);
+  }
+  check('сказка закончилась и собрана книга', s.config?.tale?.finished && (s.archive || '').length > 200, s.config?.tale?.title);
+  await page.waitForTimeout(1200);
+  await snap(page, 'tale_book');
+  await ctx.close();
+}
+
+const main = async () => {
+  const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
+  const only = (process.env.ONLY || 'solo,mp,tale').split(',');
+  const t0 = Date.now();
+  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale]]) {
+    if (!only.includes(id)) continue;
+    try { await fn(browser); } catch (e) { check(`${id}: сценарий прошёл без ошибок`, false, String(e?.message || e).slice(0, 300)); }
+  }
+  await browser.close();
+  const failed = checks.filter(c => !c.ok);
+  const md = [
+    `# Прогон на ИИ: ${process.env.REPORT_TITLE || BASE}`,
+    `Время: ${((Date.now() - t0) / 1000).toFixed(0)} с · проверок: ${checks.length} · провалено: ${failed.length}`,
+    '', '## Проверки', ...checks.map(c => `- ${c.ok ? '✅' : '❌'} ${c.name}${c.detail ? ` — \`${String(c.detail).slice(0, 160)}\`` : ''}`),
+    '', '## Ответы мастера', ...report,
+  ].join('\n');
+  fs.writeFileSync(path.join(OUT, 'report.md'), md);
+  log(`\nОтчёт: ${path.join(OUT, 'report.md')}`);
+  process.exit(failed.length ? 1 : 0);
+};
+main();

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AppSettings } from '../types';
 import { X, Save, Terminal, Type, RotateCcw, Users, KeyRound, LogOut } from 'lucide-react';
 import { SYSTEM_PROMPT } from '../../shared/rules';
@@ -40,6 +40,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
     { id: 'appearance', label: 'Вид' },
     { id: 'account', label: 'Аккаунт' },
   ];
+
+  // Esc закрывает окно
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X, Users, Cpu, Wallet, Database, Copy, Check, Trash2, Plus, Key, Globe, Loader2 } from 'lucide-react';
-import { api, appLink, followPaymentUrl } from '../api';
+import { api, appLink, followPaymentUrl, IS_DEMO } from '../api';
+import { demoForgetKeys } from 'virtual:nexus-transport';
 import { WorkspaceInfo, CurrentUser, WorkspaceRole } from '../types';
 import { inputCls, labelCls, GEMINI_MODELS, OPENCODE_MODELS } from './PlatformAiForm';
 import { customConfirm } from './PromptModal';
@@ -30,6 +31,13 @@ export const WorkspaceModal: React.FC<Props> = ({ workspace: ws, user, initialTa
     { id: 'billing', label: 'Баланс', icon: <Wallet size={12} /> },
     { id: 'logs', label: 'Журнал', icon: <Database size={12} />, hidden: !isAdmin },
   ];
+
+  // Esc закрывает окно
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={onClose}>
@@ -158,11 +166,30 @@ const AiTab: React.FC<{ ws: WorkspaceInfo; setError: (s: string) => void; onChan
   const [key, setKey] = useState(ws.ai.key);
   const [saving, setSaving] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [rememberKey, setRememberKey] = useState(() => { try { return localStorage.getItem('nexus_demo_remember_key') === '1'; } catch { return false; } });
+  const [orModels, setOrModels] = useState<string[]>([]);
+
+  // Список моделей OpenRouter — публичный, без ключа
+  useEffect(() => {
+    if (provider !== 'openrouter' || orModels.length) return;
+    fetch('https://openrouter.ai/api/v1/models').then(r => r.json()).then(d => setOrModels((d.data || []).map((m: any) => m.id).sort())).catch(() => undefined);
+  }, [provider]);
+
+  const forgetKey = async () => {
+    await demoForgetKeys();
+    setRememberKey(false);
+    setKey('');
+    try { await api(`/api/workspaces/${ws.id}`, { method: 'PATCH', body: { ai: { mode: 'platform' } } }); } catch { /* */ }
+    setMode('platform');
+    onChanged();
+    setTest({ ok: true, text: 'Ключ стёрт из памяти и с этого устройства.' });
+  };
 
   const save = async () => {
     setSaving(true);
     setError('');
     try {
+      if (IS_DEMO) { try { rememberKey ? localStorage.setItem('nexus_demo_remember_key', '1') : localStorage.removeItem('nexus_demo_remember_key'); } catch { /* */ } }
       await api(`/api/workspaces/${ws.id}`, { method: 'PATCH', body: { ai: { mode, provider, model, url, key } } });
       onChanged();
       setTest(null);
@@ -219,9 +246,23 @@ const AiTab: React.FC<{ ws: WorkspaceInfo; setError: (s: string) => void; onChan
             ) : provider === 'opencode' ? (
               <select value={model || 'deepseek-v4.1-flash'} onChange={e => setModel(e.target.value)} className={inputCls}>{OPENCODE_MODELS.map(m => <option key={m} value={m}>{m}</option>)}</select>
             ) : (
-              <input value={model} onChange={e => setModel(e.target.value)} placeholder={provider === 'openrouter' ? 'anthropic/claude-3.5-sonnet' : 'llama3.1'} className={inputCls} />
+              <>
+                <input value={model} onChange={e => setModel(e.target.value)} list={provider === 'openrouter' ? 'or-models' : undefined} placeholder={provider === 'openrouter' ? 'начните вводить: deepseek, gemini, claude…' : 'llama3.1'} className={inputCls} />
+                {provider === 'openrouter' && <datalist id="or-models">{orModels.map(m => <option key={m} value={m} />)}</datalist>}
+              </>
             )}
           </div>
+          {IS_DEMO && (
+            <div className="space-y-2 p-3 rounded-xl bg-violet-500/10 border border-violet-400/20 text-[11px] text-violet-100/80 leading-relaxed">
+              <p><b className="text-violet-200">Ключ остаётся в вашем браузере.</b> Запросы идут напрямую провайдеру, у демо нет сервера. По умолчанию ключ живёт только в памяти вкладки и исчезнет после её закрытия.</p>
+              <label className="flex items-center gap-2 text-violet-100">
+                <input type="checkbox" checked={rememberKey} onChange={e => setRememberKey(e.target.checked)} />
+                Запомнить на этом устройстве (зашифрованным)
+              </label>
+              <p className="text-violet-100/60">Советуем завести отдельный ключ с лимитом расходов. В демо работают OpenRouter и Gemini, а также локальная модель (Ollama с OLLAMA_ORIGINS). opencode из браузера недоступен — только на своём сервере игры.</p>
+              {ws.ai.key && <button onClick={forgetKey} className="text-red-300 hover:text-red-200 underline">Забыть ключ</button>}
+            </div>
+          )}
         </div>
       )}
       <div className="flex gap-2">

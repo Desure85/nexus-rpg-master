@@ -52,3 +52,13 @@ describe('исход броска', () => {
     expect(bad.results[0].deathSave).toBe('failed');
   });
 });
+
+describe('снаряжение не срабатывает по случайным подстрокам', () => {
+  it('«риск», «стена», «потенциал» не включают поиск и скрытность', async () => {
+    const { gearBonus } = await import('../shared/resolve');
+    const c = { equipment: [{ slot: 'body', item: { name: 'Плащ', bonus: '+1 к скрытности' } }, { slot: 'acc', item: { name: 'Линза', bonus: '+1 к внимательности' } }] } as any;
+    expect(gearBonus(c, 'Рискованный рывок к стене').total).toBe(0);
+    expect(gearBonus(c, 'Использовать опыт (Профильный): в печной трубе воет ветер').total).toBe(0);
+    expect(gearBonus(c, 'Прячусь в тени и осматриваю двор').total).toBe(2);
+  });
+});
