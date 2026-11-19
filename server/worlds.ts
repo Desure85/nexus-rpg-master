@@ -5,8 +5,12 @@ import type { DB } from "./db";
 import { normalizeWorldData, WORLD_GENRES, worldState, type World, type WorldDelta } from "../shared/world";
 
 import { STARTER_WORLDS } from "./starter-worlds";
+import { createBilling } from "./billing";
 
 const MAX_WORLDS_PER_USER = 50;
+/** Цена мира в кредитах и доля автора с продажи */
+export const WORLD_MAX_PRICE = 5000;
+export const authorShare = () => Math.min(1, Math.max(0, Number(process.env.WORLD_AUTHOR_SHARE ?? 0.7)));
 /** Автор стартовых миров каталога */
 export const SYSTEM_AUTHOR = "system-nexus";
 const VIS = ["private", "link", "public"] as const;
@@ -62,6 +66,23 @@ export function createWorlds(db: DB) {
   if (!ccols.includes("delta")) db.exec("ALTER TABLE world_chronicle ADD COLUMN delta TEXT");
   if (!ccols.includes("applied")) db.exec("ALTER TABLE world_chronicle ADD COLUMN applied INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("seed_hash")) db.exec("ALTER TABLE worlds ADD COLUMN seed_hash TEXT");
+  if (!cols.includes("price")) db.exec("ALTER TABLE worlds ADD COLUMN price INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes("rating_sum")) db.exec("ALTER TABLE worlds ADD COLUMN rating_sum INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes("rating_n")) db.exec("ALTER TABLE worlds ADD COLUMN rating_n INTEGER NOT NULL DEFAULT 0");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS world_purchases (
+      world_id TEXT NOT NULL, user_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+      price INTEGER NOT NULL, author_share INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (world_id, user_id)
+    );
+    CREATE TABLE IF NOT EXISTS world_plays (world_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (world_id, user_id));
+    CREATE TABLE IF NOT EXISTS world_reviews (
+      world_id TEXT NOT NULL, user_id TEXT NOT NULL, rating INTEGER NOT NULL, text TEXT NOT NULL DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (world_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_world_reviews ON world_reviews(world_id, updated_at);
+  `);
+  const billing = createBilling(db);
   // Стартовые миры каталога от автора «Nexus»: появляются при запуске, правка в коде обновляет данные (хроника и состояние остаются)
   if (process.env.STARTER_WORLDS !== "0") {
     db.prepare("INSERT OR IGNORE INTO users (id, email, name, password_hash) VALUES (?, ?, ?, '')").run(SYSTEM_AUTHOR, "nexus@system.local", "Nexus");
@@ -80,24 +101,42 @@ export function createWorlds(db: DB) {
     id: r.id, title: r.title, icon: r.icon, genre: r.genre, description: r.description,
     visibility: r.visibility, version: r.version, plays: r.plays, likes: r.likes || 0, liked: !!r.liked, chronicle: r.chronicle || 0, ...(userId && r.owner_id === userId ? { chronicleNew: r.chronicle_new || 0 } : {}), hidden: !!r.hidden, updated_at: r.updated_at,
     author: r.author || undefined, ...(r.owner_id === SYSTEM_AUTHOR ? { official: true } : {}), mine: !!userId && r.owner_id === userId,
-    ...(full ? { state: worldState(JSON.parse(r.data), r.state ? JSON.parse(r.state) : null) } : {}),
-    data: full ? JSON.parse(r.data) : (() => { const d = JSON.parse(r.data); return { ...d, cards: [], core: "", counts: { cards: d.cards?.length || 0, locations: d.locations?.length || 0, scenarios: d.scenarios?.length || 0 } }; })(),
+    ...market(r, userId),
+    ...(full && !locked(r, userId) ? { state: worldState(JSON.parse(r.data), r.state ? JSON.parse(r.state) : null) } : {}),
+    data: full && !locked(r, userId) ? JSON.parse(r.data) : preview(JSON.parse(r.data)),
+  });
+  /** Каталог и закрытый платный мир: без лора и канона, сюжеты и герои видны как витрина */
+  const preview = (d: any) => ({ ...d, cards: [], core: "", tone: undefined, enemies: [], items: [], counts: { cards: d.cards?.length || 0, locations: d.locations?.length || 0, scenarios: d.scenarios?.length || 0, enemies: d.enemies?.length || 0, items: d.items?.length || 0 } });
+  const locked = (r: any, userId?: string) => (r.price || 0) > 0 && r.owner_id !== userId && !r.owned;
+  const market = (r: any, userId?: string) => ({
+    price: r.price || 0,
+    ...((r.price || 0) > 0 ? { owned: r.owner_id === userId || !!r.owned } : {}),
+    ...(locked(r, userId) ? { locked: true } : {}),
+    rating: r.rating_n ? Math.round((r.rating_sum / r.rating_n) * 10) / 10 : 0,
+    reviews: r.rating_n || 0,
+    ...(r.my_rating ? { myRating: r.my_rating } : {}),
+    ...(r.played ? { played: true } : {}),
+    ...(userId && r.owner_id === userId ? { sales: r.sales || 0, earned: r.earned || 0, ...(r.paid_copy ? { paidCopy: true } : {}) } : {}),
   });
 
   const SELECT = "SELECT w.*, u.name AS author FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
   /** Первый параметр запроса — id пользователя (для отметки «нравится») */
-  const SELECT_FOR = "SELECT w.*, u.name AS author, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'canon') AS chronicle, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'new') AS chronicle_new, EXISTS(SELECT 1 FROM world_likes l WHERE l.world_id = w.id AND l.user_id = ?) AS liked FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
+  const SELECT_FOR = "SELECT w.*, u.name AS author, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'canon') AS chronicle, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'new') AS chronicle_new, EXISTS(SELECT 1 FROM world_likes l WHERE l.world_id = w.id AND l.user_id = ?) AS liked, EXISTS(SELECT 1 FROM world_purchases p WHERE p.world_id = w.id AND p.user_id = ?) AS owned, EXISTS(SELECT 1 FROM world_plays pl WHERE pl.world_id = w.id AND pl.user_id = ?) AS played, (SELECT rating FROM world_reviews rv WHERE rv.world_id = w.id AND rv.user_id = ?) AS my_rating, (SELECT COUNT(*) FROM world_purchases p WHERE p.world_id = w.id) AS sales, (SELECT COALESCE(SUM(author_share), 0) FROM world_purchases p WHERE p.world_id = w.id) AS earned, (SELECT s.price > 0 AND s.owner_id != w.owner_id FROM worlds s WHERE s.id = w.remixed_from) AS paid_copy FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
+  const U = (uid: string) => [uid, uid, uid, uid];
   const lc = (v: string) => v.toLowerCase().replace(/ё/g, "е");
 
   /** Мир, доступный пользователю для игры: свой, по ссылке или из каталога. */
   const getForPlay = (userId: string, id: string): World | null => {
-    const r = db.prepare(`${SELECT_FOR} WHERE w.id = ?`).get(userId, id) as any;
+    const r = db.prepare(`${SELECT_FOR} WHERE w.id = ?`).get(...U(userId), id) as any;
     if (!r) return null;
-    if (r.owner_id !== userId && r.visibility === "private") return null;
+    if (r.owner_id !== userId && r.visibility === "private" && !r.owned) return null;
     return row2world(r, userId);
   };
 
-  const countPlay = (id: string) => db.prepare("UPDATE worlds SET plays = plays + 1 WHERE id = ?").run(id);
+  const countPlay = (id: string, userId?: string) => {
+    db.prepare("UPDATE worlds SET plays = plays + 1 WHERE id = ?").run(id);
+    if (userId) db.prepare("INSERT OR IGNORE INTO world_plays (world_id, user_id) VALUES (?, ?)").run(id, userId);
+  };
 
   const fields = (b: any) => ({
     title: str(b?.title, 80) || "Новый мир",
@@ -105,7 +144,14 @@ export function createWorlds(db: DB) {
     genre: WORLD_GENRES.some(g => g.id === b?.genre) ? b.genre : "fantasy",
     description: str(b?.description, 600),
     visibility: (VIS as readonly string[]).includes(b?.visibility) ? b.visibility : "private",
+    price: Math.max(0, Math.min(WORLD_MAX_PRICE, Math.round(Number(b?.price) || 0))),
   });
+  /** Копия чужого платного мира — только для себя: без публикации и без цены */
+  const paidSource = (remixedFrom: string | null, ownerId: string) => {
+    if (!remixedFrom) return false;
+    const src = db.prepare("SELECT owner_id, price FROM worlds WHERE id = ?").get(remixedFrom) as any;
+    return !!src && src.price > 0 && src.owner_id !== ownerId;
+  };
 
   /** В каталог — только мир, в который можно сыграть: описание и хоть какой-то лор. */
   const publishProblem = (f: { visibility: string; description: string }, d: ReturnType<typeof normalizeWorldData>) => {
@@ -120,15 +166,20 @@ export function createWorlds(db: DB) {
       const uid = req.auth.user.id;
       const scope = req.query.scope === "public" ? "public" : "mine";
       if (scope === "mine") {
-        const rows = db.prepare(`${SELECT_FOR} WHERE w.owner_id = ? ORDER BY w.updated_at DESC`).all(uid, uid);
+        const rows = db.prepare(`${SELECT_FOR} WHERE w.owner_id = ? ORDER BY w.updated_at DESC`).all(...U(uid), uid);
         return res.json((rows as any[]).map(r => row2world(r, uid, false)));
       }
       // каталог: поиск по названию/описанию/автору, жанр, сортировка; скрытые модерацией не показываем
       const q = lc(str(req.query.q, 80));
       const genre = str(req.query.genre, 20);
-      const sort = ["new", "likes"].includes(String(req.query.sort)) ? String(req.query.sort) : "popular";
-      const order = sort === "new" ? "w.created_at DESC" : sort === "likes" ? "w.likes DESC, w.plays DESC" : `(w.owner_id = '${SYSTEM_AUTHOR}') DESC, w.plays DESC, w.likes DESC`;
-      let rows = db.prepare(`${SELECT_FOR} WHERE w.visibility = 'public' AND w.hidden = 0 ${genre ? "AND w.genre = ?" : ""} ORDER BY ${order}, w.updated_at DESC LIMIT 500`).all(uid, ...(genre ? [genre] : [])) as any[];
+      const sort = ["new", "likes", "rating"].includes(String(req.query.sort)) ? String(req.query.sort) : "popular";
+      const order = sort === "new" ? "w.created_at DESC" : sort === "likes" ? "w.likes DESC, w.plays DESC"
+        // по оценке: среднее с поправкой на число отзывов (3 «средних» голоса), чтобы одна пятёрка не обгоняла сотню четвёрок
+        : sort === "rating" ? "(w.rating_sum + 3 * 3.5) / (w.rating_n + 3.0) DESC, w.plays DESC"
+        : `(w.owner_id = '${SYSTEM_AUTHOR}') DESC, w.plays DESC, w.likes DESC`;
+      const price = String(req.query.price || "");
+      const priceSql = price === "free" ? "AND w.price = 0" : price === "paid" ? "AND w.price > 0" : price === "owned" ? "AND w.price > 0 AND EXISTS(SELECT 1 FROM world_purchases p WHERE p.world_id = w.id AND p.user_id = ?)" : "";
+      let rows = db.prepare(`${SELECT_FOR} WHERE w.visibility = 'public' AND w.hidden = 0 ${genre ? "AND w.genre = ?" : ""} ${priceSql} ORDER BY ${order}, w.updated_at DESC LIMIT 500`).all(...U(uid), ...(genre ? [genre] : []), ...(price === "owned" ? [uid] : [])) as any[];
       if (q) rows = rows.filter(r => lc(`${r.title} ${r.description} ${r.author || ""}`).includes(q));
       res.json(rows.slice(0, 60).map(r => row2world(r, uid, false)));
     });
@@ -147,8 +198,9 @@ export function createWorlds(db: DB) {
       const bad = publishProblem(f, normalizeWorldData(req.body?.data));
       if (bad) return res.status(400).json({ error: "not_ready", message: bad });
       const id = crypto.randomUUID();
-      db.prepare("INSERT INTO worlds (id, owner_id, title, icon, genre, description, visibility, data) VALUES (?,?,?,?,?,?,?,?)")
-        .run(id, uid, f.title, f.icon, f.genre, f.description, f.visibility, JSON.stringify(normalizeWorldData(req.body?.data)));
+      if (f.price > 0 && f.visibility === "private") return res.status(400).json({ error: "not_ready", message: "Платный мир должен быть в каталоге или по ссылке" });
+      db.prepare("INSERT INTO worlds (id, owner_id, title, icon, genre, description, visibility, price, data) VALUES (?,?,?,?,?,?,?,?,?)")
+        .run(id, uid, f.title, f.icon, f.genre, f.description, f.visibility, f.price, JSON.stringify(normalizeWorldData(req.body?.data)));
       res.status(201).json(getForPlay(uid, id));
     });
 
@@ -160,8 +212,10 @@ export function createWorlds(db: DB) {
       const data = req.body?.data !== undefined ? normalizeWorldData(req.body.data) : JSON.parse(r.data);
       const bad = publishProblem(f, data);
       if (bad) return res.status(400).json({ error: "not_ready", message: bad });
-      db.prepare("UPDATE worlds SET title=?, icon=?, genre=?, description=?, visibility=?, data=?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-        .run(f.title, f.icon, f.genre, f.description, f.visibility, JSON.stringify(data), r.id);
+      if (paidSource(r.remixed_from, uid) && (f.visibility !== "private" || f.price > 0)) return res.status(400).json({ error: "paid_remix", message: "Это копия купленного мира — играть в ней можно, а публиковать и продавать нельзя" });
+      if (f.price > 0 && f.visibility === "private" && !(db.prepare("SELECT 1 FROM world_purchases WHERE world_id = ?").get(r.id))) return res.status(400).json({ error: "not_ready", message: "Платный мир должен быть в каталоге или по ссылке" });
+      db.prepare("UPDATE worlds SET title=?, icon=?, genre=?, description=?, visibility=?, price=?, data=?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(f.title, f.icon, f.genre, f.description, f.visibility, f.price, JSON.stringify(data), r.id);
       res.json(getForPlay(uid, r.id));
     });
 
@@ -204,16 +258,86 @@ export function createWorlds(db: DB) {
     });
 
     app.delete("/api/worlds/:wid", requireUser, (req: any, res) => {
+      const sold = (db.prepare("SELECT COUNT(*) AS n FROM world_purchases p JOIN worlds w ON w.id = p.world_id WHERE w.id = ? AND w.owner_id = ?").get(req.params.wid, req.auth.user.id) as any).n;
+      if (sold) return res.status(409).json({ error: "world_sold", message: `Этот мир купили игроки (${sold}) — удалить его нельзя. Можно убрать из каталога: доступ «По ссылке» или «Только я», купившие сохранят доступ.` });
       const del = db.prepare("DELETE FROM worlds WHERE id = ? AND owner_id = ?").run(req.params.wid, req.auth.user.id);
       if (del.changes) { db.prepare("DELETE FROM world_likes WHERE world_id = ?").run(req.params.wid); db.prepare("DELETE FROM world_reports WHERE world_id = ?").run(req.params.wid); }
       res.json({ status: "ok" });
     });
 
     // Ремикс: копия чужого (или своего) мира в свои — приватная, можно переделать под себя
+    /* ---------- маркетплейс: покупка за кредиты пространства, доля автору, отзывы ---------- */
+    app.post("/api/worlds/:wid/buy", requireUser, (req: any, res) => {
+      const uid = req.auth.user.id;
+      const w = getForPlay(uid, req.params.wid);
+      if (!w || (w.hidden && !w.mine)) return res.status(404).json({ error: "world_not_found" });
+      if (!w.locked) return res.json(w); // свой, бесплатный или уже купленный
+      const wsId = str(req.body?.workspaceId, 64);
+      const m = db.prepare("SELECT role FROM memberships WHERE workspace_id = ? AND user_id = ?").get(wsId, uid) as any;
+      if (!m || !["owner", "admin", "gm"].includes(m.role)) return res.status(403).json({ error: "forbidden", message: "Покупать можно за кредиты своего пространства" });
+      const price = w.price!;
+      const owner = (db.prepare("SELECT owner_id FROM worlds WHERE id = ?").get(w.id) as any).owner_id;
+      // кошелёк автора — его личное пространство (где он владелец, самое старое)
+      const authorWs = owner === SYSTEM_AUTHOR ? null : (db.prepare("SELECT workspace_id FROM memberships WHERE user_id = ? AND role = 'owner' ORDER BY created_at LIMIT 1").get(owner) as any)?.workspace_id;
+      // защита от накрутки: доля автору — только с покупок пространств, которые хоть раз платили (не с приветственных кредитов фейков)
+      const paidBuyer = !!db.prepare("SELECT 1 FROM payments WHERE workspace_id = ? AND status = 'succeeded' LIMIT 1").get(wsId);
+      const share = authorWs && paidBuyer ? Math.floor(price * authorShare()) : 0;
+      try {
+        db.transaction(() => {
+          const bal = (db.prepare("SELECT credits FROM workspaces WHERE id = ?").get(wsId) as any)?.credits ?? 0;
+          if (bal < price) throw Object.assign(new Error("Не хватает кредитов"), { status: 402, code: "insufficient_credits" });
+          db.prepare("INSERT INTO world_purchases (world_id, user_id, workspace_id, price, author_share) VALUES (?,?,?,?,?)").run(w.id, uid, wsId, price, share);
+          billing.adjustCredits(wsId, -price, "world:buy", w.id);
+          if (share) billing.adjustCredits(authorWs, share, "world:sale", w.id);
+        })();
+      } catch (e: any) {
+        if (e?.code === "insufficient_credits") return res.status(402).json({ error: "insufficient_credits", message: `Не хватает кредитов: мир стоит ${price}` });
+        if (/UNIQUE|PRIMARY/i.test(String(e?.message))) return res.json(getForPlay(uid, w.id));
+        throw e;
+      }
+      res.json(getForPlay(uid, w.id));
+    });
+
+    app.get("/api/worlds/:wid/reviews", requireUser, (req: any, res) => {
+      const w = getForPlay(req.auth.user.id, req.params.wid);
+      if (!w) return res.status(404).json({ error: "world_not_found" });
+      res.json(db.prepare(`SELECT r.user_id AS userId, u.name AS author, r.rating, r.text, r.updated_at,
+          EXISTS(SELECT 1 FROM world_purchases p WHERE p.world_id = r.world_id AND p.user_id = r.user_id) AS bought
+        FROM world_reviews r LEFT JOIN users u ON u.id = r.user_id WHERE r.world_id = ? ORDER BY (r.user_id = ?) DESC, r.updated_at DESC LIMIT 50`)
+        .all(w.id, req.auth.user.id).map((r: any) => ({ ...r, bought: !!r.bought, mine: r.userId === req.auth.user.id })));
+    });
+
+    const recountRating = (wid: string) => db.prepare("UPDATE worlds SET rating_sum = (SELECT COALESCE(SUM(rating), 0) FROM world_reviews WHERE world_id = ?), rating_n = (SELECT COUNT(*) FROM world_reviews WHERE world_id = ?) WHERE id = ?").run(wid, wid, wid);
+
+    app.put("/api/worlds/:wid/review", requireUser, (req: any, res) => {
+      const uid = req.auth.user.id;
+      const w = getForPlay(uid, req.params.wid);
+      if (!w) return res.status(404).json({ error: "world_not_found" });
+      if (w.mine) return res.status(400).json({ error: "own_world", message: "Свой мир оценивать нельзя" });
+      if (!w.played) return res.status(403).json({ error: "not_played", message: "Оставить отзыв можно после игры в этом мире" });
+      const rating = Math.round(Number(req.body?.rating));
+      if (!(rating >= 1 && rating <= 5)) return res.status(400).json({ error: "bad_rating", message: "Оценка — от 1 до 5" });
+      const text = str(req.body?.text, 500);
+      db.prepare(`INSERT INTO world_reviews (world_id, user_id, rating, text) VALUES (?,?,?,?)
+        ON CONFLICT(world_id, user_id) DO UPDATE SET rating = excluded.rating, text = excluded.text, updated_at = CURRENT_TIMESTAMP`).run(w.id, uid, rating, text);
+      recountRating(w.id);
+      res.json(getForPlay(uid, w.id));
+    });
+
+    // свой отзыв удаляет автор отзыва, любой — суперадмин (модерация)
+    app.delete("/api/worlds/:wid/reviews/:uid", requireUser, (req: any, res) => {
+      const me = req.auth.user;
+      if (req.params.uid !== me.id && !me.isSuperadmin) return res.status(403).json({ error: "forbidden" });
+      db.prepare("DELETE FROM world_reviews WHERE world_id = ? AND user_id = ?").run(req.params.wid, req.params.uid);
+      recountRating(req.params.wid);
+      res.json({ ok: true });
+    });
+
     app.post("/api/worlds/:wid/copy", requireUser, (req: any, res) => {
       const uid = req.auth.user.id;
       const w = getForPlay(uid, req.params.wid);
       if (!w) return res.status(404).json({ error: "world_not_found" });
+      if (w.locked) return res.status(402).json({ error: "world_locked", message: "Сначала купите мир" });
       const n = (db.prepare("SELECT COUNT(*) AS n FROM worlds WHERE owner_id = ?").get(uid) as any).n;
       if (n >= MAX_WORLDS_PER_USER) return res.status(402).json({ error: "limit", message: `Не больше ${MAX_WORLDS_PER_USER} миров` });
       const id = crypto.randomUUID();

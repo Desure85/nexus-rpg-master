@@ -110,6 +110,14 @@ export interface World {
   mine?: boolean;
   /** стартовый мир от авторов игры */
   official?: boolean;
+  /** маркетплейс: цена в кредитах (0 — бесплатно), куплен ли, закрыт ли (лор скрыт до покупки) */
+  price?: number; owned?: boolean; locked?: boolean;
+  /** отзывы: средняя оценка, число отзывов, моя оценка, играл ли я в этом мире */
+  rating?: number; reviews?: number; myRating?: number; played?: boolean;
+  /** только автору: продажи и заработок в кредитах */
+  sales?: number; earned?: number;
+  /** копия купленного мира: только для себя */
+  paidCopy?: boolean;
   /** текущее состояние фракций и шкал (только в полном виде мира) */
   state?: WorldState;
 }

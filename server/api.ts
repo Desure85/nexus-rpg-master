@@ -115,6 +115,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     // игра в мире автора: сеттинг, завязка и лор берутся из мира (снимок версии)
     const world = setup.worldId ? worlds.getForPlay(req.auth.user!.id, str(setup.worldId, 64)) : null;
     if (setup.worldId && !world) return res.status(404).json({ error: "world_not_found", message: "Мир не найден или автор закрыл к нему доступ" });
+    if (world?.locked) return res.status(402).json({ error: "world_locked", message: `Мир «${world.title}» платный — купите его в каталоге` });
     const worldScenario = world ? world.data.scenarios.find(x => x.id === setup.scenarioId) : undefined;
     const mode: StoredSession["mode"] = worldScenario ? worldScenario.mode : ["short", "campaign", "tale"].includes(setup.mode) ? setup.mode : "short";
     // испытание дня: сюжет и условие пересчитываем по ключу — клиент их не подменит
@@ -156,7 +157,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     if (setup.tutorial === true && mode === "short") config.tutorial = true;
     if (world) {
       config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data, ...(world.state ? { state: world.state } : {}) };
-      worlds.countPlay(world.id);
+      worlds.countPlay(world.id, req.auth.user!.id);
     }
     // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд
     if (mode !== "tale") {

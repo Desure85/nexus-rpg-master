@@ -1007,6 +1007,72 @@ describe('миры', () => {
     expect((await gm().get(`/api/sessions/${plain}`)).body.config.tutorial).toBeUndefined();
   });
 
+  it('маркетплейс: платный мир — витрина без лора, покупка за кредиты, доля автору, отзывы после игры', async () => {
+    const credits = (a: Account) => (ctx.db.prepare('SELECT credits FROM workspaces WHERE id = ?').get(a.wid) as any).credits;
+    // платный мир нельзя держать приватным
+    expect((await gm().post('/api/worlds', { ...worldBody(), price: 100 })).status).toBe(400);
+    const w = (await gm().post('/api/worlds', { ...worldBody(), visibility: 'public', price: 100 })).body;
+    expect(w).toMatchObject({ price: 100, owned: true, sales: 0, earned: 0 });
+    const fan = await account('buyer@example.com');
+    const seen = (await fan.get(`/api/worlds/${w.id}`)).body;
+    expect(seen).toMatchObject({ locked: true, owned: false, price: 100 });
+    expect(seen.data.cards).toEqual([]);
+    expect(seen.data.scenarios.length).toBeGreaterThan(0); // сюжеты — как витрина
+    expect((await fan.post('/api/sessions', { setup: { worldId: w.id, scenarioId: 'dark', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] }, workspaceId: fan.wid })).status).toBe(402);
+    expect((await fan.post(`/api/worlds/${w.id}/copy`)).status).toBe(402);
+    expect((await fan.put(`/api/worlds/${w.id}/review`, { rating: 5 })).status).toBe(403); // не играл
+    // фильтры каталога
+    const ids = async (q: string) => (await fan.get(`/api/worlds?scope=public&${q}`)).body.map((x: any) => x.id);
+    expect(await ids('price=paid')).toEqual([w.id]);
+    expect(await ids('price=free')).not.toContain(w.id);
+    expect(await ids('price=owned')).toEqual([]);
+    // покупка: не хватает → 402; чужое пространство → 403
+    ctx.db.prepare('UPDATE workspaces SET credits = 50 WHERE id = ?').run(fan.wid);
+    expect((await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid })).status).toBe(402);
+    expect((await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: gm().wid })).status).toBe(403);
+    ctx.db.prepare('UPDATE workspaces SET credits = 500 WHERE id = ?').run(fan.wid);
+    // приветственные кредиты: покупка проходит, но автору доля не идёт (накрутка с фейков)
+    const freeFan = await account('free@example.com');
+    const before0 = credits(gm());
+    ctx.db.prepare('UPDATE workspaces SET credits = 500 WHERE id = ?').run(freeFan.wid);
+    expect((await freeFan.post(`/api/worlds/${w.id}/buy`, { workspaceId: freeFan.wid })).body.owned).toBe(true);
+    expect(credits(gm())).toBe(before0);
+    ctx.db.prepare("INSERT INTO payments (id, workspace_id, provider, product_id, amount, credits, status) VALUES ('p1', ?, 'mock', 'credits_s', '100.00', 500, 'succeeded')").run(fan.wid);
+    const authorBefore = credits(gm());
+    const bought = (await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid })).body;
+    expect(bought).toMatchObject({ owned: true });
+    expect(bought.locked).toBeUndefined();
+    expect(bought.data.cards.length).toBeGreaterThan(0);
+    expect(credits(fan)).toBe(400);
+    expect(credits(gm()) - authorBefore).toBe(70);
+    // повторная покупка не списывает
+    await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid });
+    expect(credits(fan)).toBe(400);
+    expect(await ids('price=owned')).toEqual([w.id]);
+    expect((await gm().get(`/api/worlds/${w.id}`)).body).toMatchObject({ sales: 2, earned: 70 });
+    // игра и отзыв
+    const r = await fan.post('/api/sessions', { setup: { worldId: w.id, scenarioId: 'dark', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] }, workspaceId: fan.wid });
+    expect(r.status).toBe(201);
+    expect((await fan.put(`/api/worlds/${w.id}/review`, { rating: 9 })).status).toBe(400);
+    expect((await gm().put(`/api/worlds/${w.id}/review`, { rating: 5 })).status).toBe(400); // свой
+    expect((await fan.put(`/api/worlds/${w.id}/review`, { rating: 4, text: 'Атмосферно' })).body).toMatchObject({ rating: 4, reviews: 1, myRating: 4 });
+    expect((await fan.put(`/api/worlds/${w.id}/review`, { rating: 5, text: 'Ещё лучше' })).body).toMatchObject({ rating: 5, reviews: 1 });
+    const reviews = (await gm().get(`/api/worlds/${w.id}/reviews`)).body;
+    expect(reviews).toEqual([expect.objectContaining({ author: 'buyer', rating: 5, text: 'Ещё лучше', bought: true, mine: false })]);
+    const other = await account('other@example.com');
+    expect((await other.del(`/api/worlds/${w.id}/reviews/${fan.me.user.id}`)).status).toBe(403);
+    // копия купленного мира — только для себя
+    const copy = (await fan.post(`/api/worlds/${w.id}/copy`)).body;
+    expect((await fan.patch(`/api/worlds/${copy.id}`, { visibility: 'public' })).status).toBe(400);
+    expect((await fan.patch(`/api/worlds/${copy.id}`, { price: 10, visibility: 'link' })).status).toBe(400);
+    // проданный мир не удалить, но можно спрятать — купившие сохраняют доступ
+    expect((await gm().del(`/api/worlds/${w.id}`)).status).toBe(409);
+    expect((await gm().patch(`/api/worlds/${w.id}`, { visibility: 'private' })).status).toBe(200);
+    expect((await fan.get(`/api/worlds/${w.id}`)).body).toMatchObject({ owned: true });
+    expect((await fan.del(`/api/worlds/${w.id}/reviews/${fan.me.user.id}`)).status).toBe(200);
+    expect((await gm().get(`/api/worlds/${w.id}`)).body).toMatchObject({ rating: 0, reviews: 0 });
+  });
+
   it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
     const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
     expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);
