@@ -23,9 +23,17 @@ interface DiceRollerProps {
 export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggested, characters = [], pendingRolls = {}, onRollComplete, threatLevel = 0, enabledMechanics }) => {
   const [lastRoll, setLastRoll] = useState<{ type: RollType, values: number[], total?: number, shift?: number } | null>(null);
   const [isRolling, setIsRolling] = useState(false);
-  const [selectedChar, setSelectedChar] = useState<string>('');
-  const [selectedAction, setSelectedAction] = useState<string>('');
-  const [customActionInput, setCustomActionInput] = useState<string>('');
+  // Мастер просит бросок: сразу выбираем героя (названного в причине или единственного) и действие из причины — остаётся один клик по кубику
+  const preset = (() => {
+    if (!suggested?.reason) return null;
+    const alive = characters.filter(c => !pendingRolls[c.name] && c.hp !== '0' && stressValue(c.stress) < 10 && !c.condition?.toLowerCase().includes('мертв'));
+    const named = alive.find(c => suggested.reason.includes(c.name));
+    const who = named || (alive.length === 1 ? alive[0] : null);
+    return who ? { char: who.name, action: suggested.reason.replace(/\s+/g, ' ').trim().slice(0, 80) } : null;
+  })();
+  const [selectedChar, setSelectedChar] = useState<string>(preset?.char || '');
+  const [selectedAction, setSelectedAction] = useState<string>(preset ? 'Custom Action' : '');
+  const [customActionInput, setCustomActionInput] = useState<string>(preset?.action || '');
 
   const isMechanicEnabled = (id: string) => {
     if (!enabledMechanics) return true;
@@ -52,7 +60,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
       
       if (selectedAction === 'Custom Action') {
         actionName = customActionInput;
-        actionCategory = ' (Custom)';
+        actionCategory = '';
       } else if (actionObj) {
         actionCategory = ` (${actionObj.category})`;
       }
@@ -480,7 +488,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                   )}
                 </div>
                 <div className="mt-2 font-mono text-[9px] uppercase tracking-widest text-white/30">
-                  {lastRoll.type.replace('_', ' ')} sequence complete
+                  бросок готов — отправьте ход
                 </div>
               </motion.div>
             ) : (
@@ -502,6 +510,7 @@ const RollButton: React.FC<{ label: string, sub: string, icon: React.ReactNode, 
   <button 
     onClick={onClick}
     disabled={disabled}
+    data-suggested={isSuggested ? '1' : undefined}
     className={`group relative p-3 border rounded-xl text-left transition-all disabled:opacity-50 active:scale-[0.98] ${
       isSuggested 
         ? 'bg-emerald-500/10 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]' 

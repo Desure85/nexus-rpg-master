@@ -1270,7 +1270,7 @@ export default function App() {
                       >
                         {Object.entries(pendingRolls).map(([char, roll]) => (
                           <div key={char} className="flex items-center justify-between bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs text-white/80">
-                            <span className="truncate mr-2" dangerouslySetInnerHTML={{ __html: (roll as string).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>') }} />
+                            <span className="truncate mr-2" dangerouslySetInnerHTML={{ __html: (roll as string).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\s*performs\s*/g, ' — ').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*(.*?)\*/g, '<em>$1</em>') }} />
                             <button 
                               onClick={() => {
                                 const newRolls = { ...pendingRolls };
@@ -1287,6 +1287,20 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
+                  {currentDashboard.suggestedRoll && !isDiceTrayOpen && !isLoading && Object.keys(pendingRolls).length === 0 && (
+                    <button
+                      data-testid="roll-prompt"
+                      onClick={() => setIsDiceTrayOpen(true)}
+                      className="w-full mb-2 px-3 py-2 rounded-xl border border-emerald-400/30 bg-emerald-400/[0.08] hover:bg-emerald-400/[0.14] text-left flex items-center gap-3 transition-all"
+                    >
+                      <Dices size={18} className="text-emerald-300 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-bold text-emerald-200">Мастер просит бросок</span>
+                        <span className="block text-[11px] text-white/55 truncate">{currentDashboard.suggestedRoll.reason}</span>
+                      </span>
+                      <span className="text-xs font-bold text-emerald-300 shrink-0">🎲 Бросить</span>
+                    </button>
+                  )}
                   {currentSession.config?.tutorial && currentSession.isOwner && !isLoading && (
                     <TutorialCoach sessionId={currentSession.id} step={currentSession.history.filter(m => m.role === 'assistant').length} onOpenWorlds={() => setWorldsOpen({})} />
                   )}

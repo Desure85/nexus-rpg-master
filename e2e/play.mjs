@@ -374,16 +374,33 @@ async function learn(browser) {
   report.push(`### Обучение, ход 2\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
   check('обучение: подсказка 2 после хода', await page.locator('[data-tutorial-tip="1"]').count() > 0);
   await snap(page, 'learn_tip2');
+  // мастер просит бросок → плашка над вводом, герой и действие выбраны заранее, остаётся кубик
+  let rolledInTutorial = false;
+  for (let k = 0; k < 2 && !rolledInTutorial; k++) {
+    if (await page.getByTestId('roll-prompt').count()) {
+      await page.getByText('Понятно', { exact: true }).click().catch(() => undefined);
+      await page.getByTestId('roll-prompt').click();
+      const btn = page.locator('button[data-suggested="1"]').first();
+      await (await btn.count() ? btn : page.getByText('Обычный', { exact: true })).click();
+      await page.waitForTimeout(1500);
+      await snap(page, 'learn_roll');
+      const n0 = s.history.filter(m => m.role === 'assistant').length;
+      ({ s } = await gmTurn(page, sid, 'Ласка рискует', n0 + 1));
+      rolledInTutorial = s.history.some(m => m.role === 'user' && /\[ROLL:[^\]]*Итог/.test(m.content));
+      report.push(`### Обучение, ход с броском\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
+    } else if (k === 0) {
+      ({ s } = await gmTurn(page, sid, 'Ласка идёт по следу каравана на Медовый тракт', 3));
+    }
+  }
+  check('обучение: мастер попросил бросок, бросок в один клик', rolledInTutorial || !process.env.LIVE, rolledInTutorial ? '' : 'плашки броска не было');
   if (process.env.LONG) {
     const acts = ['Ласка идёт по следу каравана на Медовый тракт', 'Ласка уворачивается и бьёт кинжалом', 'Ласка обыскивает место стычки', 'Ласка возвращается к Борну с находкой'];
     for (let i = 0; i < acts.length; i++) {
       await page.getByText('Понятно', { exact: true }).click().catch(() => undefined);
-      ({ s } = await gmTurn(page, sid, acts[i], 3 + i));
-      report.push(`### Обучение, ход ${3 + i}\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
+      const n0 = s.history.filter(m => m.role === 'assistant').length;
+      ({ s } = await gmTurn(page, sid, acts[i], n0 + 1));
+      report.push(`### Обучение, ход ${n0 + 1}\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
     }
-    const d = s.history.filter(m => m.role === 'assistant').pop()?.content || '';
-    check('обучение: за 6 ходов были броски', s.history.some(m => /\[ROLL:[^\]]*Итог/.test(m.content)), '');
-    void d;
   } else await page.getByText('Я уже умею играть').click();
   if (!process.env.LONG) check('обучение: подсказки отключаются', await page.locator('[data-tutorial-tip]').count() === 0);
   await ctx.close();
