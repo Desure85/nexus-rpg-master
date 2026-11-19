@@ -143,7 +143,7 @@ export function registerOAuthRoutes(app: Express, db: DB, t: Tenancy) {
     // склеиваем с существующим аккаунтом только по подтверждённой почте
     if (!userId && email && prof.emailVerified) userId = (db.prepare("SELECT id FROM users WHERE email = ?").get(email) as any)?.id;
     if (!userId) {
-      const firstUser = !(db.prepare("SELECT 1 FROM users LIMIT 1").get());
+      const firstUser = !(db.prepare("SELECT 1 FROM users WHERE id != 'system-nexus' LIMIT 1").get());
       const invite = row.invite ? t.inviteByToken(row.invite) : null;
       const mode = registrationMode();
       if (!firstUser && !invite && mode !== "open") return fail(res, mode === "invite" ? "Регистрация только по приглашению" : "Регистрация закрыта");

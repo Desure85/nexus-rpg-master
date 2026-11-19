@@ -108,6 +108,8 @@ export interface World {
   hidden?: boolean;
   updated_at?: string;
   mine?: boolean;
+  /** стартовый мир от авторов игры */
+  official?: boolean;
   /** текущее состояние фракций и шкал (только в полном виде мира) */
   state?: WorldState;
 }

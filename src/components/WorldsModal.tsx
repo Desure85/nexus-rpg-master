@@ -138,7 +138,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                     <div className="flex items-start gap-3">
                       <span className="text-3xl leading-none">{w.icon}</span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-white font-bold truncate">{w.title}</p>
+                        <p className="text-white font-bold truncate">{w.title}{w.official && <span className="ml-2 align-middle text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">✦ от Nexus</span>}</p>
                         <p className="text-[11px] text-white/40">{WORLD_GENRES.find(g => g.id === w.genre)?.name}{w.author && !w.mine ? ` · ${w.author}` : ''} · сыграно {w.plays || 0}</p>
                       </div>
                       {w.mine && <span className="text-[10px] text-white/40 flex items-center gap-1">{w.visibility === 'private' ? <Lock size={10} /> : w.visibility === 'link' ? <Link2 size={10} /> : <Globe2 size={10} />}{VIS_LABEL[w.visibility]}</span>}
