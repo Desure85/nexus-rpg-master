@@ -169,7 +169,9 @@ function gameStart(req: LlmRequest, user: string) {
   const g = genreOf(setting + " " + hook);
   const W = WORLD[g];
   const slots = parseSlots(user);
-  const [home, near, far] = [W.place[0], W.place[1], W.place[2]];
+  // мир автора: берём его места (движок потом сольёт карту по названиям)
+  const worldPlaces = (req.system.match(/Места мира: ([^\n]+)\./)?.[1] || "").split(", ").filter(Boolean);
+  const [home, near, far] = [worldPlaces[0] || W.place[0], worldPlaces[1] || W.place[1], worldPlaces[2] || W.place[2]];
   const chars = heroes.map(h => {
     const hp = between(10, 14);
     return {
