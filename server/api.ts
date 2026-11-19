@@ -11,7 +11,7 @@ import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingErro
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
 import { mailConfigured } from "./mailer";
 import {
-  loadSession, saveSession, publicSession, sessionSummary, lastDashboard, readSettings, settingsForClient, writeSettings, mergeMechanics,
+  loadSession, saveSession, publicSession, sessionSummary, lastDashboard, readSettings, settingsForClient, writeSettings, mergeMechanics, cleanExtra,
   type SessionConfig, type StoredSession,
 } from "./store";
 import { buildGameStartPrompt, buildTaleStartPrompt, TALE_AGES, INITIAL_DASHBOARD, type TaleAge } from "../shared/rules";
@@ -124,7 +124,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const cfgIn = req.body?.config || {};
     const config: SessionConfig = {
       mechanics: Array.isArray(cfgIn.mechanics) ? mergeMechanics(cfgIn.mechanics) : undefined,
-      systemPrompt: typeof cfgIn.systemPrompt === "string" && cfgIn.systemPrompt.trim() ? cfgIn.systemPrompt.slice(0, 50_000) : undefined,
+      extraInstructions: cleanExtra(cfgIn.extraInstructions) || undefined,
       idlePlayerAction: ["random", "skip", "gm"].includes(cfgIn.idlePlayerAction) ? cfgIn.idlePlayerAction : undefined,
       autoApprove: !!cfgIn.autoApprove,
     };
@@ -218,7 +218,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const c = req.body?.config;
     if (c && typeof c === "object") {
       if (Array.isArray(c.mechanics)) s.config.mechanics = mergeMechanics(c.mechanics);
-      if (typeof c.systemPrompt === "string") s.config.systemPrompt = c.systemPrompt.slice(0, 50_000) || undefined;
+      if (typeof c.extraInstructions === "string") s.config.extraInstructions = cleanExtra(c.extraInstructions) || undefined;
+      delete s.config.systemPrompt;
       if (["random", "skip", "gm"].includes(c.idlePlayerAction)) s.config.idlePlayerAction = c.idlePlayerAction;
       if (typeof c.autoApprove === "boolean") s.config.autoApprove = c.autoApprove;
     }
@@ -612,7 +613,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   app.get("/api/settings", requireUser, (req, res) => {
     const full = settingsForClient(db);
     if (req.auth.user!.isSuperadmin) return res.json({ ...full, canEdit: true });
-    res.json({ systemPrompt: full.systemPrompt, mechanics: full.mechanics, idlePlayerAction: full.idlePlayerAction, canEdit: false });
+    res.json({ extraInstructions: full.extraInstructions, mechanics: full.mechanics, idlePlayerAction: full.idlePlayerAction, canEdit: false });
   });
 
   app.post("/api/settings", requireUser, requireSuperadmin, (req, res) => {

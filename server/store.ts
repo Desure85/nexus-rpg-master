@@ -1,13 +1,15 @@
 import type { DB } from "./db";
 import type { Message, CodexEntry, MechanicConfig, DashboardData } from "../src/types";
 import type { LlmSettings, Provider } from "./llm";
-import { DEFAULT_MECHANICS, SYSTEM_PROMPT, INITIAL_DASHBOARD } from "../shared/rules";
+import { DEFAULT_MECHANICS, INITIAL_DASHBOARD, MECHANIC_INFO } from "../shared/rules";
 import type { TaleConfig } from "../shared/rules";
-import { LEGACY_MECHANIC_DESCRIPTIONS, LEGACY_SYSTEM_PROMPTS } from "../shared/legacy-prompts";
 
 export interface SessionConfig {
   mechanics?: MechanicConfig[];
+  /** Устарело: системный промпт больше не редактируется (игнорируется). */
   systemPrompt?: string;
+  /** Пожелания мастера сверх системного промпта: стиль, тон, табу. */
+  extraInstructions?: string;
   idlePlayerAction?: "random" | "skip" | "gm";
   autoApprove?: boolean;
   tale?: TaleConfig & { finished?: boolean; title?: string; moral?: string };
@@ -77,11 +79,13 @@ export const saveSession = (db: DB, s: StoredSession) => {
     .run(s.name, JSON.stringify(pruneDashboards(s.history)), s.lore, s.archive, JSON.stringify(s.codex), JSON.stringify(s.config), tree?.length ? JSON.stringify(tree) : null, s.id);
 };
 
-/** Публичное представление сессии: без хеша владельца; системный промпт видит только мастер. */
+/** Публичное представление сессии: без хеша владельца; пожелания мастера видит только мастер. */
 export const publicSession = (s: StoredSession, isOwner: boolean, busy: boolean) => {
   const { owner_hash, ...rest } = s;
   const config = { ...s.config };
-  if (!isOwner) delete config.systemPrompt;
+  delete config.systemPrompt;
+  if (config.mechanics) config.mechanics = mechanicsForClient(config.mechanics);
+  if (!isOwner) delete config.extraInstructions;
   return { ...rest, config, isOwner, busy };
 };
 
@@ -94,7 +98,7 @@ export const sessionSummary = (s: StoredSession, busy: boolean) => ({
 
 export interface GlobalSettings {
   llm: LlmSettings;
-  systemPrompt: string;
+  extraInstructions: string;
   mechanics: MechanicConfig[];
   idlePlayerAction: "random" | "skip" | "gm";
   loggingEnabled: boolean;
@@ -107,19 +111,19 @@ export const readSettingsRaw = (db: DB): Record<string, string> => {
   return Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.key, r.value]));
 };
 
-/** Сохранённые механики поверх актуальных; неотредактированные старые описания обновляются до новой версии. */
+export const MAX_EXTRA_INSTRUCTIONS = 3000;
+export const cleanExtra = (v: unknown) => typeof v === "string" ? v.trim().slice(0, MAX_EXTRA_INSTRUCTIONS) : undefined;
+
+/** Из сохранённого берём только «включено/выключено»: тексты механик — часть системного промпта и живут в коде. */
 export const mergeMechanics = (stored?: MechanicConfig[] | null): MechanicConfig[] =>
   DEFAULT_MECHANICS.map(def => {
     const existing = stored?.find(p => p.id === def.id);
-    if (!existing) return def;
-    const legacy = LEGACY_MECHANIC_DESCRIPTIONS[def.id] || [];
-    const description = !existing.description || legacy.includes(existing.description) ? def.description : existing.description;
-    return { ...def, ...existing, name: def.name, description };
+    if (MECHANIC_INFO[def.id]?.core) return { ...def, enabled: true }; // без них игра не работает
+    return existing && typeof existing.enabled === "boolean" ? { ...def, enabled: existing.enabled } : def;
   });
 
-/** Старый дефолтный промпт, сохранённый без правок, заменяем актуальным. */
-export const upgradeSystemPrompt = (p?: string | null) =>
-  !p || LEGACY_SYSTEM_PROMPTS.some(l => l.trim() === p.trim()) ? SYSTEM_PROMPT : p;
+/** Для клиента: механики без внутренних текстов промпта. */
+export const mechanicsForClient = (m: MechanicConfig[]) => m.map(({ id, name, enabled }) => ({ id, name, enabled, description: "" }));
 
 export const readSettings = (db: DB): GlobalSettings => {
   const r = readSettingsRaw(db);
@@ -132,7 +136,7 @@ export const readSettings = (db: DB): GlobalSettings => {
       openRouterApiKey: r.openRouterApiKey || undefined,
       openRouterModel: r.openRouterModel || undefined,
     },
-    systemPrompt: upgradeSystemPrompt(r.systemPrompt),
+    extraInstructions: r.extraInstructions || "",
     mechanics: mergeMechanics(parse<MechanicConfig[] | null>(r.mechanics, null)),
     idlePlayerAction: (r.idlePlayerAction as any) || "random",
     loggingEnabled: r.loggingEnabled === "true",
@@ -151,8 +155,8 @@ export const settingsForClient = (db: DB) => {
     openRouterModel: s.llm.openRouterModel || "",
     apiKey: mask(s.llm.apiKey),
     openRouterApiKey: mask(s.llm.openRouterApiKey),
-    systemPrompt: s.systemPrompt,
-    mechanics: s.mechanics,
+    extraInstructions: s.extraInstructions,
+    mechanics: mechanicsForClient(s.mechanics),
     idlePlayerAction: s.idlePlayerAction,
     loggingEnabled: s.loggingEnabled,
   };
@@ -160,11 +164,12 @@ export const settingsForClient = (db: DB) => {
 
 export const writeSettings = (db: DB, body: Record<string, any>) => {
   const upsert = db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value");
-  const plain = ["provider", "modelUrl", "modelName", "openRouterModel", "systemPrompt", "idlePlayerAction"];
+  const plain = ["provider", "modelUrl", "modelName", "openRouterModel", "idlePlayerAction"];
   db.transaction(() => {
     for (const k of plain) if (typeof body[k] === "string") upsert.run(k, body[k]);
+    if (typeof body.extraInstructions === "string") upsert.run("extraInstructions", cleanExtra(body.extraInstructions)!);
     if (typeof body.loggingEnabled === "boolean") upsert.run("loggingEnabled", body.loggingEnabled ? "true" : "false");
-    if (Array.isArray(body.mechanics)) upsert.run("mechanics", JSON.stringify(body.mechanics));
+    if (Array.isArray(body.mechanics)) upsert.run("mechanics", JSON.stringify(body.mechanics.map((m: any) => ({ id: String(m.id), enabled: !!m.enabled }))));
     for (const k of SECRET_KEYS) {
       const v = body[k];
       // маска «••••1234» означает «не менять»; пустая строка — удалить ключ

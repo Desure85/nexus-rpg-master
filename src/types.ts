@@ -153,7 +153,7 @@ export interface GameSession {
 
 export interface SessionConfig {
   mechanics?: MechanicConfig[];
-  systemPrompt?: string;
+  extraInstructions?: string;
   idlePlayerAction?: 'random' | 'skip' | 'gm';
   autoApprove?: boolean;
   tale?: { age: '3-5' | '6-8' | '9-12' | 'adult'; chapters: number; moral?: string; finished?: boolean; title?: string };
@@ -173,7 +173,7 @@ export interface AppSettings {
   modelName: string;
   openRouterApiKey?: string;
   openRouterModel?: string;
-  systemPrompt: string;
+  extraInstructions?: string;
   fontSize: number;
   fontFamily: 'sans' | 'serif' | 'mono';
   loggingEnabled: boolean;

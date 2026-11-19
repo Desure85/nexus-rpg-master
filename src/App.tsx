@@ -11,7 +11,7 @@ import { SessionSetup, SetupData } from './components/SessionSetup';
 import { GameSession, AppSettings, Message, DashboardData, MechanicConfig, stressValue, WorkspaceInfo, CurrentUser } from './types';
 import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as SettingsIcon, Menu, X as CloseIcon, LayoutDashboard, MessageSquare, MessageSquarePlus, Dices, Download, Library, HelpCircle, Flag, Skull, Eye, Footprints, ScrollText, Users, Award, Share2, Swords, Feather } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DEFAULT_MECHANICS, SYSTEM_PROMPT, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
+import { MECHANIC_INFO, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
 import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
 import { api, ApiError, useSessionSocket, characterLink, locationSearch, clearLocationSearch, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
 import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
@@ -27,7 +27,12 @@ import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
-export { DEFAULT_MECHANICS, SYSTEM_PROMPT };
+// В клиент не попадают тексты системного промпта: только id, название и флаг
+const DEFAULT_MECHANICS = Object.entries(MECHANIC_INFO).map(([id, m]) => ({ id, name: m.title, enabled: m.on !== false, description: '' }));
+
+const EXTRA_KEY = 'nexus_extra_instructions';
+const loadExtraDefault = () => { try { return localStorage.getItem(EXTRA_KEY) || ''; } catch { return ''; } };
+const saveExtraDefault = (v: string) => { try { localStorage.setItem(EXTRA_KEY, v); } catch { /* приватный режим */ } };
 
 
 interface SessionListItem { id: string; name: string; mode?: string; setting?: string; updated_at: string; turns?: number; busy?: boolean }
@@ -92,7 +97,7 @@ export default function App() {
     modelUrl: '',
     apiKey: '',
     modelName: '',
-    systemPrompt: SYSTEM_PROMPT,
+    extraInstructions: loadExtraDefault(),
     loggingEnabled: false,
     idlePlayerAction: 'random',
     mechanics: DEFAULT_MECHANICS,
@@ -136,7 +141,8 @@ export default function App() {
   const effectiveSettings: AppSettings = {
     ...settings,
     mechanics: currentSession?.config?.mechanics || settings.mechanics,
-    systemPrompt: currentSession?.config?.systemPrompt || settings.systemPrompt,
+    // пожелания мастеру: у открытой сессии — свои, иначе — личные по умолчанию для новых игр
+    extraInstructions: currentSession ? (currentSession.config?.extraInstructions || '') : settings.extraInstructions,
     idlePlayerAction: currentSession?.config?.idlePlayerAction || settings.idlePlayerAction,
   };
 
@@ -214,7 +220,6 @@ export default function App() {
         modelName: data.modelName ?? '',
         openRouterApiKey: data.openRouterApiKey ?? '',
         openRouterModel: data.openRouterModel ?? '',
-        systemPrompt: data.systemPrompt || SYSTEM_PROMPT,
         loggingEnabled: !!data.loggingEnabled,
         idlePlayerAction: data.idlePlayerAction || 'random',
         mechanics: Array.isArray(data.mechanics) ? data.mechanics : DEFAULT_MECHANICS,
@@ -331,15 +336,18 @@ export default function App() {
     updateAppearance({ fontSize: newSettings.fontSize, fontFamily: newSettings.fontFamily });
     try {
       if (canEditGlobal) {
-        await api('/api/settings', { body: newSettings });
+        const { extraInstructions: _personal, ...globalPart } = newSettings;
+        await api('/api/settings', { body: globalPart });
       }
       if (currentSession?.isOwner) {
         const updated = await api<GameSession>(`/api/sessions/${currentSession.id}`, {
           method: 'PATCH',
-          body: { config: { mechanics: newSettings.mechanics, systemPrompt: newSettings.systemPrompt, idlePlayerAction: newSettings.idlePlayerAction } },
+          body: { config: { mechanics: newSettings.mechanics, extraInstructions: newSettings.extraInstructions || '', idlePlayerAction: newSettings.idlePlayerAction } },
         });
         setCurrentSession(updated);
       }
+      saveExtraDefault(newSettings.extraInstructions || '');
+      setSettings(prev => ({ ...prev, extraInstructions: newSettings.extraInstructions || '' }));
       await fetchSettings();
       setIsSettingsOpen(false);
     } catch (e) {
@@ -546,7 +554,7 @@ export default function App() {
           setup,
           config: {
             mechanics: settings.mechanics,
-            systemPrompt: settings.systemPrompt !== SYSTEM_PROMPT ? settings.systemPrompt : undefined,
+            extraInstructions: settings.extraInstructions?.trim() || undefined,
             idlePlayerAction: settings.idlePlayerAction,
             autoApprove: setup.autoApprove,
           },
