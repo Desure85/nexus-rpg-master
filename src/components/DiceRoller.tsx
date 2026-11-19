@@ -285,7 +285,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-0.5">
-                            <span className={`text-[8px] uppercase tracking-widest font-bold ${style.color}`}>
+                            <span className={`text-[9px] uppercase tracking-widest font-bold ${style.color}`}>
                               {a.category}
                             </span>
                             {isSelected && <motion.div layoutId="active-dot" className={`w-1 h-1 rounded-full ${style.color} bg-current`} />}
@@ -295,7 +295,7 @@ export const DiceRoller: React.FC<DiceRollerProps> = ({ onRoll, onClose, suggest
                           </p>
                           {a.description && (
                             <div className={`overflow-hidden transition-all duration-300 ${isSelected ? 'max-h-40 opacity-100 mt-1.5' : 'max-h-0 opacity-0 group-hover:max-h-40 group-hover:opacity-100 group-hover:mt-1.5'}`}>
-                              <p className={`text-[9px] leading-snug ${isSelected ? 'text-white/70' : 'text-white/40'}`}>
+                              <p className={`text-[10px] leading-snug ${isSelected ? 'text-white/70' : 'text-white/40'}`}>
                                 {a.description}
                               </p>
                             </div>
@@ -521,8 +521,8 @@ const RollButton: React.FC<{ label: string, sub: string, icon: React.ReactNode, 
       <span className={`${isSuggested ? 'text-emerald-400' : 'text-white/40 group-hover:text-white/80'} transition-colors`}>{icon}</span>
       <div className={`w-1 h-1 rounded-full transition-colors ${isSuggested ? 'bg-emerald-500 animate-pulse' : 'bg-white/10 group-hover:bg-emerald-500'}`} />
     </div>
-    <div className={`font-mono text-[10px] font-bold transition-colors ${isSuggested ? 'text-emerald-400' : 'text-white/80 group-hover:text-white'}`}>{label}</div>
-    <div className={`font-mono text-[8px] transition-colors uppercase tracking-tighter ${isSuggested ? 'text-emerald-400/60' : 'text-white/20 group-hover:text-white/40'}`}>{sub}</div>
+    <div className={`text-xs font-bold transition-colors ${isSuggested ? 'text-emerald-400' : 'text-white/80 group-hover:text-white'}`}>{label}</div>
+    <div className={`text-[10px] leading-snug transition-colors ${isSuggested ? 'text-emerald-300/70' : 'text-white/40 group-hover:text-white/60'}`}>{sub}</div>
     {isSuggested && (
       <div className="absolute -top-1 -right-1">
         <div className="relative flex h-2 w-2">

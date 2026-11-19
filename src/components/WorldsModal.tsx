@@ -56,6 +56,15 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
   const [list, setList] = useState<World[] | null>(null);
   const [editing, setEditing] = useState<World | null>(null);
   const [playing, setPlaying] = useState<World | null>(null);
+  // Escape закрывает верхнее окно: диалог игры → каталог (редактор не закрываем, чтобы не потерять правки)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || editing || document.querySelector('[role=dialog][aria-modal=true]')) return;
+      if (playing) setPlaying(null); else onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [playing, editing, onClose]);
   const [q, setQ] = useState('');
   const [genre, setGenre] = useState('');
   const [sort, setSort] = useState<'popular' | 'likes' | 'new' | 'rating'>('popular');
@@ -118,9 +127,10 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
               {WORLD_GENRES.map(g => <button key={g.id} onClick={() => setGenre(g.id)} className={`${chip(genre === g.id)} shrink-0`}>{g.name}</button>)}
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
-              {([['popular', 'Популярные'], ['rating', 'По оценке'], ['likes', 'Любимые'], ['new', 'Новые']] as const).map(([id, n]) => <button key={id} onClick={() => setSort(id)} className={sort === id ? 'text-amber-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
-              <span className="text-white/15">|</span>
-              {([['', 'Любые'], ['free', 'Бесплатные'], ['paid', 'Платные'], ['owned', 'Купленные']] as const).map(([id, n]) => <button key={id} onClick={() => setPrice(id)} className={price === id ? 'text-emerald-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
+              {([['popular', 'Популярные'], ['rating', 'По оценке'], ['likes', 'Любимые'], ['new', 'Новые']] as const).map(([id, n]) => <button key={id} onClick={() => setSort(id)} className={`py-1 ${sort === id ? 'text-amber-300 font-bold' : 'text-white/45 hover:text-white'}`}>{n}</button>)}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] -mt-1">
+              {([['', 'Любые'], ['free', 'Бесплатные'], ['paid', 'Платные'], ['owned', 'Купленные']] as const).map(([id, n]) => <button key={id} onClick={() => setPrice(id)} className={`py-1 ${price === id ? 'text-emerald-300 font-bold' : 'text-white/45 hover:text-white'}`}>{n}</button>)}
             </div>
           </div>
         )}
@@ -141,7 +151,8 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                     <div className="flex items-start gap-3">
                       <span className="text-3xl leading-none">{w.icon}</span>
                       <div className="min-w-0 flex-1">
-                        <p className="text-white font-bold truncate">{w.title}{w.official && <span className="ml-2 align-middle text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">✦ от Nexus</span>}</p>
+                        <p className="text-white font-bold truncate">{w.title}</p>
+                        {w.official && <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">✦ от Nexus</span>}
                         <p className="text-[11px] text-white/40">{WORLD_GENRES.find(g => g.id === w.genre)?.name}{w.author && !w.mine ? ` · ${w.author}` : ''} · сыграно {w.plays || 0}</p>
                       </div>
                       <PriceTag w={w} />
@@ -160,7 +171,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                         <ScrollText size={12} /> {w.chronicle || 0}{w.chronicleNew ? ` +${w.chronicleNew}` : ''}
                       </button>
                       <button onClick={() => like(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.liked ? 'text-rose-300 bg-rose-500/10' : 'text-white/50 bg-white/5 hover:text-white'}`} aria-label="Нравится"><Heart size={12} fill={w.liked ? 'currentColor' : 'none'} /> {w.likes || 0}</button>
-                      {!w.mine && <button onClick={() => report(w)} className="ml-auto p-1.5 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={13} /></button>}
+                      {!w.mine && <button onClick={() => report(w)} className="ml-auto p-2 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={14} /></button>}
                       {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { try { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось удалить'); } } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
                     </div>
                   </div>

@@ -202,20 +202,20 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
       <div className="p-6 space-y-8 overflow-y-auto">
         {/* Setting Section */}
         <section className="space-y-3">
-          <div className="flex justify-between items-end">
+          <div className="flex flex-wrap justify-between items-end gap-2">
             <label className="text-xs uppercase tracking-widest text-white/40 font-bold">{isTale ? 'Мир сказки' : 'Сеттинг / Мир'}</label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
               <input
                 type="text"
                 value={settingPrompt}
                 onChange={e => setSettingPrompt(e.target.value)}
                 placeholder="Направление (напр. киберпанк с магией)"
-                className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white focus:outline-none focus:border-emerald-500/50 w-48"
+                className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white focus:outline-none focus:border-emerald-500/50 flex-1 min-w-0 sm:w-48 sm:flex-none"
               />
               <button 
                 onClick={handleGenSetting}
                 disabled={isGenSetting}
-                className="text-[10px] uppercase tracking-widest text-emerald-400 hover:text-emerald-300 flex items-center gap-1 disabled:opacity-50"
+                className="shrink-0 text-[10px] uppercase tracking-widest text-emerald-400 hover:text-emerald-300 flex items-center gap-1 disabled:opacity-50"
               >
                 <Wand2 size={12} /> {isGenSetting ? 'Генерация...' : 'Сгенерировать ИИ'}
               </button>
