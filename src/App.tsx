@@ -29,6 +29,7 @@ import { dailyChallenge, DAILY_MODIFIERS } from '../shared/daily';
 import { DailyCard, markDailyPlayed } from './components/DailyCard';
 import { ActionChips } from './components/ActionChips';
 import { TutorialCoach } from './components/TutorialCoach';
+import { WorldCover } from './components/WorldCover';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -153,7 +154,7 @@ export default function App() {
   const [hallOpen, setHallOpen] = useState(false);
   const [worldsOpen, setWorldsOpen] = useState<{ openId?: string } | null>(null);
   const [worldInbox, setWorldInbox] = useState(0);
-  const [officialWorlds, setOfficialWorlds] = useState<{ id: string; title: string; icon: string; description: string }[]>([]);
+  const [officialWorlds, setOfficialWorlds] = useState<{ id: string; title: string; icon: string; description: string; genre: string; cover?: string }[]>([]);
   useEffect(() => { if (user) api<any[]>('/api/worlds?scope=public').then(r => setOfficialWorlds(r.filter(w => w.official).slice(0, 6))).catch(() => undefined); }, [user]);
   useEffect(() => { if (user && !worldsOpen) api<{ newEntries: number }>('/api/worlds/inbox').then(r => setWorldInbox(r.newEntries)).catch(() => undefined); }, [user, worldsOpen]);
   const isTale = currentSession?.mode === 'tale';
@@ -1759,10 +1760,10 @@ export default function App() {
                 <h3 className="text-[10px] uppercase tracking-widest font-bold text-white/40">Миры от Nexus</h3>
                 <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
                   {officialWorlds.map(w => (
-                    <button key={w.id} onClick={() => setWorldsOpen({ openId: w.id })} className="snap-start shrink-0 w-60 p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.07] text-left transition-all">
-                      <span className="text-2xl">{w.icon}</span>
-                      <span className="block text-white font-bold text-sm mt-2">{w.title}</span>
-                      <span className="block text-[11px] text-white/45 mt-1 line-clamp-3">{w.description}</span>
+                    <button key={w.id} onClick={() => setWorldsOpen({ openId: w.id })} className="snap-start shrink-0 w-60 rounded-2xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.07] text-left transition-all overflow-hidden">
+                      <WorldCover w={w} className="h-24" iconSize="text-4xl" />
+                      <span className="block px-4 pt-3 text-white font-bold text-sm">{w.title}</span>
+                      <span className="block px-4 pb-4 text-[11px] text-white/45 mt-1 line-clamp-3">{w.description}</span>
                     </button>
                   ))}
                 </div>

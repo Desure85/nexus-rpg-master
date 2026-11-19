@@ -1122,6 +1122,33 @@ describe('миры', () => {
     expect(sysOf(c)).not.toContain('Знакомые NPC');
   });
 
+  it('обложка мира: только картинки по байтам, видит тот, кто видит мир, копируется с ремиксом', async () => {
+    const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    const w = (await gm().post('/api/worlds', worldBody())).body;
+    expect(w.cover).toBeUndefined();
+    const other = await account('cover-other@example.com');
+    expect((await other.put(`/api/worlds/${w.id}/cover`, { data: `data:image/png;base64,${PNG}` })).status).toBe(404);
+    // svg и html под видом png — нет
+    expect((await gm().put(`/api/worlds/${w.id}/cover`, { data: `data:image/svg+xml;base64,${Buffer.from('<svg onload=alert(1)>').toString('base64')}` })).status).toBe(400);
+    expect((await gm().put(`/api/worlds/${w.id}/cover`, { data: `data:image/png;base64,${Buffer.from('<html><script>alert(1)</script>').toString('base64')}` })).status).toBe(400);
+    expect((await gm().put(`/api/worlds/${w.id}/cover`, { data: `data:image/jpeg;base64,${Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(410 * 1024)]).toString('base64')}` })).status).toBe(413);
+    const up = (await gm().put(`/api/worlds/${w.id}/cover`, { data: `data:image/png;base64,${PNG}` })).body;
+    expect(up.cover).toMatch(new RegExp(`^/api/worlds/${w.id}/cover\\?v=1$`));
+    const img = await gm().get(up.cover);
+    expect(img.status).toBe(200);
+    expect(img.headers['content-type']).toBe('image/png');
+    expect(img.headers['content-security-policy']).toContain('sandbox');
+    // приватный мир — чужому обложка не видна, публичный — видна
+    expect((await other.get(up.cover)).status).toBe(404);
+    await gm().patch(`/api/worlds/${w.id}`, { visibility: 'public' });
+    expect((await other.get(up.cover)).status).toBe(200);
+    const copy = (await other.post(`/api/worlds/${w.id}/copy`)).body;
+    expect(copy.cover).toBeTruthy();
+    expect((await other.get(copy.cover)).status).toBe(200);
+    expect((await gm().del(`/api/worlds/${w.id}/cover`)).body.cover).toBeUndefined();
+    expect((await other.get(up.cover)).status).toBe(404);
+  });
+
   it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
     const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
     expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);

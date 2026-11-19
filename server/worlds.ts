@@ -68,6 +68,8 @@ export function createWorlds(db: DB) {
   if (!ccols.includes("applied")) db.exec("ALTER TABLE world_chronicle ADD COLUMN applied INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("seed_hash")) db.exec("ALTER TABLE worlds ADD COLUMN seed_hash TEXT");
   if (!cols.includes("price")) db.exec("ALTER TABLE worlds ADD COLUMN price INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes("cover_v")) db.exec("ALTER TABLE worlds ADD COLUMN cover_v INTEGER NOT NULL DEFAULT 0");
+  db.exec("CREATE TABLE IF NOT EXISTS world_covers (world_id TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
   if (!cols.includes("rating_sum")) db.exec("ALTER TABLE worlds ADD COLUMN rating_sum INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("rating_n")) db.exec("ALTER TABLE worlds ADD COLUMN rating_n INTEGER NOT NULL DEFAULT 0");
   db.exec(`
@@ -111,6 +113,7 @@ export function createWorlds(db: DB) {
   const locked = (r: any, userId?: string) => (r.price || 0) > 0 && r.owner_id !== userId && !r.owned;
   const market = (r: any, userId?: string) => ({
     price: r.price || 0,
+    ...(r.cover_v ? { cover: `/api/worlds/${r.id}/cover?v=${r.cover_v}` } : {}),
     ...((r.price || 0) > 0 ? { owned: r.owner_id === userId || !!r.owned } : {}),
     ...(locked(r, userId) ? { locked: true } : {}),
     rating: r.rating_n ? Math.round((r.rating_sum / r.rating_n) * 10) / 10 : 0,
@@ -262,7 +265,7 @@ export function createWorlds(db: DB) {
       const sold = (db.prepare("SELECT COUNT(*) AS n FROM world_purchases p JOIN worlds w ON w.id = p.world_id WHERE w.id = ? AND w.owner_id = ?").get(req.params.wid, req.auth.user.id) as any).n;
       if (sold) return res.status(409).json({ error: "world_sold", message: `Этот мир купили игроки (${sold}) — удалить его нельзя. Можно убрать из каталога: доступ «По ссылке» или «Только я», купившие сохранят доступ.` });
       const del = db.prepare("DELETE FROM worlds WHERE id = ? AND owner_id = ?").run(req.params.wid, req.auth.user.id);
-      if (del.changes) { db.prepare("DELETE FROM world_likes WHERE world_id = ?").run(req.params.wid); db.prepare("DELETE FROM world_reports WHERE world_id = ?").run(req.params.wid); }
+      if (del.changes) { db.prepare("DELETE FROM world_likes WHERE world_id = ?").run(req.params.wid); db.prepare("DELETE FROM world_reports WHERE world_id = ?").run(req.params.wid); db.prepare("DELETE FROM world_covers WHERE world_id = ?").run(req.params.wid); }
       res.json({ status: "ok" });
     });
 
@@ -334,6 +337,43 @@ export function createWorlds(db: DB) {
       res.json({ ok: true });
     });
 
+    /* ---------- обложка: JPEG/PNG/WebP до 400 КБ, клиент заранее ужимает до 1280×720 ---------- */
+    const COVER_MAX = 400 * 1024;
+    const sniff = (b: Uint8Array) =>
+      b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? "image/jpeg"
+      : b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 ? "image/png"
+      : b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 ? "image/webp"
+      : null;
+    app.get("/api/worlds/:wid/cover", requireUser, (req: any, res) => {
+      const w = getForPlay(req.auth.user.id, req.params.wid); // обложку видит тот, кто видит мир (и витрину платного)
+      const row = w ? db.prepare("SELECT mime, data FROM world_covers WHERE world_id = ?").get(w.id) as any : null;
+      if (!row) return res.status(404).json({ error: "no_cover" });
+      res.setHeader("Content-Type", row.mime);
+      res.setHeader("Cache-Control", "private, max-age=86400"); // в адресе ?v= — новая обложка придёт по новому адресу
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+      res.end(row.data);
+    });
+    app.put("/api/worlds/:wid/cover", requireUser, (req: any, res) => {
+      const r = db.prepare("SELECT id FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, req.auth.user.id) as any;
+      if (!r) return res.status(404).json({ error: "world_not_found" });
+      const m = String(req.body?.data || "").match(/^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
+      if (!m || typeof Buffer === "undefined") return res.status(400).json({ error: "bad_image", message: "Нужна картинка JPEG, PNG или WebP" });
+      const bytes = Buffer.from(m[1], "base64");
+      if (bytes.length > COVER_MAX) return res.status(413).json({ error: "too_large", message: "Обложка больше 400 КБ — выберите картинку поменьше" });
+      const mime = sniff(bytes); // доверяем байтам, а не заявленному типу
+      if (!mime) return res.status(400).json({ error: "bad_image", message: "Нужна картинка JPEG, PNG или WebP" });
+      db.prepare("INSERT INTO world_covers (world_id, mime, data) VALUES (?,?,?) ON CONFLICT(world_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = CURRENT_TIMESTAMP").run(r.id, mime, bytes);
+      db.prepare("UPDATE worlds SET cover_v = cover_v + 1 WHERE id = ?").run(r.id);
+      res.json(getForPlay(req.auth.user.id, r.id));
+    });
+    app.delete("/api/worlds/:wid/cover", requireUser, (req: any, res) => {
+      const r = db.prepare("SELECT id FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, req.auth.user.id) as any;
+      if (!r) return res.status(404).json({ error: "world_not_found" });
+      db.prepare("DELETE FROM world_covers WHERE world_id = ?").run(r.id);
+      db.prepare("UPDATE worlds SET cover_v = 0 WHERE id = ?").run(r.id);
+      res.json(getForPlay(req.auth.user.id, r.id));
+    });
+
     app.post("/api/worlds/:wid/copy", requireUser, (req: any, res) => {
       const uid = req.auth.user.id;
       const w = getForPlay(uid, req.params.wid);
@@ -344,6 +384,8 @@ export function createWorlds(db: DB) {
       const id = crypto.randomUUID();
       db.prepare("INSERT INTO worlds (id, owner_id, title, icon, genre, description, visibility, data, remixed_from) VALUES (?,?,?,?,?,?,'private',?,?)")
         .run(id, uid, `${w.title}${w.mine ? " (копия)" : ""}`.slice(0, 80), w.icon, w.genre, w.description, JSON.stringify(w.data), w.id);
+      if (db.prepare("INSERT INTO world_covers (world_id, mime, data) SELECT ?, mime, data FROM world_covers WHERE world_id = ?").run(id, w.id).changes)
+        db.prepare("UPDATE worlds SET cover_v = 1 WHERE id = ?").run(id);
       res.status(201).json(getForPlay(uid, id));
     });
   };
