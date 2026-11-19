@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock, Heart, Flag, Search, Upload, Download, Sparkles } from 'lucide-react';
 import { customPrompt } from './PromptModal';
+import { importWorld, exportWorld, cardFromPng, type ImportResult } from '../../shared/world-import';
 import { api, appLink } from '../api';
 import { customAlert, customConfirm } from './PromptModal';
 import { ARCHETYPES } from '../../shared/archetypes';
@@ -17,6 +18,33 @@ const VIS_LABEL = { private: 'Только я', link: 'По ссылке', publi
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 export const worldLink = (id: string) => appLink(`/world/${id}`);
+
+/** Выбор файла и разбор формата (JSON или PNG с карточкой персонажа). */
+const pickImport = (): Promise<ImportResult | null> => new Promise(resolve => {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json,.png,application/json,image/png';
+  inp.onchange = async () => {
+    const f = inp.files?.[0];
+    if (!f) return resolve(null);
+    try {
+      if (f.size > 5_000_000) throw new Error('Файл больше 5 МБ');
+      const raw = /\.png$/i.test(f.name) || f.type === 'image/png' ? cardFromPng(new Uint8Array(await f.arrayBuffer())) : JSON.parse(await f.text());
+      resolve(importWorld(raw));
+    } catch (e) {
+      customAlert(e instanceof SyntaxError ? 'Файл повреждён: это не JSON' : e instanceof Error ? e.message : 'Не удалось прочитать файл');
+      resolve(null);
+    }
+  };
+  inp.click();
+});
+
+const download = (name: string, text: string) => {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: `${name.replace(/[\\/:*?"<>|]+/g, '_') || 'world'}.json` });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
 
 export interface WorldStart { worldId: string; scenarioId?: string; title?: string; mode: 'short' | 'campaign' | 'tale'; characters: WorldHero[] }
 
@@ -67,7 +95,13 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
         <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/5 shrink-0">
           <button onClick={() => setTab('mine')} className={chip(tab === 'mine')}>Мои миры</button>
           <button onClick={() => setTab('public')} className={chip(tab === 'public')}>Каталог</button>
-          <button onClick={() => setEditing(newWorld())} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 text-black text-xs font-bold hover:bg-amber-300"><Plus size={14} /> Создать мир</button>
+          <button onClick={async () => {
+            const r = await pickImport();
+            if (!r) return;
+            setEditing({ ...newWorld(), title: r.title || '', icon: r.icon || '🌍', genre: r.genre || 'fantasy', description: r.description || '', data: r.data });
+            customAlert(`Импорт: ${r.format}. Карточек: ${r.data.cards.length}, мест: ${r.data.locations.length}, сюжетов: ${r.data.scenarios.length}.${r.notes.length ? `\n\n${r.notes.join('\n')}` : ''}\n\nПроверьте мир и сохраните.`);
+          }} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 text-white/70 text-xs hover:text-white" title="SillyTavern, NovelAI, Character Card, AI Dungeon, экспорт Nexus"><Upload size={13} /> Импорт</button>
+          <button onClick={() => setEditing(newWorld())} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 text-black text-xs font-bold hover:bg-amber-300"><Plus size={14} /> Создать</button>
         </div>
         {tab === 'public' && (
           <div className="px-4 py-3 border-b border-white/5 space-y-2 shrink-0">
@@ -112,6 +146,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                     <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
                       <button onClick={async () => setPlaying(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-200 text-xs font-bold hover:bg-emerald-500/25"><Play size={12} /> Играть</button>
                       {w.mine && <button onClick={async () => setEditing(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white"><Pencil size={12} /> Изменить</button>}
+                      {w.mine && <button onClick={async () => { const f = await full(w); download(f.title, exportWorld(f)); }} className="p-1.5 rounded-lg bg-white/5 text-white/50 hover:text-white" aria-label="Скачать JSON" title="Скачать JSON"><Download size={13} /></button>}
                       <button onClick={async () => { try { await api(`/api/worlds/${w.id}/copy`, { method: 'POST' }); setTab('mine'); load('mine'); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white" title="Копия в мои миры — можно переделать под себя"><Copy size={12} /> {w.mine ? 'Копия' : 'Ремикс'}</button>
                       <button onClick={() => like(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.liked ? 'text-rose-300 bg-rose-500/10' : 'text-white/50 bg-white/5 hover:text-white'}`} aria-label="Нравится"><Heart size={12} fill={w.liked ? 'currentColor' : 'none'} /> {w.likes || 0}</button>
                       {!w.mine && <button onClick={() => report(w)} className="ml-auto p-1.5 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={13} /></button>}
@@ -257,7 +292,17 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
             </div>
             <div className="flex items-center justify-between">
               <span className={label}>Карточки — мастер берёт их, когда о них заходит речь</span>
-              <button onClick={() => setD({ cards: [...d.cards, { id: uid(), kind: 'npc', name: '', keys: [], text: '' }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Карточка</button>
+              <span className="flex gap-3">
+                <button onClick={async () => {
+                  const r = await pickImport();
+                  if (!r) return;
+                  const have = new Set(d.cards.map(c => c.name.toLowerCase()));
+                  const add = r.data.cards.filter(c => !have.has(c.name.toLowerCase())).map(c => ({ ...c, id: uid() }));
+                  setD({ cards: [...d.cards, ...add].slice(0, 80) });
+                  customAlert(`Добавлено карточек: ${add.length} из ${r.data.cards.length} (${r.format}).${r.notes.length ? `\n\n${r.notes.join('\n')}` : ''}`);
+                }} className="text-xs text-white/50 hover:text-white flex items-center gap-1"><Upload size={12} /> Из файла</button>
+                <button onClick={() => setD({ cards: [...d.cards, { id: uid(), kind: 'npc', name: '', keys: [], text: '' }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Карточка</button>
+              </span>
             </div>
             {d.cards.length === 0 && <p className="text-xs text-white/40">Персонажи, места, фракции, предметы, история. Ключи — слова, по которым мастер вспомнит карточку (имя карточки — тоже ключ).</p>}
             {d.cards.map((c, i) => <CardEditor key={c.id} card={c} onChange={nc => setD({ cards: d.cards.map((x, j) => j === i ? nc : x) })} onDelete={() => setD({ cards: d.cards.filter((_, j) => j !== i) })} />)}
