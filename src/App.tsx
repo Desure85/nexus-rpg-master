@@ -26,6 +26,7 @@ import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
 import { dailyChallenge } from '../shared/daily';
 import { DailyCard, markDailyPlayed } from './components/DailyCard';
+import { ActionChips } from './components/ActionChips';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -1243,6 +1244,13 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
+                  <ActionChips
+                    dashboard={currentDashboard}
+                    skip={pendingClaims.filter(c => c.status === 'approved').map(c => c.char_name)}
+                    disabled={isLoading}
+                    onPick={text => { setInput(prev => prev.trim() ? `${prev.trim()}\n${text}` : text); setTimeout(() => (document.querySelector('textarea[data-gm-input]') as HTMLTextAreaElement | null)?.focus(), 0); }}
+                  />
+
                   <div className="flex flex-wrap items-center gap-1.5 mb-2">
                       <button
                         onClick={() => {
@@ -1299,7 +1307,7 @@ export default function App() {
                           sendMessage(input);
                         }
                       }}
-                      placeholder="Опишите действие героев..."
+                      data-gm-input placeholder="Опишите действие героев..."
                       className="w-full bg-white/5 border border-white/10 rounded-2xl px-4 lg:px-6 py-3 lg:py-4 text-white placeholder:text-white/20 focus:outline-none focus:border-white/30 transition-all resize-none h-20 lg:h-24 text-sm lg:text-base pr-12"
                     />
                     <div className="absolute bottom-3 right-3 lg:bottom-4 lg:right-4 flex gap-2">

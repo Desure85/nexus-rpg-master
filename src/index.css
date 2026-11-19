@@ -85,3 +85,7 @@ html {
 }
 .nexus-delta { animation: nexus-delta-float 2.6s ease-out forwards; text-shadow: 0 1px 6px rgba(0,0,0,.8); }
 @media (prefers-reduced-motion: reduce) { .nexus-delta { animation: none; } }
+
+/* горизонтальные ленты без полосы прокрутки */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
