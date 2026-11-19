@@ -13,6 +13,7 @@ import {
 } from "../shared/rules";
 import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags, normalizeBlocks } from "../shared/parse";
 import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
+import { capTurnChanges, BALANCE } from "../shared/balance";
 import { archetypeById, applyArchetype } from "../shared/archetypes";
 import { genreOf } from "../shared/genre";
 import { applyVeteran } from "./heroes";
@@ -493,7 +494,10 @@ export class Engine {
         for (const e of effects) useChanges.push({ ...e, name });
       }
       // Броня снижает входящий урон из тегов модели (минимум 1 урона проходит)
-      const armored = changes.map(c => {
+      // Потолки хода: модель не может одним тегом убить героя, озолотить или выдать уровень
+      const capped = capTurnChanges(changes, n => this.game.resolveName(chars, n) || n);
+      if (capped.cut.length) console.warn(`[balance] ${sessionId}: срезано ${JSON.stringify(capped.cut)}`);
+      const armored = capped.changes.map(c => {
         if (c.field !== "hp" || c.delta >= 0 || !this.isEnabled(mechanics, "equipment")) return c;
         const name = this.game.resolveName(chars, c.name);
         const armor = armorOf((dashboard.characters || []).find(x => x.name === name));
@@ -555,8 +559,20 @@ export class Engine {
           threats[i] = { ...threats[i], hp: `${cur}/${max}` };
         }
         // побеждённые угрозы уходят со сцены
+        const fought = prev.some(t => { const m = String(t.hp).match(hpRe); return !!m && +m[1] > 0; }) && parseCombatTags(aiContent).hits.length > 0;
         threats = threats.filter(t => { const m = String(t.hp).match(hpRe); return !m || +m[1] > 0; });
         dashboard.threats = threats;
+        // Передышка после победы: героям на ногах +SECOND_WIND HP — бой за боем без лекаря не превращается в спираль смерти
+        if (fought && !threats.length && this.isEnabled(mechanics, "hp")) {
+          const wind = (Object.entries(chars) as [string, any][]).filter(([, c]) => c.status === "active" && c.hp_cur > 0 && c.hp_cur < c.hp_max)
+            .map(([name]) => ({ field: "hp" as const, name, delta: BALANCE.secondWind }));
+          if (wind.length) {
+            this.game.applyStateChanges(chars, wind);
+            this.game.saveEngineState(sessionId, chars);
+            dashboard = this.game.mergeStateIntoDashboard(dashboard, chars);
+            this.game.queueNews(sessionId, `[ECONOMY: передышка после победы — ${wind.map(w => w.name).join(", ")}: +${BALANCE.secondWind} HP]`);
+          }
+        }
       }
 
       // Часы принадлежат движку: прогресс известных часов меняется только тегами [CLOCK]

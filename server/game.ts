@@ -4,6 +4,7 @@ import { itemEffect } from "../shared/items";
 import { genreOf, SHOPS, LOOT, moneyIn, type Genre, type LootTier } from "../shared/genre";
 import type { DB } from "./db";
 import { itemLabel, enemyStats, type WorldData } from "../shared/world";
+import { ECONOMY } from "../shared/balance";
 
 export interface EncounterResult {
   roll: number;
@@ -196,7 +197,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     const base = w?.shopReplace && own.length ? own : [...own, ...(SHOPS[genreFor(sessionId)] || SHOPS.fantasy)];
     return base.map(i => ({ ...i, cost: Math.max(1, Math.round(i.cost * (1 - 0.15 * armory))) }));
   };
-  const REST_COST = 10;
+  const REST_COST = ECONOMY.rest.cost;
 
   const parseHpNum = (hp: string) => {
     const m = String(hp || "").match(/(\d+)\s*\/\s*(\d+)/);
@@ -244,13 +245,16 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       const freeRest = atBase && Number(base.bedroom || 0) >= 1;
       if (st.gold < (freeRest ? 0 : REST_COST)) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${REST_COST})]` });
       st.gold -= freeRest ? 0 : REST_COST;
-      st.hp_cur = st.hp_max;
-      st.stress = Math.max(0, st.stress - 2);
+      // логово со Спальней — полный отдых; таверна — передышка: половина max HP и −1 стресс
+      const healed = freeRest ? st.hp_max : Math.min(st.hp_max, st.hp_cur + Math.ceil(st.hp_max * ECONOMY.rest.healPct));
+      const calm = freeRest ? 2 : -ECONOMY.rest.stress;
+      st.hp_cur = healed;
+      st.stress = Math.max(0, st.stress - calm);
       finalize();
-      { const tag = freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_max}, стресс -2 (бесплатно, Спальня)]` : `[ECONOMY: ${charName} отдохнул(а) в таверне — HP до ${st.hp_max}, стресс -2, списано ${REST_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
+      { const tag = freeRest ? `[ECONOMY: ${charName} отдохнул(а) в логове — HP до ${st.hp_cur}, стресс -${calm} (бесплатно, Спальня)]` : `[ECONOMY: ${charName} передохнул(а) в таверне — HP до ${st.hp_cur}/${st.hp_max}, стресс -${calm}, списано ${REST_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     if (action === "inn") {
-      const INN_COST = 20;
+      const INN_COST = ECONOMY.inn.cost;
       if (st.gold < INN_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${INN_COST})]` });
       st.gold -= INN_COST;
       st.hp_cur = st.hp_max;
@@ -259,8 +263,8 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
       { const tag = `[ECONOMY: ${charName} переночевал(а) на постоялом дворе — HP до ${st.hp_max}, стресс до 0, списано ${INN_COST} золота]`; queueNews(req.params.id, tag); return res.json({ status: "ok", tag, gold: st.gold }); }
     }
     if (action === "heal") {
-      const HEAL_COST = 12;
-      const HEAL_AMOUNT = 5;
+      const HEAL_COST = ECONOMY.healer.cost;
+      const HEAL_AMOUNT = ECONOMY.healer.heal;
       if (st.gold < HEAL_COST) return res.status(400).json({ error: "not enough gold", tag: `[ECONOMY: у ${charName} не хватает золота (${st.gold}/${HEAL_COST})]` });
       if (st.hp_cur >= st.hp_max) return res.status(400).json({ error: "already full", tag: `[ECONOMY: ${charName} и так здоров(а)]` });
       st.gold -= HEAL_COST;

@@ -80,6 +80,9 @@ function rpgReply(req: LlmRequest): string {
     : `Мастер отвечает: «${user.split("\n")[0].slice(0, 120)}». Ветер доносит запах дыма.`;
   if (/#xp/.test(user) && names[0]) body += ` [XP: ${names[0]} +60]`;
   if (/#hurt/.test(user) && names[0]) body += ` [DAMAGE: ${names[0]} -3]`;
+  // #dmg:N / #gold:N — щедрая модель: движок должен срезать до потолков хода
+  const dmg = user.match(/#dmg:(\d+)/); if (dmg && names[0]) body += ` [DAMAGE: ${names[0]} -${dmg[1]}]`;
+  const gld = user.match(/#gold:(\d+)/); if (gld && names[0]) body += ` [GOLD: ${names[0]} +${gld[1]}]`;
   if (/#hit/.test(user)) body += ` [HIT: Мародёр -${user.match(/#hit(\d+)/)?.[1] || 5}]`;
   if (/#potion/.test(user) && names[0]) body += ` [USE: ${names[0]}|Зелье лечения]`;
   if (/#clock/.test(user)) body += ` [CLOCK: Тревога +${user.match(/#clock(\d+)/)?.[1] || 1}]`;

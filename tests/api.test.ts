@@ -144,11 +144,29 @@ describe('соло', () => {
     expect([st.hp_cur, st.gold]).toEqual([5, 99]);
   });
 
+  it('баланс: потолки хода режут щедрую модель, после победы — передышка +2 HP', async () => {
+    const id = await createSession(rpgSetup('campaign'));
+    const st = async () => (await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'];
+    const s0 = await st();
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн лезет в пасть дракону #dmg:50 #gold:5000' });
+    await ctx.engine.whenIdle(id);
+    const s1 = await st();
+    expect(s0.hp_cur - s1.hp_cur).toBe(6);
+    expect(s1.gold - s0.gold).toBe(150);
+    // бой: угроза появилась, удар её добивает → передышка
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Из кустов выходит враг #threat:Мародёр:5' });
+    await ctx.engine.whenIdle(id);
+    const before = (await st()).hp_cur;
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт мародёра #hit5' });
+    await ctx.engine.whenIdle(id);
+    expect((await st()).hp_cur).toBe(before + 2);
+  });
+
   it('экономика работает только в локации с сервисом', async () => {
     const id = await createSession(rpgSetup('campaign'));
     const ok = await gm().post(`/api/sessions/${id}/economy`, { action: 'rest', charName: 'Арн' });
     expect(ok.status).toBe(200);
-    expect(ok.body.gold).toBe(0);
+    expect(ok.body.gold).toBe(2); // 10 − таверна 8
     const broke = await gm().post(`/api/sessions/${id}/economy`, { action: 'rest', charName: 'Арн' });
     expect(broke.status).toBe(400);
   });
