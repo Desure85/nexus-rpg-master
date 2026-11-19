@@ -296,7 +296,8 @@ async function worldPlay(browser) {
   check('мир: партия создана', !!sid);
   let { s, ms } = await waitTurn(page, sid, 1);
   recordTurn('Мир: старт', s, ms);
-  check('мир: стартовое место из сценария', lastDash(s)?.currentLocationId === 'port', lastDash(s)?.currentLocationId);
+  const cur = (lastDash(s)?.locations || []).find(l => l.id === lastDash(s)?.currentLocationId);
+  check('мир: стартовое место из сценария', /Сольвей/.test(cur?.name || ''), cur?.name);
   check('мир: лор скрыт от клиента', !JSON.stringify(s.config || {}).includes('Безымянные'));
   ({ s, ms } = await gmTurn(page, sid, 'Рина идёт к маяку и зовёт смотрителя', 2));
   recordTurn('Мир: ход про смотрителя', s, ms);

@@ -405,7 +405,9 @@ export class Engine {
       const added = wl.filter(l => !have.some(h => h.id === l.id || h.name.toLowerCase() === l.name.toLowerCase()))
         .map(l => ({ ...l, status: "known" as const, coordinates: { x: 20 + Math.round(Math.random() * 60), y: 20 + Math.round(Math.random() * 60) } }));
       dashboard.locations = [...have, ...added] as any;
-      const start = s.config.world.startLocationId && (dashboard.locations || []).find(l => l.id === s.config.world!.startLocationId);
+      // модель могла завести то же место под своим id — ищем и по названию
+      const startDef = wl.find(l => l.id === s.config.world!.startLocationId);
+      const start = startDef && (dashboard.locations || []).find(l => l.id === startDef.id || l.name.toLowerCase() === startDef.name.toLowerCase());
       if (start) { dashboard.currentLocationId = start.id; (start as any).status = "visited"; }
     }
     if (!isClarify) ensurePlayable(dashboard, s.setting);
