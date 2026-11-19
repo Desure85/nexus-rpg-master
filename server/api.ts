@@ -153,6 +153,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
     if (daily) config.daily = { key: daily.key, modifier: daily.modifier.id };
+    if (setup.tutorial === true && mode === "short") config.tutorial = true;
     if (world) {
       config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data, ...(world.state ? { state: world.state } : {}) };
       worlds.countPlay(world.id);

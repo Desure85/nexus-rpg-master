@@ -32,6 +32,21 @@ type Broadcast = (roomId: string, data: any) => void;
 
 const DEFAULT_TALE: TaleConfig = { age: "6-8", chapters: 6 };
 
+/** Обучающая партия: первые ходы мастер строит сцены так, чтобы новичок встретил каждую механику (подсказки по интерфейсу показывает клиент). */
+const TUTORIAL_STEPS = [
+  "Ход 1: короткая яркая завязка и понятная цель. Предложи 2–3 очевидных действия. Дай NPC, с которым можно поговорить.",
+  "Ход 2: подведи к первому рискованному действию, где нужна проверка (прыжок, уговоры, слежка) — пусть движок бросит кубик; исход опиши наглядно.",
+  "Ход 3: лёгкая стычка или опасность с небольшим уроном или стрессом — чтобы игрок увидел, как меняются здоровье и стресс; враг слабый.",
+  "Ход 4: герой находит полезный предмет (зелье, снаряжение) или немного денег и узнаёт о новом месте на карте.",
+  "Ход 5: развязка первой главы и крючок дальше; игрок уже играет сам.",
+];
+const tutorialBlock = (s: StoredSession) => {
+  if (!s.config.tutorial) return "";
+  const n = s.history.filter(m => m.role === "assistant").length;
+  if (n >= TUTORIAL_STEPS.length) return "";
+  return `\n\n## ОБУЧАЮЩАЯ ПАРТИЯ\nИгрок впервые в НРИ. Пиши короче обычного (до 1200 знаков), простым языком, без терминов. Не объясняй правила прямо — строй сцену так, чтобы механика встретилась сама.\n${TUTORIAL_STEPS[n]}`;
+};
+
 export class Engine {
   private chains = new Map<string, Promise<unknown>>();
   private busy = new Set<string>();
@@ -703,7 +718,7 @@ export class Engine {
     const mechCtx = active ? `\n\n## АКТИВНЫЕ МЕХАНИКИ\nБроски, итоги и исходы считает движок приложения — ты описываешь последствия.\n${active}` : "";
     const base = isClarify ? CLARIFY_SYSTEM_PROMPT : SYSTEM_PROMPT;
     const style = s.style ? getStyleInstruction(s.style) : "";
-    return `${base}${isClarify ? "" : mechCtx}${style}${this.worldBlock(s)}${extraInstructionsBlock(extra)}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
+    return `${base}${isClarify ? "" : mechCtx}${style}${this.worldBlock(s)}${isClarify ? "" : tutorialBlock(s)}${extraInstructionsBlock(extra)}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
   }
 
   private async runTaleTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, content: string) {

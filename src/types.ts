@@ -157,6 +157,7 @@ export interface SessionConfig {
   idlePlayerAction?: 'random' | 'skip' | 'gm';
   autoApprove?: boolean;
   daily?: { key: string; modifier: string };
+  tutorial?: boolean;
   world?: { id: string; title: string; version: number; genre: string; currency?: string };
   tale?: { age: '3-5' | '6-8' | '9-12' | 'adult'; chapters: number; moral?: string; finished?: boolean; title?: string };
 }

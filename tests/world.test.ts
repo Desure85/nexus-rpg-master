@@ -50,3 +50,25 @@ describe('parseWorldJson', () => {
     expect(moved.clocks).toEqual([{ name: 'Туман наступает', delta: 1 }]);
   });
 });
+
+describe('стартовые миры', () => {
+  it('целые после нормализации: сюжеты со стартом, снаряжение с бонусом, фракции и шкалы', async () => {
+    const { STARTER_WORLDS } = await import('../server/starter-worlds');
+    expect(STARTER_WORLDS.length).toBe(6);
+    expect(new Set(STARTER_WORLDS.map(w => w.genre)).size).toBe(6);
+    for (const w of STARTER_WORLDS) {
+      const d = normalizeWorldData(w.data);
+      expect(w.description.length, w.id).toBeGreaterThan(50);
+      expect(d.cards.length, w.id).toBe(w.data.cards.length);
+      expect(d.locations.length, w.id).toBe(w.data.locations.length);
+      expect(d.scenarios.map(s => s.mode).sort(), w.id).toEqual(['campaign', 'short', 'tale']);
+      for (const s of d.scenarios) expect(s.startLocationId, `${w.id}/${s.id}`).toBeTruthy();
+      for (const l of w.data.locations) for (const c of l.connections) expect(d.locations.some(x => x.id === c), `${w.id}: ${l.id}→${c}`).toBe(true);
+      expect(d.items!.filter(i => i.kind === 'gear').every(i => i.bonus), w.id).toBe(true);
+      expect(d.enemies!.length, w.id).toBe(5);
+      expect(d.factions!.length, w.id).toBeGreaterThanOrEqual(3);
+      expect(d.clocks!.length, w.id).toBeGreaterThanOrEqual(1);
+      expect(d.currency, w.id).toBeTruthy();
+    }
+  });
+});

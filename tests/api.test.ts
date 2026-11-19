@@ -991,6 +991,41 @@ describe('архетипы, зал героев, достижения', () => {
 const lastAssistant = (s: any) => [...s.history].reverse().find((m: any) => m.role === 'assistant');
 
 describe('миры', () => {
+  it('обучающая партия: мастер ведёт по шагам, после пятого хода — обычная игра', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const id = await createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', tutorial: true, style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${id}`)).body.config.tutorial).toBe(true);
+    const sysOf = () => JSON.parse((ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? ORDER BY id DESC LIMIT 1").get(id) as any).request).system as string;
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Ласка расспрашивает Борна' });
+    await ctx.engine.whenIdle(id);
+    expect(sysOf()).toContain('ОБУЧАЮЩАЯ ПАРТИЯ');
+    expect(sysOf()).toContain('Ход 2:');
+    for (let i = 0; i < 4; i++) { await gm().post(`/api/sessions/${id}/turn`, { content: `Ласка идёт дальше ${i}` }); await ctx.engine.whenIdle(id); }
+    expect(sysOf()).not.toContain('ОБУЧАЮЩАЯ ПАРТИЯ');
+    // без флага и в мультиплеерной сказке — не обучение
+    const plain = await createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${plain}`)).body.config.tutorial).toBeUndefined();
+  });
+
+  it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
+    const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
+    expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);
+    expect(pub[0]).toMatchObject({ author: 'Nexus', mine: false, official: true });
+    const id = await createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница караванов', gender: 'Ж' }] });
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.config.world).toMatchObject({ id: 'starter-crossroads', currency: 'серебро' });
+    expect(lastDash(s).currentLocationId).toBe('dvor');
+    expect((await gm().patch('/api/worlds/starter-crossroads', { title: 'взлом' })).status).toBe(404);
+    const copy = (await gm().post('/api/worlds/starter-velsk/copy')).body;
+    expect(copy.mine).toBe(true);
+    // повторный запуск: мир с изменённым хешем обновляется, без изменений — нет
+    ctx.db.prepare("UPDATE worlds SET seed_hash = 'old', title = 'Старое' WHERE id = 'starter-ring'").run();
+    const { createWorlds } = await import('../server/worlds');
+    createWorlds(ctx.db);
+    expect((ctx.db.prepare("SELECT title, version FROM worlds WHERE id = 'starter-ring'").get() as any)).toEqual({ title: 'Город-Кольцо', version: 2 });
+    expect((ctx.db.prepare("SELECT version FROM worlds WHERE id = 'starter-mercy'").get() as any).version).toBe(1);
+  });
+
   const worldBody = (extra: any = {}) => ({
     title: 'Туманные Острова', icon: '🌫️', genre: 'cyber', description: 'Острова в вечном тумане', visibility: 'private',
     data: {
@@ -1026,9 +1061,9 @@ describe('миры', () => {
     expect(seen.mine).toBe(false);
     expect(seen.version).toBe(2);
     expect((await other.patch(`/api/worlds/${w.id}`, { title: 'взлом' })).status).toBe(404);
-    expect((await other.get('/api/worlds?scope=public')).body).toEqual([]);
+    expect((await other.get('/api/worlds?scope=public')).body.filter((w: any) => !w.official)).toEqual([]);
     await gm().patch(`/api/worlds/${w.id}`, { visibility: 'public' });
-    const pub = (await other.get('/api/worlds?scope=public')).body;
+    const pub = (await other.get('/api/worlds?scope=public')).body.filter((w: any) => !w.official);
     expect(pub.map((x: any) => x.id)).toEqual([w.id]);
     expect(pub[0].data.cards).toEqual([]); // в каталоге — без лора
     const copy = (await other.post(`/api/worlds/${w.id}/copy`)).body;
@@ -1095,12 +1130,12 @@ describe('миры', () => {
     const a = (await gm().post('/api/worlds', { ...worldBody(), title: 'Ледяной Предел', genre: 'fantasy', description: 'Северные льды и драконы', visibility: 'public' })).body;
     const b = (await gm().post('/api/worlds', { ...worldBody(), title: 'Неон-Сити', genre: 'cyber', description: 'Мегаполис корпораций', visibility: 'public' })).body;
     const u1 = await account('fan1@example.com'), u2 = await account('fan2@example.com'), u3 = await account('fan3@example.com');
-    const ids = (r: any) => r.body.map((w: any) => w.id);
+    const ids = (r: any) => r.body.filter((w: any) => !w.official).map((w: any) => w.id);
     expect(ids(await u1.get('/api/worlds?scope=public&q=драконы'))).toEqual([a.id]);
     expect(ids(await u1.get('/api/worlds?scope=public&genre=cyber'))).toEqual([b.id]);
     const like = (await u1.post(`/api/worlds/${b.id}/like`)).body;
     expect(like).toEqual({ likes: 1, liked: true });
-    expect((await u1.get('/api/worlds?scope=public&sort=likes')).body[0]).toMatchObject({ id: b.id, liked: true, likes: 1 });
+    expect((await u1.get('/api/worlds?scope=public&sort=likes')).body.filter((w: any) => !w.official)[0]).toMatchObject({ id: b.id, liked: true, likes: 1 });
     expect((await u1.post(`/api/worlds/${b.id}/like`)).body).toEqual({ likes: 0, liked: false });
     expect((await gm().post(`/api/worlds/${a.id}/report`, { reason: 'своё' })).status).toBe(400);
     for (const u of [u1, u2, u1, u3]) await u.post(`/api/worlds/${a.id}/report`, { reason: 'чужая вселенная' });

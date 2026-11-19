@@ -13,8 +13,8 @@ on:
         description: "Модель (opencode Go: deepseek-v4.1-flash, mimo-v2.6-flash; OpenRouter: id модели)"
         default: deepseek-v4.1-flash
       only:
-        description: "Сценарии: solo,mp,tale,world"
-        default: solo,mp,tale,world
+        description: "Сценарии: solo,mp,tale,world,learn"
+        default: solo,mp,tale,world,learn
       effort:
         description: "reasoning_effort для моделей с рассуждениями: low | medium | high | default (не передавать)"
         default: low

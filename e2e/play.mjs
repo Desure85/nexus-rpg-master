@@ -350,11 +350,67 @@ async function worldPlay(browser) {
   await ctx.close();
 }
 
+async function learn(browser) {
+  log('\n== Обучение новичка ==');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await register(page);
+  check('обучение: на главной «Миры от Nexus»', await page.getByText('Миры от Nexus').count() > 0);
+  check('обучение: кнопка обучающей партии', await page.getByTestId('start-tutorial').count() > 0);
+  await snap(page, 'learn_home');
+  await page.getByTestId('start-tutorial').click();
+  await page.waitForTimeout(1500);
+  const me = (await api(page, '/api/auth/me')).body;
+  const sid = (await api(page, `/api/workspaces/${me.workspaces[0].id}/sessions`)).body[0]?.id;
+  check('обучение: партия создана', !!sid);
+  let { s } = await waitTurn(page, sid, 1);
+  check('обучение: флаг и стартовый мир', s.config?.tutorial === true && s.config?.world?.id === 'starter-crossroads');
+  await page.waitForTimeout(800);
+  check('обучение: подсказка 1', await page.locator('[data-tutorial-tip="0"]').count() > 0);
+  await snap(page, 'learn_tip1');
+  await page.getByText('Понятно', { exact: true }).click();
+  check('обучение: подсказка скрывается', await page.locator('[data-tutorial-tip="0"]').count() === 0);
+  ({ s } = await gmTurn(page, sid, 'Ласка расспрашивает Борна Медяка, где видели караван в последний раз', 2));
+  report.push(`### Обучение, ход 2\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
+  check('обучение: подсказка 2 после хода', await page.locator('[data-tutorial-tip="1"]').count() > 0);
+  await snap(page, 'learn_tip2');
+  // мастер просит бросок → плашка над вводом, герой и действие выбраны заранее, остаётся кубик
+  let rolledInTutorial = false;
+  for (let k = 0; k < 2 && !rolledInTutorial; k++) {
+    if (await page.getByTestId('roll-prompt').count()) {
+      await page.getByText('Понятно', { exact: true }).click().catch(() => undefined);
+      await page.getByTestId('roll-prompt').click();
+      const btn = page.locator('button[data-suggested="1"]').first();
+      await (await btn.count() ? btn : page.getByText('Обычный', { exact: true })).click();
+      await page.waitForTimeout(1500);
+      await snap(page, 'learn_roll');
+      const n0 = s.history.filter(m => m.role === 'assistant').length;
+      ({ s } = await gmTurn(page, sid, 'Ласка рискует', n0 + 1));
+      rolledInTutorial = s.history.some(m => m.role === 'user' && /\[ROLL:[^\]]*Итог/.test(m.content));
+      report.push(`### Обучение, ход с броском\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
+    } else if (k === 0) {
+      ({ s } = await gmTurn(page, sid, 'Ласка идёт по следу каравана на Медовый тракт', 3));
+    }
+  }
+  check('обучение: мастер попросил бросок, бросок в один клик', rolledInTutorial || !process.env.LIVE, rolledInTutorial ? '' : 'плашки броска не было');
+  if (process.env.LONG) {
+    const acts = ['Ласка идёт по следу каравана на Медовый тракт', 'Ласка уворачивается и бьёт кинжалом', 'Ласка обыскивает место стычки', 'Ласка возвращается к Борну с находкой'];
+    for (let i = 0; i < acts.length; i++) {
+      await page.getByText('Понятно', { exact: true }).click().catch(() => undefined);
+      const n0 = s.history.filter(m => m.role === 'assistant').length;
+      ({ s } = await gmTurn(page, sid, acts[i], n0 + 1));
+      report.push(`### Обучение, ход ${n0 + 1}\n${(s.history.filter(m => m.role === 'assistant').pop()?.content || '').slice(0, 1500)}\n`);
+    }
+  } else await page.getByText('Я уже умею играть').click();
+  if (!process.env.LONG) check('обучение: подсказки отключаются', await page.locator('[data-tutorial-tip]').count() === 0);
+  await ctx.close();
+}
+
 const main = async () => {
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-  const only = (process.env.ONLY || 'solo,mp,tale,world').split(',');
+  const only = (process.env.ONLY || 'solo,mp,tale,world,learn').split(',');
   const t0 = Date.now();
-  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale], ['world', worldPlay]]) {
+  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale], ['world', worldPlay], ['learn', learn]]) {
     if (!only.includes(id)) continue;
     try { await fn(browser); } catch (e) { check(`${id}: сценарий прошёл без ошибок`, false, String(e?.message || e).slice(0, 300)); }
   }

@@ -4,7 +4,11 @@ import type { Express } from "express";
 import type { DB } from "./db";
 import { normalizeWorldData, WORLD_GENRES, worldState, type World, type WorldDelta } from "../shared/world";
 
+import { STARTER_WORLDS } from "./starter-worlds";
+
 const MAX_WORLDS_PER_USER = 50;
+/** Автор стартовых миров каталога */
+export const SYSTEM_AUTHOR = "system-nexus";
 const VIS = ["private", "link", "public"] as const;
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v : "").trim().slice(0, max);
@@ -57,13 +61,25 @@ export function createWorlds(db: DB) {
   const ccols = (db.prepare("PRAGMA table_info(world_chronicle)").all() as { name: string }[]).map(c => c.name);
   if (!ccols.includes("delta")) db.exec("ALTER TABLE world_chronicle ADD COLUMN delta TEXT");
   if (!ccols.includes("applied")) db.exec("ALTER TABLE world_chronicle ADD COLUMN applied INTEGER NOT NULL DEFAULT 0");
+  if (!cols.includes("seed_hash")) db.exec("ALTER TABLE worlds ADD COLUMN seed_hash TEXT");
+  // Стартовые миры каталога от автора «Nexus»: появляются при запуске, правка в коде обновляет данные (хроника и состояние остаются)
+  if (process.env.STARTER_WORLDS !== "0") {
+    db.prepare("INSERT OR IGNORE INTO users (id, email, name, password_hash) VALUES (?, ?, ?, '')").run(SYSTEM_AUTHOR, "nexus@system.local", "Nexus");
+    for (const w of STARTER_WORLDS) {
+      const data = JSON.stringify(normalizeWorldData(w.data));
+      const hash = crypto.createHash("sha1").update(JSON.stringify([w.title, w.icon, w.genre, w.description, data])).digest("hex");
+      const cur = db.prepare("SELECT owner_id, seed_hash FROM worlds WHERE id = ?").get(w.id) as any;
+      if (!cur) db.prepare("INSERT INTO worlds (id, owner_id, title, icon, genre, description, visibility, data, seed_hash) VALUES (?,?,?,?,?,?,'public',?,?)").run(w.id, SYSTEM_AUTHOR, w.title, w.icon, w.genre, w.description, data, hash);
+      else if (cur.owner_id === SYSTEM_AUTHOR && cur.seed_hash !== hash) db.prepare("UPDATE worlds SET title=?, icon=?, genre=?, description=?, data=?, seed_hash=?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(w.title, w.icon, w.genre, w.description, data, hash, w.id);
+    }
+  }
   /** Сколько жалоб скрывают мир из каталога до решения модератора */
   const REPORTS_TO_HIDE = 3;
 
   const row2world = (r: any, userId?: string, full = true): World => ({
     id: r.id, title: r.title, icon: r.icon, genre: r.genre, description: r.description,
     visibility: r.visibility, version: r.version, plays: r.plays, likes: r.likes || 0, liked: !!r.liked, chronicle: r.chronicle || 0, ...(userId && r.owner_id === userId ? { chronicleNew: r.chronicle_new || 0 } : {}), hidden: !!r.hidden, updated_at: r.updated_at,
-    author: r.author || undefined, mine: !!userId && r.owner_id === userId,
+    author: r.author || undefined, ...(r.owner_id === SYSTEM_AUTHOR ? { official: true } : {}), mine: !!userId && r.owner_id === userId,
     ...(full ? { state: worldState(JSON.parse(r.data), r.state ? JSON.parse(r.state) : null) } : {}),
     data: full ? JSON.parse(r.data) : (() => { const d = JSON.parse(r.data); return { ...d, cards: [], core: "", counts: { cards: d.cards?.length || 0, locations: d.locations?.length || 0, scenarios: d.scenarios?.length || 0 } }; })(),
   });
@@ -111,7 +127,7 @@ export function createWorlds(db: DB) {
       const q = lc(str(req.query.q, 80));
       const genre = str(req.query.genre, 20);
       const sort = ["new", "likes"].includes(String(req.query.sort)) ? String(req.query.sort) : "popular";
-      const order = sort === "new" ? "w.created_at DESC" : sort === "likes" ? "w.likes DESC, w.plays DESC" : "w.plays DESC, w.likes DESC";
+      const order = sort === "new" ? "w.created_at DESC" : sort === "likes" ? "w.likes DESC, w.plays DESC" : `(w.owner_id = '${SYSTEM_AUTHOR}') DESC, w.plays DESC, w.likes DESC`;
       let rows = db.prepare(`${SELECT_FOR} WHERE w.visibility = 'public' AND w.hidden = 0 ${genre ? "AND w.genre = ?" : ""} ORDER BY ${order}, w.updated_at DESC LIMIT 500`).all(uid, ...(genre ? [genre] : [])) as any[];
       if (q) rows = rows.filter(r => lc(`${r.title} ${r.description} ${r.author || ""}`).includes(q));
       res.json(rows.slice(0, 60).map(r => row2world(r, uid, false)));

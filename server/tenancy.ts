@@ -145,7 +145,7 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
     if (password.length < 8) return res.status(400).json({ error: "weak_password", message: "Пароль — минимум 8 символов" });
     const invite = inviteToken ? t.inviteByToken(inviteToken) : null;
     if (inviteToken && !invite) return res.status(400).json({ error: "bad_invite", message: "Приглашение недействительно или истекло" });
-    const firstUser = !(db.prepare("SELECT 1 FROM users LIMIT 1").get());
+    const firstUser = !(db.prepare("SELECT 1 FROM users WHERE id != 'system-nexus' LIMIT 1").get());
     const mode = registrationMode();
     if (!firstUser && !invite && mode !== "open") return res.status(403).json({ error: "registration_closed", message: mode === "invite" ? "Регистрация только по приглашению" : "Регистрация закрыта" });
     if (db.prepare("SELECT 1 FROM users WHERE email = ?").get(email)) return res.status(409).json({ error: "email_taken", message: "Такой email уже зарегистрирован" });
