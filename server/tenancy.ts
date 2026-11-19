@@ -188,7 +188,8 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
   app.post("/api/auth/password", requireUser, authLimiter, async (req, res) => {
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.auth.user!.id) as any;
     const next = str(req.body?.newPassword, 200);
-    if (!(await verifyPassword(str(req.body?.currentPassword, 200), user.password_hash))) return res.status(400).json({ error: "bad_password", message: "Текущий пароль неверен" });
+    // вошедшие через VK/Яндекс/Google задают пароль впервые без текущего
+    if (user.password_hash && !(await verifyPassword(str(req.body?.currentPassword, 200), user.password_hash))) return res.status(400).json({ error: "bad_password", message: "Текущий пароль неверен" });
     if (next.length < 8) return res.status(400).json({ error: "weak_password", message: "Пароль — минимум 8 символов" });
     db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(await hashPassword(next), user.id);
     // разлогиниваем остальные устройства

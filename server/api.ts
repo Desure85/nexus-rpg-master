@@ -6,6 +6,7 @@ import { Engine } from "./engine";
 import { completeWithUsage, describeProvider, LlmError } from "./llm";
 import { createHeroes, veteranLine } from "./heroes";
 import { createWorlds } from "./worlds";
+import { registerOAuthRoutes } from "./oauth";
 import { WORLD_GEN_SYSTEM, parseGeneratedWorld, closeJson } from "../shared/world";
 import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
@@ -80,6 +81,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   const createLimiter = rateLimit({ windowMs: 60 * 60_000, max: Number(process.env.SESSIONS_PER_HOUR || 30), key: byUser });
 
   registerTenancyRoutes(app, db, tenancy, billing);
+  registerOAuthRoutes(app, db, tenancy);
   registerBillingRoutes(app, db, billing, tenancy.requireWsRole);
 
   // ------------------------------- сессии -------------------------------
