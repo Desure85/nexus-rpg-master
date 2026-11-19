@@ -627,7 +627,8 @@ export class Engine {
           { role: "user", content: "[SYSTEM: твой ответ оборвался из-за сбоя связи. Продолжи с места обрыва, НЕ повторяя написанное: закончи сцену 1–3 предложениями (без реплик и поступков героев игроков — только мир и NPC) и обязательно выведи все служебные блоки по формату (<dashboard_json> с вариантами действий и т. д.). Теги изменений ([DAMAGE], [XP] …), которые уже есть в тексте выше, не повторяй.]" },
         ],
       }, "turn_repair", () => undefined);
-      const joined = `${head}${/^\s/.test(tail) ? "" : " "}${tail.replace(/^\s*(Продолжаю|Продолжение)[^\n]*\n/i, "")}`;
+      const cleanTail = dropRepeatedLead(head, tail.replace(/^\s*(Продолжаю|Продолжение)[^\n]*\n/i, ""));
+      const joined = `${head}${/^\s/.test(cleanTail) ? "" : " "}${cleanTail}`;
       return joined;
     } catch (e) {
       console.warn("[engine] не удалось дописать ход:", (e as Error).message);
@@ -785,3 +786,20 @@ export const stripStrayTags = (text: string) => text
   .replace(/[ \t]+\n/g, "\n")
   .replace(/\n{3,}/g, "\n\n")
   .trim();
+
+/** Модель, дописывая оборванный ход, иногда пересказывает последнюю фразу — убираем такие повторы в начале продолжения. */
+export const dropRepeatedLead = (head: string, tail: string) => {
+  const words = (t: string) => new Set((t.toLowerCase().match(/[а-яёa-z]{3,}/g) || []));
+  const lastSentences = head.split(/(?<=[.!?…])\s+/).slice(-2).join(" ");
+  const seen = words(lastSentences);
+  let rest = tail;
+  for (let i = 0; i < 2; i++) {
+    const m = rest.match(/^\s*[^.!?…]+[.!?…]+/);
+    if (!m) break;
+    const w = [...words(m[0])];
+    const overlap = w.length ? w.filter(x => seen.has(x)).length / w.length : 0;
+    if (overlap < 0.6) break;
+    rest = rest.slice(m[0].length);
+  }
+  return rest.replace(/^\s+/, rest.startsWith("\n") ? "\n" : "");
+};

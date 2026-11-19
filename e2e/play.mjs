@@ -287,6 +287,15 @@ async function worldPlay(browser) {
       currency: 'раковины', shopReplace: true,
     },
   };
+  // ИИ-конструктор мира: черновик из абзаца
+  {
+    const me0 = (await api(page, '/api/auth/me')).body;
+    const t0 = Date.now();
+    const g = await api(page, '/api/worlds/generate', { method: 'POST', body: JSON.stringify({ workspaceId: me0.workspaces[0].id, prompt: 'Город-улей на спине гигантской черепахи. Касты, воздушные шары, черепаха умирает, и никто не знает почему.' }) });
+    const d = g.body?.data || {};
+    check('конструктор мира: черновик собран', g.status === 200 && d.cards?.length >= 5 && d.locations?.length >= 3 && d.scenarios?.length >= 1, `${g.status} ${g.body?.message || ''} карточек ${d.cards?.length}, мест ${d.locations?.length}, сюжетов ${d.scenarios?.length}, врагов ${d.enemies?.length}, предметов ${d.items?.length}`);
+    report.push(`### Конструктор мира (${((Date.now() - t0) / 1000).toFixed(1)} с)\n\n**${g.body?.icon || ''} ${g.body?.title || '—'}** — ${g.body?.description || ''}\n\n${(d.cards || []).slice(0, 4).map(c => `- ${c.name}: ${c.text}`).join('\n')}\n\nСюжеты: ${(d.scenarios || []).map(x => x.title).join('; ')}\nВраги: ${(d.enemies || []).map(x => `${x.name} (${x.tier})`).join(', ')}\n`);
+  }
   const w = (await api(page, '/api/worlds', { method: 'POST', body: JSON.stringify(body) })).body;
   check('мир создан', !!w?.id);
   await page.getByText('Миры', { exact: true }).first().click();

@@ -1585,6 +1585,7 @@ export default function App() {
                   <Dashboard 
                     data={currentDashboard} 
                     sessionId={currentSession.id}
+                    currency={currentSession.config?.world?.currency}
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
