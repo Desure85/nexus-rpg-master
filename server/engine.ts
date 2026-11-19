@@ -317,7 +317,7 @@ export class Engine {
             ...(wd.factions || []).map(f => `${f.name} ${st.factions[f.id] > 0 ? "+" : ""}${st.factions[f.id]}`),
             ...(wd.clocks || []).map(c => `«${c.name}» ${st.clocks[c.id]}/${c.max}`),
           ];
-          finalContent += `\n\n[WORLD STATE: ${parts.join("; ")} — если этот ход заметно задел фракцию или угрозу, поставь [FACTION: Название ±1] / [WORLD CLOCK: Название ±1]]`;
+          finalContent += `\n\n[WORLD STATE: ${parts.join("; ")} — реши, задел ли этот ход фракцию (помощь, сделка, обида, разговор с её людьми) или угрозу мира (герои её приблизили или отодвинули). Если задел — обязательно поставь в тексте [FACTION: Название +1/-1] или [WORLD CLOCK: Название +1/-1]. За партию обычно набирается 2–4 таких тега]`;
         }
       }
       // Вести мира (idle, экспедиции, фронты, новые уровни) — одним блоком в этот же ход
@@ -385,7 +385,9 @@ export class Engine {
 
     // Живой мир: фракции и шкалы мира — сдвиги партии считает движок (±1 за ход, ±2 за партию)
     if (!isClarify && fresh.config.world?.data && (fresh.config.world.data.factions?.length || fresh.config.world.data.clocks?.length)) {
-      const { delta, changed } = applyWorldTags(fresh.config.world.data, fresh.config.worldDelta || { factions: {}, clocks: {} }, parseWorldTags(aiContent));
+      const wt = parseWorldTags(aiContent);
+      if (/FACTION|WORLD CLOCK/i.test(aiContent) && !wt.factions.length && !wt.clocks.length) console.warn(`[engine] теги мира не разобраны: ${JSON.stringify(aiContent.match(/\[[^\]]*(FACTION|WORLD CLOCK)[^\]]*\]/i)?.[0] || "")}`);
+      const { delta, changed } = applyWorldTags(fresh.config.world.data, fresh.config.worldDelta || { factions: {}, clocks: {} }, wt);
       if (changed.length) {
         fresh.config.worldDelta = delta;
         this.game.queueNews(sessionId, `[WORLD] Мир меняется: ${changed.join(", ")}.`);
