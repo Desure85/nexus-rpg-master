@@ -186,6 +186,7 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       } catch { /* keep-alive / мусор */ }
     }
   }
+  console.warn(`[llm] поток закрыт без [DONE] (${acc.length} симв.)`);
   return finish();
 }
 

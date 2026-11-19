@@ -72,7 +72,8 @@ function rpgReply(req: LlmRequest): string {
   }
   const names = namesFromDashboard(req.system);
   const actions = [...user.matchAll(/\[PLAYER ACTION: ([^\]]+)\]\s*([^\n]+)/g)].map(m => `${m[1]} — ${m[2].replace(/#\w+/g, "").trim()}`);
-  let body = actions.length
+  if (/#cut/.test(user)) return "Мастер начинает рассказ, и голос его крепнет. Туман сгущается над площадью, фонари гаснут один за другим, над крышами плывёт колокольный звон. Вдруг из-за поворота пока";
+  let body = /ответ оборвался/.test(user) ? "Из-за поворота выходит ночной патруль." : actions.length
     ? `Мастер разбирает ход. ${actions.join("; ")}. Мир откликается на каждое решение.`
     : `Мастер отвечает: «${user.split("\n")[0].slice(0, 120)}». Ветер доносит запах дыма.`;
   if (/#xp/.test(user) && names[0]) body += ` [XP: ${names[0]} +60]`;

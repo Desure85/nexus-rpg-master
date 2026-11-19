@@ -354,6 +354,7 @@ export class Engine {
     let aiContent: string;
     try {
       aiContent = await this.callLlm(s, cfg, request, isClarify ? "clarify" : "turn", stream.push);
+      if (!isClarify && isTruncatedTurn(aiContent)) aiContent = await this.repairTurn(s, cfg, request, aiContent);
     } finally {
       stream.end();
       this.busy.delete(sessionId);
@@ -576,6 +577,27 @@ export class Engine {
     return mechanics.find(m => m.id === id)?.enabled ?? false;
   }
 
+  /** Провайдер оборвал поток (нет закрытого dashboard_json): срезаем недописанное и просим модель закончить ход. */
+  private async repairTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, partial: string) {
+    console.warn(`[engine] ход оборван (${partial.length} симв.), дописываем`);
+    const head = cutToSentence(partial);
+    try {
+      const tail = await this.callLlm(s, cfg, {
+        ...request,
+        messages: [
+          ...request.messages,
+          { role: "assistant", content: head },
+          { role: "user", content: "[SYSTEM: твой ответ оборвался из-за сбоя связи. Продолжи с места обрыва, НЕ повторяя написанное: закончи сцену 1–3 предложениями и обязательно выведи все служебные блоки по формату (<dashboard_json> с вариантами действий и т. д.). Теги изменений ([DAMAGE], [XP] …), которые уже есть в тексте выше, не повторяй.]" },
+        ],
+      }, "turn_repair", () => undefined);
+      const joined = `${head}${/^\s/.test(tail) ? "" : " "}${tail.replace(/^\s*(Продолжаю|Продолжение)[^\n]*\n/i, "")}`;
+      return joined;
+    } catch (e) {
+      console.warn("[engine] не удалось дописать ход:", (e as Error).message);
+      return head;
+    }
+  }
+
   private buildRpgSystem(s: StoredSession, extra: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {
     const isEnabled = (id: string) => this.isEnabled(mechanics, id);
     const filtered: any = structuredClone(dash);
@@ -667,3 +689,17 @@ export class Engine {
     this.broadcast(sessionId, { type: "update", sessionId });
   }
 }
+
+/** Ход без закрытого dashboard_json — ответ оборвался (у живых моделей бывает обрыв потока). */
+export const isTruncatedTurn = (text: string) => !/<\/dashboard_json>/i.test(text);
+
+/** Срезаем незакрытый служебный блок и недописанную фразу. */
+export const cutToSentence = (text: string) => {
+  let t = text;
+  const open = t.search(/<(dashboard_json|codex_json|lore_update|session_summary|final_draft|choices_json)>(?![\s\S]*<\/\1>)/i);
+  if (open >= 0) t = t.slice(0, open);
+  t = t.trimEnd();
+  if (/[.!?…»")\]]$/.test(t)) return t;
+  const cut = t.search(/[^.!?…»"\]]*$/);
+  return cut > t.length * 0.5 ? t.slice(0, cut).trimEnd() : t;
+};
