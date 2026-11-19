@@ -5,7 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
-import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, stateWithDelta, worldStateBlock, parseWorldTags, applyWorldTags, type ChronicleEntry } from "../shared/world";
+import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, stateWithDelta, worldStateBlock, parseWorldTags, parseWorldJson, applyWorldTags, type ChronicleEntry } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -317,7 +317,7 @@ export class Engine {
             ...(wd.factions || []).map(f => `${f.name} ${st.factions[f.id] > 0 ? "+" : ""}${st.factions[f.id]}`),
             ...(wd.clocks || []).map(c => `«${c.name}» ${st.clocks[c.id]}/${c.max}`),
           ];
-          finalContent += `\n\n[WORLD STATE: ${parts.join("; ")} — реши, задел ли этот ход фракцию (помощь, сделка, обида, разговор с её людьми) или угрозу мира (герои её приблизили или отодвинули). Если задел — обязательно поставь в тексте [FACTION: Название +1/-1] или [WORLD CLOCK: Название +1/-1]. За партию обычно набирается 2–4 таких тега]`;
+          finalContent += `\n\n[WORLD STATE: ${parts.join("; ")} — реши, задел ли этот ход фракцию (помощь, сделка, обида, разговор с её людьми) или угрозу мира (герои её приблизили или отодвинули). Если задел — обязательно поставь в тексте [FACTION: Название +1/-1] или [WORLD CLOCK: Название +1/-1]. За партию обычно набирается 2–4 таких тега. Если пишешь мир в JSON — указывай уже НОВОЕ значение]`;
         }
       }
       // Вести мира (idle, экспедиции, фронты, новые уровни) — одним блоком в этот же ход
@@ -385,8 +385,12 @@ export class Engine {
 
     // Живой мир: фракции и шкалы мира — сдвиги партии считает движок (±1 за ход, ±2 за партию)
     if (!isClarify && fresh.config.world?.data && (fresh.config.world.data.factions?.length || fresh.config.world.data.clocks?.length)) {
+      const wd = fresh.config.world.data;
       const wt = parseWorldTags(aiContent);
-      if (/FACTION|WORLD CLOCK/i.test(aiContent) && !wt.factions.length && !wt.clocks.length) console.warn(`[engine] теги мира не разобраны: ${JSON.stringify(aiContent.match(/\[[^\]]*(FACTION|WORLD CLOCK)[^\]]*\]/i)?.[0] || "")}`);
+      if (!wt.factions.length && !wt.clocks.length && fresh.config.world.state) {
+        const j = parseWorldJson(aiContent, wd, stateWithDelta(wd, fresh.config.world.state, fresh.config.worldDelta));
+        wt.factions.push(...j.factions); wt.clocks.push(...j.clocks);
+      }
       const { delta, changed } = applyWorldTags(fresh.config.world.data, fresh.config.worldDelta || { factions: {}, clocks: {} }, wt);
       if (changed.length) {
         fresh.config.worldDelta = delta;

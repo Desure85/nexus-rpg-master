@@ -372,6 +372,30 @@ export const parseWorldTags = (text: string) => {
   };
 };
 
+/**
+ * Модели часто пишут состояние мира JSON-ом ({"faction": "X", "value": 1} или {"clock": "Y", "value": 3}),
+ * а не тегами. Сравниваем с текущим состоянием и превращаем разницу в сдвиг ±1.
+ */
+export const parseWorldJson = (text: string, d: Pick<WorldData, 'factions' | 'clocks'>, cur: WorldState): ReturnType<typeof parseWorldTags> => {
+  const out: ReturnType<typeof parseWorldTags> = { factions: [], clocks: [] };
+  for (const m of text.matchAll(/\{[^{}]*\}/g)) {
+    const obj = m[0];
+    const name = obj.match(/"(faction|clock|name|фракция|шкала)"\s*:\s*"([^"]+)"/i);
+    const val = obj.match(/"(value|attitude|отношение|progress|значение)"\s*:\s*(-?\d+)/i);
+    if (!name || !val) continue;
+    const v = parseInt(val[2], 10);
+    const isClock = /clock|шкала/i.test(name[1]) || /"max"\s*:/.test(obj);
+    if (!isClock) {
+      const f = byName(d.factions, name[2]);
+      if (f && cur.factions[f.id] !== undefined && v !== cur.factions[f.id]) out.factions.push({ name: f.name, delta: v > cur.factions[f.id] ? 1 : -1 });
+      else if (f) continue;
+    }
+    const c = byName(d.clocks, name[2]);
+    if (c && cur.clocks[c.id] !== undefined && v !== cur.clocks[c.id]) out.clocks.push({ name: c.name, delta: v > cur.clocks[c.id] ? 1 : -1 });
+  }
+  return out;
+};
+
 const byName = <T extends { name: string }>(list: T[] | undefined, name: string) => {
   const n = normName(name);
   return (list || []).find(x => normName(x.name) === n) || (list || []).find(x => { const m = normName(x.name); return m.includes(n) || n.includes(m); });

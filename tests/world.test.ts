@@ -37,3 +37,16 @@ describe('служебное в ходе игрока', () => {
     expect(displayUserContent('Рина идёт в порт\n\n[STATE: Рина 10/10]\n\n[WORLD STATE: Гильдия -1; «Туман» 2/6 — если ход задел, поставь [FACTION: Название ±1] / [WORLD CLOCK: Название ±1]]')).toBe('Рина идёт в порт');
   });
 });
+
+describe('parseWorldJson', () => {
+  it('turns JSON-style world state into ±1 shifts', async () => {
+    const { parseWorldJson } = await import('../shared/world');
+    const d = { factions: [{ id: 'g', name: 'Гильдия ныряльщиков', desc: '', attitude: -1 }, { id: 's', name: 'Смотрители маяков', desc: '', attitude: 1 }], clocks: [{ id: 't', name: 'Туман наступает', max: 6, value: 2, onFull: '' }] };
+    const cur = { factions: { g: -1, s: 1 }, clocks: { t: 2 } };
+    const same = parseWorldJson('[{"faction": "Гильдия ныряльщиков", "value": -1}, {"faction": "Смотрители маяков", "value": 1}]', d as any, cur);
+    expect(same.factions).toEqual([]);
+    const moved = parseWorldJson('{"faction": "Гильдия ныряльщиков", "value": 0} {"clock": "Туман наступает", "value": 4, "max": 6}', d as any, cur);
+    expect(moved.factions).toEqual([{ name: 'Гильдия ныряльщиков', delta: 1 }]);
+    expect(moved.clocks).toEqual([{ name: 'Туман наступает', delta: 1 }]);
+  });
+});
