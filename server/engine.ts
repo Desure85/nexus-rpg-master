@@ -190,7 +190,7 @@ export class Engine {
       this.broadcast(sessionId, { type: "update", sessionId });
       const content = s.mode === "tale"
         ? `[TALE_CHOICE] Слушатели решили (сообщения выше). Объедини их выборы в продолжение сказки.`
-        : `[ROUND] Игроки прислали действия (сообщения [PLAYER ACTION] выше). Обработай ВСЕ действия сразу и дай сцену-ответ каждому. ${IDLE_RULES[cfg.idlePlayerAction] || IDLE_RULES.random}`;
+        : `[ROUND] Игроки прислали действия (сообщения [PLAYER ACTION] выше). Обработай ВСЕ действия сразу и дай сцену-ответ каждому. Называй героев по именам, не «ты»: за столом несколько игроков, и каждый должен узнать свою часть сцены. ${IDLE_RULES[cfg.idlePlayerAction] || IDLE_RULES.random}`;
       try {
         await this.runTurn(sessionId, content, {});
       } catch (e: any) {
