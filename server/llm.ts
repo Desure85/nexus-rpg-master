@@ -168,8 +168,9 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   let usage: LlmUsage | undefined;
   let reasoningChars = 0;
   let firstAt = 0;
+  let finishReason = "";
   const finish = () => {
-    console.info(`[llm] ${t.model}: ${((Date.now() - t0) / 1000).toFixed(1)} с (первый текст ${firstAt ? ((firstAt - t0) / 1000).toFixed(1) : "—"} с), текст ${acc.length}, рассуждения ${reasoningChars} симв.`);
+    console.info(`[llm] ${t.model}: ${((Date.now() - t0) / 1000).toFixed(1)} с (первый текст ${firstAt ? ((firstAt - t0) / 1000).toFixed(1) : "—"} с), текст ${acc.length}, рассуждения ${reasoningChars} симв.${finishReason ? `, finish=${finishReason}` : ""}`);
     if (!acc.trim() && reasoningChars > 0) {
       throw new LlmError("Модель весь лимит потратила на рассуждения и не успела ответить. Увеличьте лимит ответа или выберите модель без рассуждений (например, flash-версию).");
     }
