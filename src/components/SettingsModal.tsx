@@ -3,6 +3,7 @@ import { AppSettings } from '../types';
 import { X, Save, Type, Users, KeyRound, LogOut, Feather, Lock } from 'lucide-react';
 import { MECHANIC_INFO } from '../../shared/rules';
 import { api } from '../api';
+import { customAlert } from './PromptModal';
 import { inputCls, labelCls } from './PlatformAiForm';
 
 interface SettingsModalProps {
@@ -24,13 +25,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
   const [pw, setPw] = useState({ current: '', next: '' });
   const [pwStatus, setPwStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  const [ids, setIds] = useState<Identities | null>(null);
+  useEffect(() => { api<Identities>('/api/auth/identities').then(setIds).catch(() => undefined); }, []);
 
   const changePassword = async () => {
     setPwStatus(null);
     try {
       await api('/api/auth/password', { body: { currentPassword: pw.current, newPassword: pw.next } });
       setPw({ current: '', next: '' });
-      setPwStatus({ ok: true, text: 'Пароль изменён. Остальные устройства разлогинены.' });
+      setPwStatus({ ok: true, text: ids?.hasPassword === false ? 'Пароль задан — теперь можно входить и по почте.' : 'Пароль изменён. Остальные устройства разлогинены.' });
+      if (ids) setIds({ ...ids, hasPassword: true });
     } catch (e) {
       setPwStatus({ ok: false, text: e instanceof Error ? e.message : 'Ошибка' });
     }
@@ -189,11 +193,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
                 </div>
                 <button onClick={onLogout} className="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold text-white flex items-center gap-2"><LogOut size={14} /> Выйти</button>
               </div>
+              <LoginMethods />
               <div className="space-y-2">
-                <label className={labelCls}><KeyRound size={12} /> Сменить пароль</label>
-                <input type="password" autoComplete="current-password" placeholder="Текущий пароль" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })} className={inputCls} />
+                <label className={labelCls}><KeyRound size={12} /> {ids?.hasPassword === false ? 'Задать пароль' : 'Сменить пароль'}</label>
+                {ids?.hasPassword !== false && <input type="password" autoComplete="current-password" placeholder="Текущий пароль" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })} className={inputCls} />}
                 <input type="password" autoComplete="new-password" placeholder="Новый пароль (от 8 символов)" value={pw.next} onChange={e => setPw({ ...pw, next: e.target.value })} className={inputCls} />
-                <button onClick={changePassword} disabled={!pw.current || pw.next.length < 8} className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold text-white disabled:opacity-40">Сменить</button>
+                <button onClick={changePassword} disabled={(ids?.hasPassword !== false && !pw.current) || pw.next.length < 8} className="w-full py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-bold text-white disabled:opacity-40">{ids?.hasPassword === false ? 'Задать' : 'Сменить'}</button>
                 {pwStatus && <p className={`text-xs ${pwStatus.ok ? 'text-emerald-400' : 'text-red-400'}`}>{pwStatus.text}</p>}
               </div>
             </div>
@@ -209,6 +214,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
           </button>
         </div>
       </div>
+    </div>
+  );
+};
+
+interface Identities { identities: { provider: string; email?: string }[]; hasPassword: boolean; available: { id: string; name: string }[] }
+
+/** Способы входа: VK ID, Яндекс ID, Google — привязать или отвязать. */
+const LoginMethods: React.FC = () => {
+  const [ids, setIds] = useState<Identities | null>(null);
+  const load = () => api<Identities>('/api/auth/identities').then(setIds).catch(() => undefined);
+  useEffect(() => { load(); }, []);
+  if (!ids || !ids.available.length) return null;
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-white/40">Способы входа</label>
+      {ids.available.map(p => {
+        const linked = ids.identities.find(i => i.provider === p.id);
+        return (
+          <div key={p.id} className="flex items-center gap-3 p-3 bg-black/40 border border-white/10 rounded-xl">
+            <span className="flex-1 text-sm text-white">{p.name}{linked?.email ? <span className="text-xs text-white/40"> · {linked.email}</span> : null}</span>
+            {linked
+              ? <button onClick={async () => { try { await api(`/api/auth/identities/${p.id}`, { method: 'DELETE' }); load(); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="px-3 py-1.5 rounded-lg bg-white/5 text-xs text-white/60 hover:text-white">Отвязать</button>
+              : <a href={`/api/auth/oauth/${p.id}/start?link=1&next=${encodeURIComponent(window.location.pathname)}`} className="px-3 py-1.5 rounded-lg bg-emerald-600/80 text-xs font-bold text-white hover:bg-emerald-500">Привязать</a>}
+          </div>
+        );
+      })}
     </div>
   );
 };

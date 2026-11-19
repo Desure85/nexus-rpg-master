@@ -23,6 +23,19 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [invite, setInvite] = useState<{ workspace: string; role: string } | null>(null);
+  const [providers, setProviders] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    api<{ id: string; name: string }[]>('/api/auth/providers').then(setProviders).catch(() => undefined);
+    // ошибка входа через провайдера приходит параметром после редиректа
+    const err = new URLSearchParams(window.location.search).get('auth_error');
+    if (err) {
+      setError(err);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('auth_error');
+      window.history.replaceState(null, '', url.toString());
+    }
+  }, []);
 
   useEffect(() => {
     if (!inviteToken) return;
@@ -127,6 +140,18 @@ export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone 
           {busy ? <Loader2 size={16} className="animate-spin" /> : mode === 'register' ? <UserPlus size={16} /> : <LogIn size={16} />}
           {mode === 'login' ? 'Войти' : mode === 'forgot' ? 'Отправить ссылку' : 'Создать аккаунт'}
         </button>
+        {mode !== 'forgot' && providers.length > 0 && (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center gap-3 text-[10px] uppercase tracking-widest text-white/30"><span className="flex-1 h-px bg-white/10" />или<span className="flex-1 h-px bg-white/10" /></div>
+            {providers.map(p => (
+              <a
+                key={p.id}
+                href={`/api/auth/oauth/${p.id}/start?next=${encodeURIComponent(window.location.pathname === '/' ? '/' : window.location.pathname)}${inviteToken ? `&invite=${encodeURIComponent(inviteToken)}` : ''}`}
+                className={`w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all ${p.id === 'vk' ? 'bg-[#0077FF] hover:bg-[#1a85ff] text-white' : p.id === 'yandex' ? 'bg-[#FC3F1D] hover:bg-[#ff5535] text-white' : 'bg-white hover:bg-white/90 text-black'}`}
+              >Войти через {p.name}</a>
+            ))}
+          </div>
+        )}
         <button type="button" onClick={() => { setMode(mode === 'forgot' ? 'login' : 'forgot'); setError(''); setInfo(''); }} className="w-full text-[11px] text-white/40 hover:text-white">
           {mode === 'forgot' ? '← Ко входу' : 'Забыли пароль?'}
         </button>
