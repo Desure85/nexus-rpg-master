@@ -285,6 +285,8 @@ async function worldPlay(browser) {
       enemies: [{ name: 'Безымянный', tier: 'regular', hp: 11, traits: 'Бледная фигура из тумана, зовёт голосами родных, боится огня' }],
       items: [{ name: 'Свеча маяка', kind: 'consumable', heal: 4, price: 9, inShop: true, rarity: 'common' }],
       currency: 'раковины', shopReplace: true,
+      factions: [{ id: 'guild', name: 'Гильдия ныряльщиков', desc: 'Достают и продают чужие имена', attitude: -1 }, { id: 'keepers', name: 'Смотрители маяков', desc: 'Хранят огонь и порядок', attitude: 1 }],
+      clocks: [{ id: 'fog', name: 'Туман наступает', max: 6, value: 2, onFull: 'Туман дошёл до порта — причалы опустели.' }],
     },
   };
   // ИИ-конструктор мира: черновик из абзаца
@@ -330,6 +332,10 @@ async function worldPlay(browser) {
   await page.waitForTimeout(1000);
   const chron = (await api(page, `/api/worlds/${w.id}/chronicle`)).body || [];
   check('живой мир: итоги партии в хронике', chron.length === 1 && chron[0].status === 'new', JSON.stringify(chron[0] || {}).slice(0, 160));
+  if (process.env.LIVE) check('живой мир: запись летописи короткая (до 600 симв.)', (chron[0]?.summary || '').length > 20 && (chron[0]?.summary || '').length <= 600, (chron[0]?.summary || '').slice(0, 200));
+  const sNow = (await api(page, `/api/sessions/${sid}`)).body;
+  log(`   мир в партии: ${JSON.stringify({ f: sNow.config?.world?.factions, c: sNow.config?.world?.clocks })}`);
+  report.push(`### Состояние мира после партии\n\n\`${JSON.stringify({ factions: sNow.config?.world?.factions, clocks: sNow.config?.world?.clocks, chronicleDelta: chron[0]?.delta })}\`\n`);
   if (chron[0]) {
     await api(page, `/api/worlds/${w.id}/chronicle/${chron[0].id}`, { method: 'PATCH', body: JSON.stringify({ status: 'canon' }) });
     const me2 = (await api(page, '/api/auth/me')).body;

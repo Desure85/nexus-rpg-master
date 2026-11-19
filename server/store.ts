@@ -2,6 +2,7 @@ import type { DB } from "./db";
 import type { Message, CodexEntry, MechanicConfig, DashboardData } from "../src/types";
 import type { LlmSettings, Provider } from "./llm";
 import { DEFAULT_MECHANICS, INITIAL_DASHBOARD, MECHANIC_INFO } from "../shared/rules";
+import { stateWithDelta } from "../shared/world";
 import type { TaleConfig } from "../shared/rules";
 
 export interface SessionConfig {
@@ -16,7 +17,9 @@ export interface SessionConfig {
   /** Герои при создании: архетип и ветеран из зала героев (снимок листа) */
   heroes?: { name: string; gender?: string; concept?: string; archetype?: string; veteran?: any }[];
   /** Мир автора: снимок на момент старта (правки мира не ломают идущие партии) */
-  world?: { id: string; title: string; version: number; genre: string; startLocationId?: string; data: import("../shared/world").WorldData };
+  world?: { id: string; title: string; version: number; genre: string; startLocationId?: string; data: import("../shared/world").WorldData; state?: import("../shared/world").WorldState };
+  /** Сдвиги фракций и шкал мира за эту партию (применятся к миру, когда итоги станут каноном) */
+  worldDelta?: import("../shared/world").WorldDelta;
   /** Испытание дня: ключ даты и условие */
   daily?: { key: string; modifier: string };
 }
@@ -91,7 +94,18 @@ export const publicSession = (s: StoredSession, isOwner: boolean, busy: boolean)
   if (config.mechanics) config.mechanics = mechanicsForClient(config.mechanics);
   if (!isOwner) delete config.extraInstructions;
   // лор мира целиком нужен только серверу; клиенту — название и id
-  if (config.world) config.world = { id: config.world.id, title: config.world.title, version: config.world.version, genre: config.world.genre, ...(config.world.data?.currency ? { currency: config.world.data.currency } : {}) } as any;
+  if (config.world) {
+    const w = config.world, d = w.data;
+    // фракции и шкалы с учётом сдвигов этой партии — игрокам видно, как их поступки меняют мир
+    const st = d && w.state ? stateWithDelta(d, w.state, config.worldDelta) : null;
+    config.world = {
+      id: w.id, title: w.title, version: w.version, genre: w.genre,
+      ...(d?.currency ? { currency: d.currency } : {}),
+      ...(st && d?.factions?.length ? { factions: d.factions.map(f => ({ name: f.name, attitude: st.factions[f.id], delta: config.worldDelta?.factions?.[f.id] || 0 })) } : {}),
+      ...(st && d?.clocks?.length ? { clocks: d.clocks.map(c => ({ name: c.name, value: st.clocks[c.id], max: c.max, delta: config.worldDelta?.clocks?.[c.id] || 0 })) } : {}),
+    } as any;
+    delete config.worldDelta;
+  }
   return { ...rest, config, isOwner, busy };
 };
 

@@ -160,7 +160,7 @@ export const parseDashboard = (text: string, currentDashboard: DashboardData): {
   }
 
   // Незакрытые блоки (обрезанный ответ модели) — не показываем игрокам сырой JSON
-  cleanText = cleanText.replace(/<(dashboard_json|codex_json|lore_update|final_draft|session_summary)>[\s\S]*$/i, '').trim();
+  cleanText = cleanText.replace(/<world_chronicle>[\s\S]*?<\/world_chronicle>/gi, '').replace(/<(dashboard_json|codex_json|lore_update|final_draft|session_summary|world_chronicle)>[\s\S]*$/i, '').trim();
 
   // Clean up unwanted headers that the model might still output
   cleanText = cleanText.replace(/^###\s*(Narrative|Нарратив)\s*\n?/i, '').trim();
@@ -351,13 +351,14 @@ export const displayUserContent = (content: string): string => {
     .replace(/^\[FINALE\][\s\S]*/, '🏁 Финал вечера')
     .replace(/^\[SESSION SUMMARY\][\s\S]*/, '🏆 Итоги партии')
     .replace(/^\[LEVEL UP\]([^.]*)\.[\s\S]*/, '⬆ Новый уровень:$1')
+    .replace(/\n*\[WORLD STATE:[^\n]*/g, '')
     .replace(/\n*\[(STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS)[^\]]*\]/g, '')
     .replace(/\n*\[WORLD NEWS\][\s\S]*?\[\/WORLD NEWS\]/g, '')
     .trim();
 };
 
 
-const BLOCK_TAGS = 'dashboard_json|codex_json|lore_update|final_draft|session_summary|choices_json|tale_title|tale_moral';
+const BLOCK_TAGS = 'dashboard_json|codex_json|lore_update|final_draft|session_summary|choices_json|tale_title|tale_moral|world_chronicle';
 
 /**
  * Модели иногда портят разметку блоков: [dashboard_json]{…}, ```json …``` вместо тега, забытый открывающий тег.

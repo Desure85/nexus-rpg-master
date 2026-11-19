@@ -154,7 +154,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     }
     if (daily) config.daily = { key: daily.key, modifier: daily.modifier.id };
     if (world) {
-      config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data };
+      config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data, ...(world.state ? { state: world.state } : {}) };
       worlds.countPlay(world.id);
     }
     // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд

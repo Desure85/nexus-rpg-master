@@ -339,6 +339,12 @@ function turn(req: LlmRequest, user: string) {
   if (Object.keys(slots).length) out.characters = chars.map(c => ({ name: c.name, actions: actionsFor(g, c.name, slots[c.name]) }));
   let tail = `\n\n<dashboard_json>${JSON.stringify(out)}</dashboard_json>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user)) tail += `\n<session_summary>Герои прошли через опасности, нашли союзников и стали ближе к разгадке.</session_summary>`;
+  // демо-мастер в мире автора: короткая запись летописи и сдвиг первой фракции/шкалы мира
+  if (/\[(SESSION SUMMARY|FINALE)\]/.test(user) && /world_chronicle/.test(req.system)) tail += `\n<world_chronicle>${[...new Set(acts.map(a => a.who))].join(" и ") || "Герои"} прошли через опасности и изменили расклад сил в краю.</world_chronicle>`;
+  const fac = req.system.match(/Фракции:\n- ([^:\n]+):/)?.[1];
+  const clk = req.system.match(/Шкалы мира:\n- «([^»]+)»/)?.[1];
+  if (fac && outcomes.some(o => o.outcome === "success" || o.outcome === "crit")) tail += ` [FACTION: ${fac} +1]`;
+  if (clk && outcomes.some(o => o.outcome === "fail" || o.outcome === "critfail")) tail += ` [WORLD CLOCK: ${clk} +1]`;
   if (/\[SAVE_CHAPTER\]/.test(user)) tail += `\n<lore_update>Глава завершена: герои продвинулись в расследовании.</lore_update>\n<final_draft>Глава, в которой герои шли сквозь туман и выбирали, кому верить.</final_draft>`;
   return `${parts.join("\n\n")} ${tags.join(" ")}${tail}`;
 }
