@@ -156,6 +156,7 @@ export interface SessionConfig {
   extraInstructions?: string;
   idlePlayerAction?: 'random' | 'skip' | 'gm';
   autoApprove?: boolean;
+  daily?: { key: string; modifier: string };
   tale?: { age: '3-5' | '6-8' | '9-12' | 'adult'; chapters: number; moral?: string; finished?: boolean; title?: string };
 }
 
