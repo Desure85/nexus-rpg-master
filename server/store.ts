@@ -22,6 +22,8 @@ export interface SessionConfig {
   worldDelta?: import("../shared/world").WorldDelta;
   /** Испытание дня: ключ даты и условие */
   daily?: { key: string; modifier: string };
+  /** Обучающая партия: мастер первые ходы показывает механики, клиент — подсказки */
+  tutorial?: boolean;
 }
 
 export interface StoredSession {

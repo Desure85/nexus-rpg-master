@@ -19,6 +19,8 @@ export interface SetupData {
   tale?: { age: string; chapters: number; moral?: string };
   /** Ключ испытания дня (YYYY-MM-DD) */
   daily?: string;
+  /** обучающая партия для новичка */
+  tutorial?: boolean;
   /** Игра в мире автора */
   worldId?: string;
   scenarioId?: string;

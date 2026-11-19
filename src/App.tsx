@@ -28,6 +28,7 @@ import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
 import { dailyChallenge, DAILY_MODIFIERS } from '../shared/daily';
 import { DailyCard, markDailyPlayed } from './components/DailyCard';
 import { ActionChips } from './components/ActionChips';
+import { TutorialCoach } from './components/TutorialCoach';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -146,6 +147,8 @@ export default function App() {
   const [hallOpen, setHallOpen] = useState(false);
   const [worldsOpen, setWorldsOpen] = useState<{ openId?: string } | null>(null);
   const [worldInbox, setWorldInbox] = useState(0);
+  const [officialWorlds, setOfficialWorlds] = useState<{ id: string; title: string; icon: string; description: string }[]>([]);
+  useEffect(() => { if (user) api<any[]>('/api/worlds?scope=public').then(r => setOfficialWorlds(r.filter(w => w.official).slice(0, 6))).catch(() => undefined); }, [user]);
   useEffect(() => { if (user && !worldsOpen) api<{ newEntries: number }>('/api/worlds/inbox').then(r => setWorldInbox(r.newEntries)).catch(() => undefined); }, [user, worldsOpen]);
   const isTale = currentSession?.mode === 'tale';
   const dashBefore = useMemo(() => dashboardsBefore(currentSession?.history || []), [currentSession?.history]);
@@ -577,6 +580,13 @@ export default function App() {
       characters: [{ id: '0', name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype }],
     } as SetupData);
   };
+
+  /** Обучающая партия: стартовый мир, простой сюжет, готовый герой; мастер ведёт по механикам, клиент показывает подсказки. */
+  const startTutorial = () => handleStartAdventure({
+    title: 'Обучение · Пропавший караван', setting: '', plotHook: '', style: 'balanced', mode: 'short',
+    worldId: 'starter-crossroads', scenarioId: 'karavan', tutorial: true,
+    characters: [{ id: '0', name: 'Ласка', concept: 'Юркая охранница караванов, знает все короткие пути и половину карманников', gender: 'Ж', archetype: 'rogue' }],
+  } as SetupData);
 
   const startWorld = (w: WorldStart) => {
     setWorldsOpen(null);
@@ -1277,6 +1287,9 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
+                  {currentSession.config?.tutorial && currentSession.isOwner && !isLoading && (
+                    <TutorialCoach sessionId={currentSession.id} step={currentSession.history.filter(m => m.role === 'assistant').length} onOpenWorlds={() => setWorldsOpen({})} />
+                  )}
                   <ActionChips
                     dashboard={currentDashboard}
                     skip={pendingClaims.filter(c => c.status === 'approved').map(c => c.char_name)}
@@ -1660,6 +1673,21 @@ export default function App() {
               </div>
             )}
 
+            {sessions.length === 0 && (
+              <button
+                onClick={startTutorial}
+                disabled={isLoading}
+                data-testid="start-tutorial"
+                className="w-full max-w-md mx-4 p-4 rounded-2xl border border-emerald-400/30 bg-emerald-400/[0.07] hover:bg-emerald-400/[0.12] text-left flex items-center gap-4 transition-all disabled:opacity-50"
+              >
+                <span className="text-3xl">🎓</span>
+                <span className="min-w-0">
+                  <span className="block text-white font-bold">Впервые здесь? Обучающая партия</span>
+                  <span className="block text-xs text-white/50 mt-0.5">5 ходов, 10 минут: мастер покажет броски, бой, предметы и карту, а подсказки объяснят интерфейс.</span>
+                </span>
+              </button>
+            )}
+
             <DailyCard disabled={isLoading} onStart={startDaily} />
 
             <button
@@ -1705,6 +1733,20 @@ export default function App() {
                 <span className="block text-xs text-white/45">Создайте свой мир с лором, местами и завязками — играйте сами или поделитесь ссылкой. Или сыграйте в мир из каталога.</span>
               </span>
             </button>
+            {officialWorlds.length > 0 && (
+              <div className="w-full max-w-4xl px-4 text-left space-y-3">
+                <h3 className="text-[10px] uppercase tracking-widest font-bold text-white/40">Миры от Nexus</h3>
+                <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
+                  {officialWorlds.map(w => (
+                    <button key={w.id} onClick={() => setWorldsOpen({ openId: w.id })} className="snap-start shrink-0 w-60 p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:bg-white/[0.07] text-left transition-all">
+                      <span className="text-2xl">{w.icon}</span>
+                      <span className="block text-white font-bold text-sm mt-2">{w.title}</span>
+                      <span className="block text-[11px] text-white/45 mt-1 line-clamp-3">{w.description}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="w-full max-w-4xl px-4 text-left space-y-3">
               <h3 className="text-[10px] uppercase tracking-widest font-bold text-white/40">Готовые сценарии</h3>
               <div className="flex gap-3 overflow-x-auto pb-2 snap-x">

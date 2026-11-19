@@ -991,6 +991,22 @@ describe('архетипы, зал героев, достижения', () => {
 const lastAssistant = (s: any) => [...s.history].reverse().find((m: any) => m.role === 'assistant');
 
 describe('миры', () => {
+  it('обучающая партия: мастер ведёт по шагам, после пятого хода — обычная игра', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const id = await createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', tutorial: true, style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${id}`)).body.config.tutorial).toBe(true);
+    const sysOf = () => JSON.parse((ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? ORDER BY id DESC LIMIT 1").get(id) as any).request).system as string;
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Ласка расспрашивает Борна' });
+    await ctx.engine.whenIdle(id);
+    expect(sysOf()).toContain('ОБУЧАЮЩАЯ ПАРТИЯ');
+    expect(sysOf()).toContain('Ход 2:');
+    for (let i = 0; i < 4; i++) { await gm().post(`/api/sessions/${id}/turn`, { content: `Ласка идёт дальше ${i}` }); await ctx.engine.whenIdle(id); }
+    expect(sysOf()).not.toContain('ОБУЧАЮЩАЯ ПАРТИЯ');
+    // без флага и в мультиплеерной сказке — не обучение
+    const plain = await createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${plain}`)).body.config.tutorial).toBeUndefined();
+  });
+
   it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
     const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
     expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);
