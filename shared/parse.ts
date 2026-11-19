@@ -351,6 +351,7 @@ export const displayUserContent = (content: string): string => {
     .replace(/^\[FINALE\][\s\S]*/, '🏁 Финал вечера')
     .replace(/^\[SESSION SUMMARY\][\s\S]*/, '🏆 Итоги партии')
     .replace(/^\[LEVEL UP\]([^.]*)\.[\s\S]*/, '⬆ Новый уровень:$1')
+    .replace(/\n*\[WORLD STATE:[^\n]*/g, '')
     .replace(/\n*\[(STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS)[^\]]*\]/g, '')
     .replace(/\n*\[WORLD NEWS\][\s\S]*?\[\/WORLD NEWS\]/g, '')
     .trim();

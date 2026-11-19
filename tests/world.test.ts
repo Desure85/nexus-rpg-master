@@ -30,3 +30,10 @@ describe('оборванный JSON мира', () => {
     expect(JSON.parse(closeJson('текст {"a":[1,2]} хвост'))).toEqual({ a: [1, 2] });
   });
 });
+
+import { displayUserContent } from '../shared/parse';
+describe('служебное в ходе игрока', () => {
+  it('прячет состояние мира с вложенными тегами', () => {
+    expect(displayUserContent('Рина идёт в порт\n\n[STATE: Рина 10/10]\n\n[WORLD STATE: Гильдия -1; «Туман» 2/6 — если ход задел, поставь [FACTION: Название ±1] / [WORLD CLOCK: Название ±1]]')).toBe('Рина идёт в порт');
+  });
+});

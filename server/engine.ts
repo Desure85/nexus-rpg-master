@@ -309,6 +309,16 @@ export class Engine {
         const chars = this.game.ensureEngineState(sessionId);
         const stateTag = this.game.stateToTag(chars);
         if (stateTag) finalContent += `\n\n[STATE: ${stateTag}]`;
+        // Фракции и шкалы мира автора — напоминание каждый ход (иначе модели забывают про теги мира)
+        const wd = s.config.world?.data;
+        if (wd && s.config.world?.state && ((wd.factions || []).length || (wd.clocks || []).length)) {
+          const st = stateWithDelta(wd, s.config.world.state, s.config.worldDelta);
+          const parts = [
+            ...(wd.factions || []).map(f => `${f.name} ${st.factions[f.id] > 0 ? "+" : ""}${st.factions[f.id]}`),
+            ...(wd.clocks || []).map(c => `«${c.name}» ${st.clocks[c.id]}/${c.max}`),
+          ];
+          finalContent += `\n\n[WORLD STATE: ${parts.join("; ")} — если этот ход заметно задел фракцию или угрозу, поставь [FACTION: Название ±1] / [WORLD CLOCK: Название ±1]]`;
+        }
       }
       // Вести мира (idle, экспедиции, фронты, новые уровни) — одним блоком в этот же ход
       if (!isTale && !finalContent.startsWith("[CLARIFY]")) {
@@ -796,7 +806,7 @@ export function ensurePlayable(d: DashboardData, setting: string) {
 export const stripStrayTags = (text: string) => text
   .replace(/^[ \t]*\[(suggestedRoll|dashboard|actions|threats|clocks|codex)\][^\n]*\n?/gim, "")
   .replace(/^[ \t]*\[[a-z][a-z _-]{2,30}\][ \t]*\n?/gm, "")
-  .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
+  .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|WORLD STATE|WORLD|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
   .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST|FACTION|WORLD[ _]CLOCK)(:[^\]\n]*)?\]/g, "")
   // пояснения к числам в скобках: «(урон 1, не 2: тропа выбрана верно)», «(−2 HP)»
   .replace(/\s*\((?=[^)]*\d)(?:урон|HP|ОЗ|хп|опыт|XP|стресс|DC|сложность|бросок|[+−-]\s*\d+\s*(?:HP|ОЗ|XP|стресс|золот))[^)]{0,100}\)/gi, "")
