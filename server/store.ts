@@ -91,7 +91,7 @@ export const publicSession = (s: StoredSession, isOwner: boolean, busy: boolean)
   if (config.mechanics) config.mechanics = mechanicsForClient(config.mechanics);
   if (!isOwner) delete config.extraInstructions;
   // лор мира целиком нужен только серверу; клиенту — название и id
-  if (config.world) config.world = { id: config.world.id, title: config.world.title, version: config.world.version, genre: config.world.genre } as any;
+  if (config.world) config.world = { id: config.world.id, title: config.world.title, version: config.world.version, genre: config.world.genre, ...(config.world.data?.currency ? { currency: config.world.data.currency } : {}) } as any;
   return { ...rest, config, isOwner, busy };
 };
 

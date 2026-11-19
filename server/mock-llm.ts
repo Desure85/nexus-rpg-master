@@ -89,6 +89,8 @@ function rpgReply(req: LlmRequest): string {
   if (/#clock/.test(user)) dash.clocks = [{ name: "Тревога", progress: 0, total: 4 }];
   // угроза: при [ENCOUNTER] или по тестовому триггеру; модель «пытается» переписать HP — движок не даст
   if ((/\[ENCOUNTER:/.test(user) && !/тишина/.test(user)) || /#enemy|#hit/.test(user)) dash.threats = [{ name: "Мародёр", hp: "10/10", features: ["Ржавый тесак"] }];
+  const thr = user.match(/#threat:([^:#\n]+):(\d+)/);
+  if (thr) dash.threats = [{ name: thr[1].trim(), hp: `${thr[2]}/${thr[2]}`, features: [] }];
   let tail = `\n\n<dashboard_json>${JSON.stringify(dash)}</dashboard_json>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user)) tail += `\n<session_summary>Герои прошли через туман и раскрыли тайну записки.</session_summary>`;
   if (/\[SAVE_CHAPTER\]/.test(user)) tail += `\n<lore_update>Архив: герои раскрыли тайну записки.</lore_update>\n<final_draft>Глава о тумане и записке.</final_draft>`;

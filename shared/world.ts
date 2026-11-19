@@ -1,6 +1,7 @@
 // Миры: шаблон игры от автора — паспорт, лор (постоянная память + карточки по ключам), карта, сценарии, герои.
 // Общий код сервера и клиента: нормализация (защита от мусора и раздувания) и выбор карточек лора для промпта.
-import type { Genre } from './genre';
+import type { Genre, LootTier } from './genre';
+import { ENEMY_TIERS } from './balance';
 
 export const WORLD_GENRES: { id: Genre; name: string }[] = [
   { id: 'fantasy', name: 'Фэнтези' }, { id: 'horror', name: 'Мистика и хоррор' }, { id: 'cyber', name: 'Киберпанк' },
@@ -38,6 +39,25 @@ export interface WorldScenario {
   heroes?: WorldHero[];
 }
 
+export type EnemyTier = keyof typeof ENEMY_TIERS;
+export const ENEMY_TIER_LIST: { id: EnemyTier; name: string }[] = [
+  { id: 'minion', name: 'Приспешник' }, { id: 'regular', name: 'Обычный' }, { id: 'elite', name: 'Опасный' }, { id: 'boss', name: 'Босс' },
+];
+
+/** Враг бестиария: числа по рангу из баланса, автор может уточнить в разумных пределах — их держит движок. */
+export interface WorldEnemy { id: string; name: string; tier: EnemyTier; hp?: number; dmg?: number; dc?: number; traits: string }
+
+/** Предмет мира: эффект и бонус пишутся в название — так их понимает движок (расходники, снаряжение). */
+export interface WorldItem {
+  id: string; name: string;
+  kind: 'consumable' | 'gear' | 'misc';
+  heal?: number; calm?: number;      // расходник: +HP, −стресс
+  bonus?: string;                    // снаряжение: «+1 к атаке»
+  price?: number; inShop?: boolean;  // лавка
+  rarity?: LootTier;                 // добыча при обыске
+  desc?: string;
+}
+
 export interface WorldData {
   setting: string;          // короткое описание мира — уходит как сеттинг партии
   core: string;             // постоянная память мастера
@@ -46,6 +66,12 @@ export interface WorldData {
   locations: WorldLocation[];
   scenarios: WorldScenario[];
   heroes: WorldHero[];
+  enemies?: WorldEnemy[];
+  items?: WorldItem[];
+  /** Название денег мира: «раковины», «кредиты» */
+  currency?: string;
+  /** Лавки продают только предметы мира (иначе — вдобавок к товарам жанра) */
+  shopReplace?: boolean;
 }
 
 export interface World {
@@ -64,7 +90,7 @@ export interface World {
   mine?: boolean;
 }
 
-export const WORLD_LIMITS = { cards: 80, cardText: 1500, keys: 10, core: 3000, setting: 1500, tone: 1500, locations: 40, scenarios: 12, heroes: 12, hook: 1500 };
+export const WORLD_LIMITS = { enemies: 40, items: 60, cards: 80, cardText: 1500, keys: 10, core: 3000, setting: 1500, tone: 1500, locations: 40, scenarios: 12, heroes: 12, hook: 1500 };
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v : '').trim().slice(0, max);
 const slug = (v: string, i: number) => (v || '').toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 40) || `id-${i}`;
@@ -107,7 +133,36 @@ export function normalizeWorldData(raw: any): WorldData {
     ...(ids.has(str(sc?.startLocationId, 40)) ? { startLocationId: str(sc.startLocationId, 40) } : {}),
     heroes: (Array.isArray(sc?.heroes) ? sc.heroes : []).map(hero).filter(Boolean).slice(0, 6) as WorldHero[],
   })).filter((sc: WorldScenario) => sc.title && sc.hook), (sc: WorldScenario) => sc.id);
+  const num = (v: unknown, lo: number, hi: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n >= lo ? Math.min(hi, n) : undefined; };
+  const enemies: WorldEnemy[] = uniq((Array.isArray(d.enemies) ? d.enemies : []).slice(0, WORLD_LIMITS.enemies).map((e: any, i: number) => ({
+    id: str(e?.id, 40) || `e${i}`,
+    name: str(e?.name, 60),
+    tier: (e?.tier in ENEMY_TIERS ? e.tier : 'regular') as EnemyTier,
+    ...(num(e?.hp, 1, 60) ? { hp: num(e.hp, 1, 60) } : {}),
+    ...(num(e?.dmg, 1, 10) ? { dmg: num(e.dmg, 1, 10) } : {}),
+    ...(num(e?.dc, 5, 25) ? { dc: num(e.dc, 5, 25) } : {}),
+    traits: str(e?.traits, 400),
+  })).filter((e: WorldEnemy) => e.name), (e: WorldEnemy) => e.name.toLowerCase());
+  const items: WorldItem[] = uniq((Array.isArray(d.items) ? d.items : []).slice(0, WORLD_LIMITS.items).map((it: any, i: number) => {
+    const kind = (['consumable', 'gear', 'misc'].includes(it?.kind) ? it.kind : 'misc') as WorldItem['kind'];
+    const bonus = str(it?.bonus, 30).match(/^[+−-]?\s*\d+\s+к\s+[а-яё]+/i)?.[0];
+    return {
+      id: str(it?.id, 40) || `i${i}`,
+      name: str(it?.name, 60).replace(/[()]/g, ''),
+      kind,
+      ...(kind === 'consumable' && num(it?.heal, 1, 20) ? { heal: num(it.heal, 1, 20) } : {}),
+      ...(kind === 'consumable' && num(it?.calm, 1, 5) ? { calm: num(it.calm, 1, 5) } : {}),
+      ...(kind === 'gear' && bonus ? { bonus: bonus.replace(/^(\d)/, '+$1').replace('−', '-') } : {}),
+      ...(num(it?.price, 1, 500) ? { price: num(it.price, 1, 500) } : {}),
+      ...(it?.inShop && num(it?.price, 1, 500) ? { inShop: true } : {}),
+      ...(['common', 'uncommon', 'rare', 'epic'].includes(it?.rarity) ? { rarity: it.rarity } : {}),
+      ...(str(it?.desc, 300) ? { desc: str(it.desc, 300) } : {}),
+    };
+  }).filter((it: WorldItem) => it.name), (it: WorldItem) => it.name.toLowerCase());
   return {
+    enemies, items,
+    ...(str(d.currency, 30) ? { currency: str(d.currency, 30) } : {}),
+    ...(d.shopReplace && items.some(i => i.inShop) ? { shopReplace: true } : {}),
     setting: str(d.setting, WORLD_LIMITS.setting),
     core: str(d.core, WORLD_LIMITS.core),
     tone: str(d.tone, WORLD_LIMITS.tone) || undefined,
@@ -152,8 +207,38 @@ export function worldPromptBlock(w: Pick<World, 'title'> & { data: WorldData }, 
     used.push(c.id);
   }
   const places = d.locations.length ? `\nМеста мира: ${d.locations.map(l => l.name).join(', ')}.` : '';
-  const text = `\n\n## МИР «${w.title}» (канон автора — не противоречь ему)\n${d.core}${places}${lines.length ? `\n### Справка по тому, что сейчас в сцене\n${lines.join('\n')}` : ''}`;
+  const bestiary = (d.enemies || []).length
+    ? `\n### Бестиарий мира (вводи врагов отсюда, HP пиши ровно такими — движок их проверяет)\n${d.enemies!.map(e => { const st = enemyStats(e); return `- ${e.name} — ${ENEMY_TIERS[e.tier].name}, HP ${st.hp}, DC ${st.dc}, урон ${st.dmg}${e.traits ? `: ${e.traits}` : ''}`; }).join('\n')}`
+    : '';
+  const goods = (d.items || []).length
+    ? `\n### Предметы мира (в добыче и наградах используй их названия как есть — со скобками эффекта)\n${d.items!.map(i => `- ${itemLabel(i)}${i.desc ? ` — ${i.desc}` : ''}`).join('\n')}`
+    : '';
+  const money = d.currency ? `\nДеньги мира называются «${d.currency}» — так и пиши в тексте (в цифрах это gold героя).` : '';
+  const text = `\n\n## МИР «${w.title}» (канон автора — не противоречь ему)\n${d.core}${places}${money}${lines.length ? `\n### Справка по тому, что сейчас в сцене\n${lines.join('\n')}` : ''}${bestiary}${goods}`;
   return { text, used };
 }
 
-export const emptyWorldData = (): WorldData => ({ setting: '', core: '', cards: [], locations: [], scenarios: [], heroes: [] });
+export const emptyWorldData = (): WorldData => ({ setting: '', core: '', cards: [], locations: [], scenarios: [], heroes: [], enemies: [], items: [] });
+
+/** Числа врага: заданные автором или середина диапазона ранга. */
+export const enemyStats = (e: Pick<WorldEnemy, 'tier' | 'hp' | 'dmg' | 'dc'>) => {
+  const t = ENEMY_TIERS[e.tier] || ENEMY_TIERS.regular;
+  return { hp: e.hp ?? Math.round((t.hp[0] + t.hp[1]) / 2), dmg: e.dmg ?? t.dmg[1], dc: e.dc ?? t.dc };
+};
+
+/** Название предмета с эффектом в скобках: «Свеча маяка (+3 HP, снимает 1 стресс)», «Гарпун (+1 к атаке)». */
+export const itemLabel = (i: WorldItem) => {
+  const fx = i.kind === 'consumable'
+    ? [i.heal ? `+${i.heal} HP` : '', i.calm ? `снимает ${i.calm} ${i.calm === 1 ? 'стресс' : 'стресса'}` : ''].filter(Boolean).join(', ')
+    : i.kind === 'gear' ? (i.bonus || '') : '';
+  return fx ? `${i.name} (${fx})` : i.name;
+};
+
+const normName = (n: string) => String(n || '').toLowerCase().replace(/ё/g, 'е').replace(/[«»"]/g, '').trim();
+/** Враг бестиария для угрозы на сцене: «Безымянный №2», «стая безымянных» → «Безымянный». */
+export const findEnemy = (enemies: WorldEnemy[] | undefined, threatName: string) => {
+  const t = normName(threatName);
+  if (!t || !enemies?.length) return undefined;
+  return enemies.find(e => normName(e.name) === t)
+    || enemies.find(e => { const n = normName(e.name); const st = n.length > 5 ? n.slice(0, n.length - 2) : n; return new RegExp(`(^|[^a-zа-я0-9])${st.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(t); });
+};

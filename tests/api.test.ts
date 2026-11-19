@@ -1043,6 +1043,7 @@ describe('миры', () => {
     expect(s.setting).toContain('Архипелаг');
     expect(s.name).toBe('Туманные Острова: Погасший маяк');
     expect(s.config.world).toEqual({ id: w.id, title: 'Туманные Острова', version: 1, genre: 'cyber' });
+
     const d = lastDash(s);
     expect(d.currentLocationId).toBe('lighthouse');
     expect(d.locations.some((l: any) => l.name === 'Порт Сольвей')).toBe(true);
@@ -1059,6 +1060,31 @@ describe('миры', () => {
     const shop = (await gm().get(`/api/sessions/${id}/shop`)).body;
     expect(JSON.stringify(shop)).not.toMatch(/Зелье лечения/);
     expect((await gm().get(`/api/worlds/${w.id}`)).body.plays).toBe(1);
+  });
+
+  it('механика мира: бестиарий задаёт HP врагов, лавка и добыча — предметы мира', async () => {
+    const w = (await gm().post('/api/worlds', worldBody({
+      currency: 'раковины', shopReplace: true,
+      enemies: [{ name: 'Безымянный', tier: 'regular', hp: 11, traits: 'Зовёт голосами родных' }, { name: 'Туманный змей', tier: 'boss' }],
+      items: [
+        { name: 'Свеча маяка', kind: 'consumable', heal: 4, calm: 1, price: 9, inShop: true, rarity: 'common' },
+        { name: 'Гарпун (старый)', kind: 'gear', bonus: '+1 к атаке', price: 30, inShop: true },
+        { name: 'Чужое имя', kind: 'misc', rarity: 'common' },
+        { name: 'Плохой', kind: 'gear', bonus: 'всё убивает' },
+      ],
+    }))).body;
+    expect(w.data.items.find((i: any) => i.name === 'Гарпун старый').bonus).toBe('+1 к атаке');
+    expect(w.data.items.find((i: any) => i.name === 'Плохой').bonus).toBeUndefined();
+    const id = await createSession({ worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${id}`)).body.config.world.currency).toBe('раковины');
+    const shop = (await gm().get(`/api/sessions/${id}/shop`)).body;
+    expect(shop.map((i: any) => i.name)).toEqual(['Свеча маяка (+4 HP, снимает 1 стресс)', 'Гарпун старый (+1 к атаке)']);
+    // модель вводит врага из бестиария с «неправильным» HP — движок ставит HP автора
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Рина слышит зов #threat:Безымянный №1:3' });
+    await ctx.engine.whenIdle(id);
+    const th = lastDash((await gm().get(`/api/sessions/${id}`)).body).threats.find((t: any) => /Безымянный/.test(t.name));
+    expect(th.hp).toBe('11/11');
+    expect(th.features.join(' ')).toMatch(/голосами|.+/);
   });
 
   it('чужой приватный мир нельзя запустить', async () => {
