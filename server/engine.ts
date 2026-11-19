@@ -4,6 +4,7 @@ import type { GameApi } from "./game";
 import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
+import { DAILY_MODIFIERS } from "../shared/daily";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -373,6 +374,8 @@ export class Engine {
     const leveled: string[] = [];
     let dashboard: DashboardData = isClarify ? currentDashboard : (parsed.dashboard || structuredClone(currentDashboard));
     // Архетипы и ветераны: стартовые числа, снаряжение и способности задаёт игра, а не модель
+    // Условие испытания дня — тоже числа игры
+    const dailyMod = !isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.daily ? DAILY_MODIFIERS.find(m => m.id === s.config.daily!.modifier) : undefined;
     if (!isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.heroes?.length) {
       const genre = genreOf(`${s.setting} ${s.name}`);
       dashboard.characters = (dashboard.characters || []).map(c => {
@@ -384,6 +387,10 @@ export class Engine {
         if (h.veteran) out = applyVeteran(out, h.veteran);
         return out;
       });
+    }
+    if (dailyMod) {
+      if (dailyMod.hero) dashboard.characters = (dashboard.characters || []).map(c => dailyMod.hero!(c) as any);
+      if (dailyMod.doom) dashboard.doomPool = Math.max(Number(dashboard.doomPool) || 0, dailyMod.doom);
     }
     if (!isClarify) {
       // State Authority: новые персонажи из ответа попадают в движок, затем применяются теги и числа перезаписываются

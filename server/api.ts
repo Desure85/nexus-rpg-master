@@ -14,6 +14,7 @@ import {
   loadSession, saveSession, publicSession, sessionSummary, lastDashboard, readSettings, settingsForClient, writeSettings, mergeMechanics, cleanExtra,
   type SessionConfig, type StoredSession,
 } from "./store";
+import { dailyChallenge, isDailyKey } from "../shared/daily";
 import { buildGameStartPrompt, buildTaleStartPrompt, TALE_AGES, INITIAL_DASHBOARD, type TaleAge } from "../shared/rules";
 import { rollTag, ROLL_TYPES, type RollType } from "../shared/dice";
 import { resolveRolls } from "../shared/resolve";
@@ -100,8 +101,10 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     catch (e) { if (e instanceof BillingError) return res.status(e.status).json({ error: e.code, message: e.message }); throw e; }
     const setup = req.body?.setup || {};
     const mode: StoredSession["mode"] = ["short", "campaign", "tale"].includes(setup.mode) ? setup.mode : "short";
-    const setting = str(setup.setting, 2000).trim();
-    const plotHook = str(setup.plotHook, 2000).trim();
+    // испытание дня: сюжет и условие пересчитываем по ключу — клиент их не подменит
+    const daily = mode === "short" && isDailyKey(setup.daily) ? dailyChallenge(setup.daily) : null;
+    const setting = daily ? daily.scenario.setting : str(setup.setting, 2000).trim();
+    const plotHook = daily ? daily.plotHook : str(setup.plotHook, 2000).trim();
     const style = ["narrative", "balanced", "combat", "fairytale"].includes(setup.style) ? setup.style : mode === "tale" ? "fairytale" : "balanced";
     const characters = (Array.isArray(setup.characters) ? setup.characters : [])
       .map((c: any) => {
@@ -133,6 +136,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       const chapters = Math.min(15, Math.max(3, Number(setup.tale?.chapters) || 6));
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
+    if (daily) config.daily = { key: daily.key, modifier: daily.modifier.id };
     if (mode !== "tale" && characters.some((c: any) => c.archetype || c.veteranSheet)) {
       config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, archetype: c.archetype, veteran: c.veteranSheet }));
     }

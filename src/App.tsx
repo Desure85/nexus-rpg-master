@@ -24,6 +24,8 @@ import { HallModal } from './components/HallModal';
 import { ACHIEVEMENTS } from '../shared/achievements';
 import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
+import { dailyChallenge } from '../shared/daily';
+import { DailyCard, markDailyPlayed } from './components/DailyCard';
 import { DisclaimerFooter } from './components/Disclaimer';
 import { customPrompt, customConfirm } from './components/PromptModal';
 
@@ -545,6 +547,21 @@ export default function App() {
     characters: sc.heroes.slice(0, sc.mode === 'tale' ? 1 : 1).map((h, k) => ({ id: String(k), name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype })),
     tale: sc.tale,
   } as SetupData);
+
+  const startDaily = (key: string) => {
+    const dc = dailyChallenge(key);
+    const h = dc.scenario.heroes[0];
+    markDailyPlayed(key);
+    return handleStartAdventure({
+      title: `${dc.scenario.title} · испытание дня`,
+      setting: dc.scenario.setting,
+      plotHook: dc.plotHook,
+      style: dc.scenario.style,
+      mode: 'short',
+      daily: key,
+      characters: [{ id: '0', name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype }],
+    } as SetupData);
+  };
 
   const handleStartAdventure = async (setup: SetupData) => {
     try {
@@ -1599,6 +1616,8 @@ export default function App() {
                 ИИ-провайдер «{serverConfig.llm.provider}» не настроен: нет ключа на сервере. {user?.isSuperadmin ? 'Откройте Администрирование → ИИ платформы.' : 'Подключите свой ключ ИИ в настройках пространства или попросите администратора.'}
               </div>
             )}
+
+            <DailyCard disabled={isLoading} onStart={startDaily} />
 
             <button
               onClick={() => startScenario(quickScenario())}

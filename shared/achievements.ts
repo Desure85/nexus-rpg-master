@@ -13,5 +13,6 @@ export const ACHIEVEMENTS: Achievement[] = [
   { code: 'fellowship', icon: '🤝', title: 'Братство', desc: 'Сыграть раунд вдвоём или больше' },
   { code: 'storyteller', icon: '📖', title: 'Сказочник', desc: 'Довести сказку до финала' },
   { code: 'saga', icon: '🏰', title: 'Сага', desc: '30 ходов мастера в одной игре' },
+  { code: 'daily', icon: '☀️', title: 'Испытание дня', desc: 'Довести испытание дня до финала' },
   { code: 'veteran', icon: '🎖️', title: 'Ветеран', desc: 'Герой прошёл 3 приключения' },
 ];

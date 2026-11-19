@@ -101,6 +101,18 @@ describe('соло', () => {
     expect(a.dashboard).toBeTruthy();
   });
 
+  it('испытание дня: сюжет и условие задаёт сервер', async () => {
+    const { dailyChallenge } = await import('../shared/daily');
+    const key = '2026-11-19';
+    const dc = dailyChallenge(key);
+    const id = await createSession({ ...rpgSetup(), setting: 'подмена', plotHook: 'подмена', daily: key });
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.setting).toBe(dc.scenario.setting);
+    expect(s.config.daily).toEqual({ key, modifier: dc.modifier.id });
+    expect(s.history[0].content).toContain('Поворот дня');
+    if (dc.modifier.doom) expect(lastDash(s).doomPool).toBeGreaterThanOrEqual(dc.modifier.doom);
+  });
+
   it('итоги партии попадают в архив', async () => {
     const id = await createSession(rpgSetup());
     await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
