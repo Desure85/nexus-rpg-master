@@ -2,7 +2,8 @@
 import crypto from "crypto";
 import type { Express } from "express";
 import type { DB } from "./db";
-import { normalizeWorldData, WORLD_GENRES, worldState, type World, type WorldDelta } from "../shared/world";
+import { normalizeWorldData, WORLD_GENRES, worldState, npcKey, type World, type WorldDelta, type NpcMemory } from "../shared/world";
+import { loadSession, lastDashboard } from "./store";
 
 import { STARTER_WORLDS } from "./starter-worlds";
 import { createBilling } from "./billing";
@@ -423,12 +424,78 @@ export function createWorlds(db: DB) {
     return res.changes ? { worldId: wid, status: mode === "auto" ? "canon" : "new" } : null;
   };
 
+  /* ---------- память NPC: кого игрок встречал в мире, что с ними и как они относятся к героям ---------- */
+  db.exec(`CREATE TABLE IF NOT EXISTS world_npc_memory (
+    world_id TEXT NOT NULL, user_id TEXT NOT NULL, key TEXT NOT NULL, name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', level INTEGER NOT NULL DEFAULT 0, hero TEXT NOT NULL DEFAULT '',
+    sessions INTEGER NOT NULL DEFAULT 1, last_session TEXT, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (world_id, user_id, key)
+  )`);
+  const NPC_MEMORY_LIMIT = 40;
+
+  /** После хода: NPC из кодекса и отношения героев попадают в память игрока о мире. Без вызова ИИ. */
+  const rememberSession = (sessionId: string) => {
+    const s = loadSession(db, sessionId);
+    const wid = s?.config.world?.id;
+    const uid = (db.prepare("SELECT created_by FROM sessions WHERE id = ?").get(sessionId) as any)?.created_by;
+    if (!s || !wid || !uid || s.config.tutorial) return 0;
+    const dash = lastDashboard(s.history);
+    const found = new Map<string, { name: string; description: string; status: string; level: number; hero: string }>();
+    for (const c of s.codex || []) {
+      if (c.type !== "npc" || !npcKey(c.name)) continue;
+      found.set(npcKey(c.name), { name: c.name.slice(0, 60), description: String(c.description || "").slice(0, 300), status: String(c.status || "").slice(0, 160), level: 0, hero: "" });
+    }
+    for (const ch of dash.characters || []) for (const r of ch.relationships || []) {
+      const k = npcKey(r.target);
+      if (!k || Number.isNaN(Number(r.level))) continue;
+      const lvl = Math.max(-10, Math.min(10, Math.round(Number(r.level))));
+      const cur = found.get(k) || { name: String(r.target).slice(0, 60), description: "", status: "", level: 0, hero: "" };
+      if (Math.abs(lvl) >= Math.abs(cur.level)) { cur.level = lvl; cur.hero = ch.name; }
+      if (r.status && !cur.status.includes(String(r.status))) cur.status = [cur.status, String(r.status)].filter(Boolean).join("; ").slice(0, 160);
+      found.set(k, cur);
+    }
+    if (!found.size) return 0;
+    const existing = db.prepare("SELECT key FROM world_npc_memory WHERE world_id = ? AND user_id = ?").all(wid, uid) as { key: string }[];
+    // «Борн» и «Борн Медяк» — один NPC: короткое имя прилипает к уже известному полному и наоборот
+    const match = (k: string) => existing.find(e => e.key === k || e.key.startsWith(k + " ") || k.startsWith(e.key + " "))?.key || k;
+    const up = db.prepare(`INSERT INTO world_npc_memory (world_id, user_id, key, name, description, status, level, hero, sessions, last_session) VALUES (?,?,?,?,?,?,?,?,1,?)
+      ON CONFLICT(world_id, user_id, key) DO UPDATE SET
+        name = CASE WHEN length(excluded.name) > length(name) THEN excluded.name ELSE name END,
+        description = CASE WHEN excluded.description != '' THEN excluded.description ELSE description END,
+        status = CASE WHEN excluded.status != '' THEN excluded.status ELSE status END,
+        level = CASE WHEN excluded.hero != '' THEN excluded.level ELSE level END,
+        hero = CASE WHEN excluded.hero != '' THEN excluded.hero ELSE hero END,
+        sessions = sessions + (CASE WHEN last_session IS NOT excluded.last_session THEN 1 ELSE 0 END),
+        last_session = excluded.last_session, updated_at = CURRENT_TIMESTAMP`);
+    db.transaction(() => {
+      for (const [k, n] of found) up.run(wid, uid, match(k), n.name, n.description, n.status, n.level, n.hero, sessionId);
+      db.prepare(`DELETE FROM world_npc_memory WHERE world_id = ? AND user_id = ? AND key NOT IN (
+        SELECT key FROM world_npc_memory WHERE world_id = ? AND user_id = ? ORDER BY updated_at DESC, abs(level) DESC LIMIT ${NPC_MEMORY_LIMIT})`).run(wid, uid, wid, uid);
+    })();
+    return found.size;
+  };
+
+  /** Знакомые NPC для новой партии: сначала сильные отношения, потом недавние. */
+  const npcMemoryFor = (worldId: string, userId: string, limit = 8): NpcMemory[] =>
+    (db.prepare(`SELECT name, description, status, level, hero, sessions, updated_at FROM world_npc_memory WHERE world_id = ? AND user_id = ?
+      ORDER BY (abs(level) >= 3) DESC, updated_at DESC, abs(level) DESC LIMIT ?`).all(worldId, userId, limit) as any[])
+      .map(r => ({ name: r.name, description: r.description, status: r.status, level: r.level, hero: r.hero, sessions: r.sessions, updatedAt: r.updated_at }));
+
   /** Канон хроники для промпта новой партии (последние события, кроме этой же партии). */
   const canonFor = (worldId: string, exceptSession?: string, limit = 6) =>
     db.prepare(`SELECT kind, title, summary, heroes, created_at FROM world_chronicle WHERE world_id = ? AND status = 'canon' AND (session_id IS NULL OR session_id != ?)
       ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(worldId, exceptSession || "", limit) as { kind: string; title: string; summary: string; heroes: string; created_at: string }[];
 
   const registerChronicle = (app: Express, requireUser: any) => {
+    // Память игрока о мире: кого он встречал. Только своё — у каждого игрока своя память.
+    app.get("/api/worlds/:wid/memory", requireUser, (req: any, res) => res.json(npcMemoryFor(req.params.wid, req.auth.user.id, NPC_MEMORY_LIMIT)));
+    app.delete("/api/worlds/:wid/memory", requireUser, (req: any, res) => {
+      const name = typeof req.query.name === "string" ? npcKey(req.query.name) : "";
+      const r = name ? db.prepare("DELETE FROM world_npc_memory WHERE world_id = ? AND user_id = ? AND key = ?").run(req.params.wid, req.auth.user.id, name)
+        : db.prepare("DELETE FROM world_npc_memory WHERE world_id = ? AND user_id = ?").run(req.params.wid, req.auth.user.id);
+      res.json({ removed: r.changes });
+    });
+
     // Автор: ручная правка состояния мира (фракции −3..3, шкалы 0..max)
     app.patch("/api/worlds/:wid/state", requireUser, (req: any, res) => {
       const w = db.prepare("SELECT data, state FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, req.auth.user.id) as any;
@@ -485,5 +552,5 @@ export function createWorlds(db: DB) {
     });
   };
 
-  return { register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, getForPlay, countPlay, checkSession, canonFor };
+  return { register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, getForPlay, countPlay, checkSession, canonFor, rememberSession, npcMemoryFor };
 }

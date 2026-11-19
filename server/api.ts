@@ -45,6 +45,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
         const added = worlds.checkSession(data.sessionId);
         if (added) broadcast(room, { type: "chronicle_added", sessionId: data.sessionId, status: added.status });
       } catch (e) { console.error("[chronicle]", e); }
+      try { worlds.rememberSession(data.sessionId); } catch (e) { console.error("[npc-memory]", e); }
     }
   };
   const billing = createBilling(db);
@@ -157,6 +158,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     if (setup.tutorial === true && mode === "short") config.tutorial = true;
     if (world) {
       config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data, ...(world.state ? { state: world.state } : {}) };
+      const mem = worlds.npcMemoryFor(world.id, req.auth.user!.id);
+      if (mem.length) config.world.npcMemory = mem;
       worlds.countPlay(world.id, req.auth.user!.id);
     }
     // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд

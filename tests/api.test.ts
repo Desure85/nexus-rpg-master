@@ -1073,6 +1073,37 @@ describe('миры', () => {
     expect((await gm().get(`/api/worlds/${w.id}`)).body).toMatchObject({ rating: 0, reviews: 0 });
   });
 
+  it('память NPC: знакомые из прошлой партии в мире попадают в новую, у каждого игрока своя', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const start = () => createSession({ worldId: 'starter-crossroads', scenarioId: 'karavan', style: 'balanced', characters: [{ name: 'Ласка', concept: 'Охранница', gender: 'Ж' }] });
+    const sysOf = (id: string) => JSON.parse((ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? AND request NOT LIKE '%дизайнер таблиц%' ORDER BY id DESC LIMIT 1").get(id) as any).request).system as string;
+    const a = await start();
+    await gm().post(`/api/sessions/${a}/turn`, { content: 'Ласка помогает Борну #npc:Борн Медяк:5 #npc:Сыч:-4' });
+    await ctx.engine.whenIdle(a);
+    await gm().post(`/api/sessions/${a}/turn`, { content: 'Ласка снова у Борна #npc:Борн:6' });
+    await ctx.engine.whenIdle(a);
+    const mem = (await gm().get('/api/worlds/starter-crossroads/memory')).body;
+    expect(mem.map((n: any) => [n.name, n.level, n.hero])).toEqual(expect.arrayContaining([['Борн Медяк', 6, 'Ласка'], ['Сыч', -4, 'Ласка']]));
+    expect(mem.length).toBe(2); // «Борн» прилип к «Борн Медяк»
+    expect(mem.find((n: any) => n.name === 'Борн Медяк')).toMatchObject({ status: 'жив; должен героине услугу', sessions: 1 });
+    // новая партия в том же мире помнит
+    const b = await start();
+    expect(sysOf(b)).toContain('Знакомые NPC');
+    expect(sysOf(b)).toMatch(/Борн Медяк — .*К героям \(Ласка\): друг \(\+6\)/);
+    expect(sysOf(b)).toMatch(/Сыч .*враждебен \(-4\)/);
+    await gm().post(`/api/sessions/${b}/turn`, { content: 'Ласка у Борна #npc:Борн Медяк:7' });
+    await ctx.engine.whenIdle(b);
+    expect((await gm().get('/api/worlds/starter-crossroads/memory')).body.find((n: any) => n.name === 'Борн Медяк')).toMatchObject({ level: 7, sessions: 2 });
+    // у другого игрока память пустая, обучение не пишет память
+    const other = await account('npc-other@example.com');
+    expect((await other.get('/api/worlds/starter-crossroads/memory')).body).toEqual([]);
+    // забыть одного и всех
+    expect((await gm().del('/api/worlds/starter-crossroads/memory?name=сыч')).body.removed).toBe(1);
+    expect((await gm().del('/api/worlds/starter-crossroads/memory')).body.removed).toBe(1);
+    const c = await start();
+    expect(sysOf(c)).not.toContain('Знакомые NPC');
+  });
+
   it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
     const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
     expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);
