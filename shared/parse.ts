@@ -384,3 +384,49 @@ export const normalizeBlocks = (raw: string): string => {
   }
   return t;
 };
+
+/**
+ * Убирает повторы в тексте мастера: модели иногда пересказывают абзац ещё раз (особенно после дозапроса оборванного ответа)
+ * или зацикливаются на фразе. Трогаем только прозу до служебных блоков; предложения с тегами ([DAMAGE] …) не выбрасываем;
+ * короткие реплики (меньше 5 слов, «— Да.») не считаем.
+ */
+export const dedupeNarrative = (text: string): { text: string; removed: number } => {
+  const m = text.match(new RegExp(`<(${BLOCK_TAGS})>`, 'i'));
+  const cut = m?.index ?? text.length;
+  const prose = text.slice(0, cut), rest = text.slice(cut);
+  const words = (t: string) => (t.toLowerCase().replace(/ё/g, 'е').match(/[а-яa-z0-9]{3,}/g) || []);
+  const seen: Set<string>[] = [];
+  let removed = 0;
+  const paras = prose.split(/(\n{2,})/);
+  const out = paras.map(p => {
+    if (/^\n+$/.test(p)) return p;
+    const sents = p.split(/(?<=[.!?…])(\s+)/);
+    const kept: string[] = [];
+    for (let i = 0; i < sents.length; i++) {
+      const sentence = sents[i];
+      if (/^\s+$/.test(sentence)) { kept.push(sentence); continue; }
+      const tags = sentence.match(/\[[A-Z][A-Z _]*:[^\]]*\]/g) || [];
+      const w = words(sentence.replace(/\[[A-Z][A-Z _]*:[^\]]*\]/g, ' '));
+      if (w.length >= 5) {
+        const set = new Set(w);
+        const dup = seen.some(prev => {
+          let inter = 0;
+          for (const x of set) if (prev.has(x)) inter++;
+          return inter / (set.size + prev.size - inter) >= 0.8;
+        });
+        if (dup) {
+          removed++;
+          if (tags.length) { kept.push(tags.join(' ')); continue; } // повтор с тегом: текст убираем, тег оставляем движку
+          if (/^\s+$/.test(kept[kept.length - 1] || '')) kept.pop();
+          continue;
+        }
+        seen.push(set);
+      }
+      kept.push(sentence);
+    }
+    return kept.join('');
+  });
+  if (!removed) return { text, removed: 0 };
+  const cleaned = out.join('').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trimEnd();
+  return { text: cleaned + (rest ? `\n\n${rest.replace(/^\s+/, '')}` : ''), removed };
+};

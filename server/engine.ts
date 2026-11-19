@@ -11,7 +11,7 @@ import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
-import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags, normalizeBlocks } from "../shared/parse";
+import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags, normalizeBlocks, dedupeNarrative } from "../shared/parse";
 import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
 import { capTurnChanges, BALANCE } from "../shared/balance";
 import { archetypeById, applyArchetype } from "../shared/archetypes";
@@ -389,6 +389,8 @@ export class Engine {
     try {
       aiContent = normalizeBlocks(await this.callLlm(s, cfg, request, isClarify ? "clarify" : "turn", stream.push));
       if (!isClarify && isTruncatedTurn(aiContent)) aiContent = normalizeBlocks(await this.repairTurn(s, cfg, request, aiContent));
+      const dd = dedupeNarrative(aiContent);
+      if (dd.removed) { console.warn(`[engine] ${sessionId}: убрано повторов в тексте мастера: ${dd.removed}`); aiContent = dd.text; }
     } finally {
       stream.end();
       this.busy.delete(sessionId);

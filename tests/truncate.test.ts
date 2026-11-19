@@ -57,3 +57,31 @@ describe('повтор при дописывании', () => {
     expect(dropRepeatedLead(head, ' Он тянется к огню.')).toBe('Он тянется к огню.');
   });
 });
+
+describe('повторы в тексте мастера', () => {
+  it('убирает пересказанный абзац и почти дословный повтор, не трогая теги, реплики и блоки', async () => {
+    const { dedupeNarrative } = await import('../shared/parse');
+    const text = `Ласка входит в таверну, где пахнет дымом и кислым пивом. Борн Медяк поднимается из-за стола и машет ей рукой.
+
+— Да.
+— Да.
+
+Ласка входит в таверну, где пахнет дымом и кислым пивом. Борн Медяк поднимается из-за стола и машет ей рукой! Все взгляды прикованы к новой гостье. [DAMAGE: Ласка -1] Ласка входит в таверну, где пахнет дымом и кислым пивом.
+
+<dashboard_json>{"atmosphere":"Ласка входит в таверну, где пахнет дымом и кислым пивом."}</dashboard_json>`;
+    const r = dedupeNarrative(text);
+    expect(r.removed).toBe(3);
+    expect(r.text.match(/Ласка входит в таверну/g)!.length).toBe(2); // одна в прозе, одна в JSON блока
+    expect(r.text).toContain('— Да.\n— Да.');
+    expect(r.text).toContain('Все взгляды прикованы к новой гостье.');
+    expect(r.text).toContain('[DAMAGE: Ласка -1]');
+    expect(r.text).toContain('<dashboard_json>{"atmosphere":"Ласка входит в таверну, где пахнет дымом и кислым пивом."}</dashboard_json>');
+    expect(dedupeNarrative(r.text).removed).toBe(0);
+  });
+
+  it('обычный текст без повторов не меняется', async () => {
+    const { dedupeNarrative } = await import('../shared/parse');
+    const text = 'Туман ползёт с реки, и фонари гаснут один за другим. Где-то за складами лает собака.\n\nСмотритель Ивар молча протягивает ключ. Его рука дрожит, а глаза смотрят мимо героини.\n\n<dashboard_json>{}</dashboard_json>';
+    expect(dedupeNarrative(text)).toEqual({ text, removed: 0 });
+  });
+});
