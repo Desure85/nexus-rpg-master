@@ -49,7 +49,7 @@ const download = (name: string, text: string) => {
 export interface WorldStart { worldId: string; scenarioId?: string; title?: string; mode: 'short' | 'campaign' | 'tale'; characters: WorldHero[] }
 
 /** Каталог миров: свои и общие; отсюда — редактор и запуск игры. */
-export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number; workspaceId?: string }> = ({ onClose, onPlay, openId, maxHeroes = 4, workspaceId }) => {
+export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number; workspaceId?: string; credits?: number; onCredits?: () => void }> = ({ onClose, onPlay, openId, maxHeroes = 4, workspaceId, credits, onCredits }) => {
   const [genOpen, setGenOpen] = useState(false);
   const [chron, setChron] = useState<World | null>(null);
   const [tab, setTab] = useState<'mine' | 'public'>('mine');
@@ -58,12 +58,13 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
   const [playing, setPlaying] = useState<World | null>(null);
   const [q, setQ] = useState('');
   const [genre, setGenre] = useState('');
-  const [sort, setSort] = useState<'popular' | 'likes' | 'new'>('popular');
+  const [sort, setSort] = useState<'popular' | 'likes' | 'new' | 'rating'>('popular');
+  const [price, setPrice] = useState<'' | 'free' | 'paid' | 'owned'>('');
   const load = (t = tab) => {
-    const qs = t === 'public' ? `&q=${encodeURIComponent(q.trim())}&genre=${genre}&sort=${sort}` : '';
+    const qs = t === 'public' ? `&q=${encodeURIComponent(q.trim())}&genre=${genre}&sort=${sort}&price=${price}` : '';
     api<World[]>(`/api/worlds?scope=${t}${qs}`).then(setList).catch(() => setList([]));
   };
-  useEffect(() => { setList(null); load(tab); }, [tab, genre, sort]);
+  useEffect(() => { setList(null); load(tab); }, [tab, genre, sort, price]);
   useEffect(() => { if (tab !== 'public') return; const t = setTimeout(() => load('public'), 300); return () => clearTimeout(t); }, [q]);
   const like = async (w: World) => {
     const r = await api<{ likes: number; liked: boolean }>(`/api/worlds/${w.id}/like`, { method: 'POST' });
@@ -116,8 +117,10 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
               <button onClick={() => setGenre('')} className={`${chip(!genre)} shrink-0`}>Все жанры</button>
               {WORLD_GENRES.map(g => <button key={g.id} onClick={() => setGenre(g.id)} className={`${chip(genre === g.id)} shrink-0`}>{g.name}</button>)}
             </div>
-            <div className="flex gap-3 text-[11px]">
-              {([['popular', 'Популярные'], ['likes', 'Любимые'], ['new', 'Новые']] as const).map(([id, n]) => <button key={id} onClick={() => setSort(id)} className={sort === id ? 'text-amber-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+              {([['popular', 'Популярные'], ['rating', 'По оценке'], ['likes', 'Любимые'], ['new', 'Новые']] as const).map(([id, n]) => <button key={id} onClick={() => setSort(id)} className={sort === id ? 'text-amber-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
+              <span className="text-white/15">|</span>
+              {([['', 'Любые'], ['free', 'Бесплатные'], ['paid', 'Платные'], ['owned', 'Купленные']] as const).map(([id, n]) => <button key={id} onClick={() => setPrice(id)} className={price === id ? 'text-emerald-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
             </div>
           </div>
         )}
@@ -141,22 +144,24 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                         <p className="text-white font-bold truncate">{w.title}{w.official && <span className="ml-2 align-middle text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">✦ от Nexus</span>}</p>
                         <p className="text-[11px] text-white/40">{WORLD_GENRES.find(g => g.id === w.genre)?.name}{w.author && !w.mine ? ` · ${w.author}` : ''} · сыграно {w.plays || 0}</p>
                       </div>
+                      <PriceTag w={w} />
                       {w.mine && <span className="text-[10px] text-white/40 flex items-center gap-1">{w.visibility === 'private' ? <Lock size={10} /> : w.visibility === 'link' ? <Link2 size={10} /> : <Globe2 size={10} />}{VIS_LABEL[w.visibility]}</span>}
                     </div>
                     {w.description && <p className="text-xs text-white/55 leading-snug line-clamp-3">{w.description}</p>}
-                    <p className="text-[11px] text-white/35">карточек {counts.cards} · мест {counts.locations} · сценариев {counts.scenarios}</p>
+                    <p className="text-[11px] text-white/35">{w.reviews ? <span className="text-amber-300/90">★ {w.rating} <span className="text-white/35">({w.reviews})</span> · </span> : null}карточек {counts.cards} · мест {counts.locations} · сценариев {counts.scenarios}</p>
+                    {w.mine && (w.price || 0) > 0 && <p className="text-[11px] text-emerald-300/80">Продано: {w.sales || 0} · заработано {w.earned || 0} кр.</p>}
                     {w.mine && w.hidden && <p className="text-[11px] text-red-300/80">Скрыт из каталога по жалобам — ждёт проверки модератора</p>}
                     <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
-                      <button onClick={async () => setPlaying(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-200 text-xs font-bold hover:bg-emerald-500/25"><Play size={12} /> Играть</button>
+                      <button onClick={async () => setPlaying(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-200 text-xs font-bold hover:bg-emerald-500/25">{w.locked ? <>🛒 Смотреть</> : <><Play size={12} /> Играть</>}</button>
                       {w.mine && <button onClick={async () => setEditing(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white"><Pencil size={12} /> Изменить</button>}
                       {w.mine && <button onClick={async () => { const f = await full(w); download(f.title, exportWorld(f)); }} className="p-1.5 rounded-lg bg-white/5 text-white/50 hover:text-white" aria-label="Скачать JSON" title="Скачать JSON"><Download size={13} /></button>}
-                      <button onClick={async () => { try { await api(`/api/worlds/${w.id}/copy`, { method: 'POST' }); setTab('mine'); load('mine'); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white" title="Копия в мои миры — можно переделать под себя"><Copy size={12} /> {w.mine ? 'Копия' : 'Ремикс'}</button>
+                      {!w.locked && <button onClick={async () => { try { await api(`/api/worlds/${w.id}/copy`, { method: 'POST' }); setTab('mine'); load('mine'); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white" title="Копия в мои миры — можно переделать под себя"><Copy size={12} /> {w.mine ? 'Копия' : 'Ремикс'}</button>}
                       <button onClick={() => setChron(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.chronicleNew ? 'text-amber-200 bg-amber-500/15' : 'text-white/50 bg-white/5 hover:text-white'}`} title="Хроника мира: что случилось в партиях">
                         <ScrollText size={12} /> {w.chronicle || 0}{w.chronicleNew ? ` +${w.chronicleNew}` : ''}
                       </button>
                       <button onClick={() => like(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.liked ? 'text-rose-300 bg-rose-500/10' : 'text-white/50 bg-white/5 hover:text-white'}`} aria-label="Нравится"><Heart size={12} fill={w.liked ? 'currentColor' : 'none'} /> {w.likes || 0}</button>
                       {!w.mine && <button onClick={() => report(w)} className="ml-auto p-1.5 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={13} /></button>}
-                      {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
+                      {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { try { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось удалить'); } } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
                     </div>
                   </div>
                 );
@@ -168,7 +173,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
       {chron && <ChronicleModal world={chron} onClose={() => { setChron(null); load(); }} />}
       {genOpen && <WorldGenerator workspaceId={workspaceId} onClose={() => setGenOpen(false)} onDraft={d => { setGenOpen(false); setEditing({ ...newWorld(), ...d }); }} />}
       {editing && <WorldEditor world={editing} onClose={() => setEditing(null)} onSaved={w => { setEditing(null); setTab('mine'); load('mine'); if (!editing.id) setPlaying(w); }} />}
-      {playing && <WorldPlay world={playing} maxHeroes={maxHeroes} onClose={() => setPlaying(null)} onPlay={s => { setPlaying(null); onPlay(s); }} />}
+      {playing && <WorldPlay world={playing} maxHeroes={maxHeroes} workspaceId={workspaceId} credits={credits} onBought={w => { setPlaying(w); onCredits?.(); load(); }} onClose={() => setPlaying(null)} onPlay={s => { setPlaying(null); onPlay(s); }} />}
     </div>,
     document.body,
   );
@@ -217,7 +222,21 @@ const WorldGenerator: React.FC<{ workspaceId?: string; onClose: () => void; onDr
 
 /* ------------------------------------------------------------------ запуск ------------------------------------------------------------------ */
 
-const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void; onPlay: (s: WorldStart) => void }> = ({ world, maxHeroes, onClose, onPlay }) => {
+const PriceTag: React.FC<{ w: World }> = ({ w }) => !w.price ? null : (
+  <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full border ${w.owned && !w.mine ? 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10' : 'text-amber-200 border-amber-400/30 bg-amber-400/10'}`}>
+    {w.owned && !w.mine ? '✓ куплен' : `💎 ${w.price}`}
+  </span>
+);
+
+const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: string; credits?: number; onBought: (w: World) => void; onClose: () => void; onPlay: (s: WorldStart) => void }> = ({ world, maxHeroes, workspaceId, credits, onBought, onClose, onPlay }) => {
+  const [buying, setBuying] = useState(false);
+  const buy = async () => {
+    if (!(await customConfirm(`Купить мир «${world.title}» за ${world.price} кредитов пространства? Доступ останется навсегда, ${Math.round(0.7 * 100)}% получит автор.`))) return;
+    setBuying(true);
+    try { onBought(await api<World>(`/api/worlds/${world.id}/buy`, { body: { workspaceId } })); }
+    catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось купить'); }
+    finally { setBuying(false); }
+  };
   const d = world.data;
   const [scenarioId, setScenarioId] = useState<string>(d.scenarios[0]?.id || '');
   const sc = d.scenarios.find(s => s.id === scenarioId);
@@ -238,7 +257,9 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
           <div className="flex-1 min-w-0">
             <h3 className="text-white font-bold text-lg leading-tight">{world.title}</h3>
             <p className="text-xs text-white/50 mt-1 leading-snug">{world.description || d.setting}</p>
+            <p className="text-[11px] text-white/40 mt-1">{world.author && !world.mine ? `${world.author} · ` : ''}{world.reviews ? <span className="text-amber-300/90">★ {world.rating} ({world.reviews}) · </span> : ''}сыграно {world.plays || 0}</p>
           </div>
+          <PriceTag w={world} />
           <button onClick={onClose} className="p-1.5 text-white/40 hover:text-white" aria-label="Закрыть"><X size={18} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
@@ -256,7 +277,13 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
             )}
           </div>
           <ChroniclePreview worldId={world.id} />
-          <div>
+          {world.locked && (
+            <div className="p-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] text-xs text-white/65 leading-relaxed">
+              Это платный мир. До покупки видны описание и сюжеты; лор ({(d as any).counts?.cards ?? 0} карточек), бестиарий и предметы откроются после покупки. Купленный мир ваш навсегда: играйте сколько угодно и делайте ремиксы для себя.
+            </div>
+          )}
+          <WorldReviews world={world} onChange={onBought} />
+          {!world.locked && <div>
             <span className={label}>Герои (до {maxHeroes})</span>
             <div className="flex flex-wrap gap-1.5">
               {pool.map(h => (
@@ -268,16 +295,71 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
               <input className={input} placeholder="Кто он такой" value={own.concept} onChange={e => setOwn({ ...own, concept: e.target.value })} maxLength={200} />
               <button onClick={() => setOwn({ ...own, gender: own.gender === 'М' ? 'Ж' : 'М' })} className="px-3 rounded-lg bg-white/5 text-white/70 text-sm">{own.gender}</button>
             </div>
-          </div>
+          </div>}
         </div>
         <div className="p-4 border-t border-white/10 flex gap-2 shrink-0">
           {world.visibility !== 'private' && <button onClick={copyLink} className="px-3 py-3 rounded-xl bg-white/5 text-white/70 text-sm flex items-center gap-1.5"><Link2 size={14} /> Ссылка</button>}
-          <button
+          {world.locked ? (
+            <button onClick={buy} disabled={buying || (credits !== undefined && credits < (world.price || 0))} data-testid="buy-world" className="flex-1 py-3 rounded-xl bg-amber-400 text-black font-bold disabled:opacity-40 flex flex-col items-center justify-center leading-tight">
+              <span>{buying ? 'Покупаем…' : `Купить за ${world.price} кредитов`}</span>
+              {credits !== undefined && <span className="text-[10px] font-semibold text-black/60">{credits < (world.price || 0) ? `на балансе ${credits} — пополните в пространстве` : `на балансе ${credits}`}</span>}
+            </button>
+          ) : <button
             disabled={!heroes.length}
             onClick={() => onPlay({ worldId: world.id, scenarioId: sc?.id, mode: sc?.mode || 'short', title: sc ? `${world.title}: ${sc.title}` : world.title, characters: heroes })}
             className="flex-1 py-3 rounded-xl bg-amber-400 text-black font-bold disabled:opacity-40 flex items-center justify-center gap-2"
-          ><Play size={16} /> Играть{heroes.length ? ` (${heroes.map(h => h.name).join(', ')})` : ''}</button>
+          ><Play size={16} /> Играть{heroes.length ? ` (${heroes.map(h => h.name).join(', ')})` : ''}</button>}
         </div>
+      </div>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ отзывы ------------------------------------------------------------------ */
+
+interface Review { userId: string; author: string; rating: number; text: string; updated_at: string; bought: boolean; mine: boolean }
+
+const Stars: React.FC<{ value: number; onPick?: (v: number) => void }> = ({ value, onPick }) => (
+  <span className="inline-flex gap-0.5">
+    {[1, 2, 3, 4, 5].map(i => onPick
+      ? <button key={i} type="button" onClick={() => onPick(i)} aria-label={`${i} из 5`} className={`text-lg leading-none ${i <= value ? 'text-amber-300' : 'text-white/20 hover:text-white/50'}`}>★</button>
+      : <span key={i} className={i <= value ? 'text-amber-300' : 'text-white/20'}>★</span>)}
+  </span>
+);
+
+const WorldReviews: React.FC<{ world: World; onChange: (w: World) => void }> = ({ world, onChange }) => {
+  const [list, setList] = useState<Review[] | null>(null);
+  const [rating, setRating] = useState(world.myRating || 0);
+  const [text, setText] = useState('');
+  const [all, setAll] = useState(false);
+  const load = () => api<Review[]>(`/api/worlds/${world.id}/reviews`).then(r => { setList(r); const m = r.find(x => x.mine); if (m) { setRating(m.rating); setText(m.text); } }).catch(() => setList([]));
+  useEffect(() => { load(); }, [world.id]);
+  const canReview = !world.mine && world.played;
+  const save = async () => {
+    try { onChange(await api<World>(`/api/worlds/${world.id}/review`, { method: 'PUT', body: { rating, text } })); load(); }
+    catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось сохранить отзыв'); }
+  };
+  if (!list) return null;
+  if (!list.length && !canReview) return null;
+  const shown = all ? list : list.slice(0, 3);
+  return (
+    <div>
+      <span className={label}>Отзывы{world.reviews ? ` · ★ ${world.rating} из 5` : ''}</span>
+      {canReview && (
+        <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2 mb-2">
+          <div className="flex items-center justify-between"><span className="text-xs text-white/60">{world.myRating ? 'Ваш отзыв' : 'Вы играли в этом мире — оцените'}</span><Stars value={rating} onPick={setRating} /></div>
+          <textarea className={`${input} min-h-[60px] text-xs`} maxLength={500} value={text} onChange={e => setText(e.target.value)} placeholder="Что понравилось, чего не хватило (необязательно)" />
+          <button onClick={save} disabled={!rating} className="px-3 py-1.5 rounded-lg bg-amber-400 text-black text-xs font-bold disabled:opacity-40">{world.myRating ? 'Обновить' : 'Отправить'}</button>
+        </div>
+      )}
+      <div className="space-y-2">
+        {shown.filter(r => !(r.mine && canReview)).map(r => (
+          <div key={r.userId} className="text-xs">
+            <p className="text-white/70"><Stars value={r.rating} /> <b className="text-white/80 ml-1">{r.author || 'Игрок'}</b>{r.bought && <span className="text-emerald-300/70"> · купил</span>} <span className="text-white/30">· {fmtDate(r.updated_at)}</span></p>
+            {r.text && <p className="text-white/55 mt-0.5 leading-snug">{r.text}</p>}
+          </div>
+        ))}
+        {list.length > 3 && !all && <button onClick={() => setAll(true)} className="text-[11px] text-white/45 hover:text-white">Все отзывы ({list.length})</button>}
       </div>
     </div>
   );
@@ -297,7 +379,7 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
     if (!w.title.trim()) { setTab('passport'); return customAlert('Дайте миру название'); }
     setSaving(true);
     try {
-      const body = { title: w.title, icon: w.icon, genre: w.genre, description: w.description, visibility: w.visibility, data: normalizeWorldData(w.data) };
+      const body = { title: w.title, icon: w.icon, genre: w.genre, description: w.description, visibility: w.visibility, price: w.price || 0, data: normalizeWorldData(w.data) };
       const saved = w.id ? await api<World>(`/api/worlds/${w.id}`, { method: 'PATCH', body }) : await api<World>('/api/worlds', { body });
       onSaved(saved);
     } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось сохранить'); } finally { setSaving(false); }
@@ -337,6 +419,16 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
               <div className="flex flex-wrap gap-1.5">{(['private', 'link', 'public'] as const).map(v => <button key={v} onClick={() => setW({ ...w, visibility: v })} className={chip(w.visibility === v)}>{VIS_LABEL[v]}</button>)}</div>
               <p className="text-[11px] text-white/35 mt-1.5">{w.visibility === 'private' ? 'Мир видите только вы.' : w.visibility === 'link' ? 'Играть может любой, у кого есть ссылка.' : 'Мир виден всем в каталоге, его можно сыграть и скопировать.'} Начатые игры не меняются, когда вы правите мир.{w.visibility === 'public' ? ' Публикуйте только своё: миры по чужим книгам, играм и фильмам без разрешения правообладателя скроют по жалобам.' : ''}</p>
             </div>
+            {w.paidCopy ? <p className="text-[11px] text-amber-200/70">Это копия купленного мира — она только для вас: публиковать и продавать её нельзя.</p> : w.visibility !== 'private' && (
+              <div>
+                <span className={label}>Цена в кредитах</span>
+                <div className="flex items-center gap-2">
+                  <input className={`${input} w-28`} type="number" min={0} max={5000} step={10} value={w.price || 0} onChange={e => setW({ ...w, price: Math.max(0, Math.min(5000, Math.round(Number(e.target.value) || 0))) })} />
+                  <span className="text-[11px] text-white/45">{w.price ? `вы получите ${Math.floor((w.price || 0) * 0.7)} кр. с каждой покупки (70%)` : 'бесплатно — играть может каждый'}</span>
+                </div>
+                <p className="text-[11px] text-white/35 mt-1.5">До покупки игроки видят описание и сюжеты, а лор, бестиарий и предметы — только после. Заработанные кредиты приходят в ваше личное пространство и тратятся на игру с ИИ.</p>
+              </div>
+            )}
           </>}
 
           {tab === 'lore' && <>

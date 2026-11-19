@@ -406,11 +406,57 @@ async function learn(browser) {
   await ctx.close();
 }
 
+async function market(browser) {
+  log('\n== Маркетплейс миров ==');
+  // автор публикует платный мир
+  const actx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const author = await actx.newPage();
+  await register(author);
+  const w = (await api(author, '/api/worlds', { method: 'POST', body: JSON.stringify({
+    title: 'Соляные Копи', icon: '🧂', genre: 'fantasy', description: 'Подземный город соледобытчиков, где соль хранит память умерших.', visibility: 'public', price: 120,
+    data: { setting: 'Город в соляных копях под горой.', core: 'Соль помнит. Кто лизнёт стену — увидит чужое воспоминание.', cards: [{ id: 'c1', kind: 'npc', name: 'Мастер Грюн', keys: ['грюн'], text: 'Старшина копей, скрывает обвал.' }],
+      locations: [{ id: 'gate', name: 'Ворота копей', type: 'city', services: ['market', 'tavern'] }], scenarios: [{ id: 'obval', title: 'Обвал в седьмой штольне', mode: 'short', hook: 'В седьмой штольне обвал, и из соли слышны голоса.', startLocationId: 'gate', heroes: [{ name: 'Тара', concept: 'Соледобытчица', gender: 'Ж' }] }], heroes: [] },
+  }) })).body;
+  check('маркетплейс: платный мир опубликован', w?.price === 120, JSON.stringify(w).slice(0, 120));
+  // покупатель
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  await register(page);
+  await page.getByText('Миры', { exact: true }).first().click().catch(async () => page.locator('button:has-text("🌍")').first().click());
+  await page.getByText('Каталог', { exact: true }).click();
+  await page.getByText('Платные', { exact: true }).click();
+  await page.waitForTimeout(800);
+  const card = page.locator('div.rounded-2xl', { hasText: 'Соляные Копи' }).first();
+  check('маркетплейс: мир в «Платных» с ценой', await card.count() > 0 && (await card.textContent()).includes('💎 120'));
+  await card.getByText('Смотреть').click();
+  await page.waitForTimeout(800);
+  check('маркетплейс: витрина — сюжеты видны', await page.getByText('Обвал в седьмой штольне').count() > 0);
+  await snap(page, 'market_preview');
+  await page.getByTestId('buy-world').click();
+  await page.getByText('Да', { exact: true }).click();
+  await page.waitForTimeout(1200);
+  const after = (await api(page, `/api/worlds/${w.id}`)).body;
+  check('маркетплейс: куплен, лор открыт', after?.owned === true && !after.locked && after.data.cards.length === 1);
+  const me = (await api(page, '/api/auth/me')).body;
+  check('маркетплейс: списано 120', me.workspaces[0].credits === 100000 - 120 || me.workspaces[0].credits < 100000, String(me.workspaces[0].credits));
+  const ame = (await api(author, '/api/worlds?scope=mine')).body.find(x => x.id === w.id);
+  check('маркетплейс: автору 70%', ame?.sales === 1 && ame?.earned === 84, JSON.stringify({ sales: ame?.sales, earned: ame?.earned }));
+  await snap(page, 'market_bought');
+  await page.getByText('Играть (', { exact: false }).click();
+  await page.waitForTimeout(1500);
+  const sid = (await api(page, `/api/workspaces/${me.workspaces[0].id}/sessions`)).body[0]?.id;
+  await waitTurn(page, sid, 1);
+  // отзыв после игры
+  const rv = await api(page, `/api/worlds/${w.id}/review`, { method: 'PUT', body: JSON.stringify({ rating: 5, text: 'Солёно и жутко' }) });
+  check('маркетплейс: отзыв после игры', rv.body?.rating === 5 && rv.body?.reviews === 1, JSON.stringify(rv.body).slice(0, 100));
+  await ctx.close(); await actx.close();
+}
+
 const main = async () => {
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-  const only = (process.env.ONLY || 'solo,mp,tale,world,learn').split(',');
+  const only = (process.env.ONLY || 'solo,mp,tale,world,learn,market').split(',');
   const t0 = Date.now();
-  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale], ['world', worldPlay], ['learn', learn]]) {
+  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale], ['world', worldPlay], ['learn', learn], ['market', market]]) {
     if (!only.includes(id)) continue;
     try { await fn(browser); } catch (e) { check(`${id}: сценарий прошёл без ошибок`, false, String(e?.message || e).slice(0, 300)); }
   }

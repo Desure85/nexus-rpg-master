@@ -1795,7 +1795,7 @@ export default function App() {
       </main>
 
       {hallOpen && <HallModal onClose={() => setHallOpen(false)} />}
-      {worldsOpen && <WorldsModal openId={worldsOpen.openId} workspaceId={workspace?.id} maxHeroes={workspace?.limits?.maxHeroes || 4} onClose={() => setWorldsOpen(null)} onPlay={startWorld} />}
+      {worldsOpen && <WorldsModal openId={worldsOpen.openId} workspaceId={workspace?.id} credits={workspace?.credits} onCredits={loadMe} maxHeroes={workspace?.limits?.maxHeroes || 4} onClose={() => setWorldsOpen(null)} onPlay={startWorld} />}
       {isSettingsOpen && (
         <SettingsModal
           settings={effectiveSettings}
