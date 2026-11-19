@@ -38,6 +38,7 @@ export class Engine {
 
   readonly oracle: OracleStore;
   private oracleJobs = new Set<string>();
+  private oraclePromises = new Set<Promise<void>>();
   private oracleAttempt = new Map<string, number>();
 
   constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing) {
@@ -58,7 +59,8 @@ export class Engine {
     this.oracleJobs.add(key);
     this.oracleAttempt.set(sessionId, Date.now());
     this.broadcast(sessionId, { type: "oracle", sessionId, status: "generating", mode });
-    this.withLock(sessionId, async () => {
+    // Оракул пишет только в свои таблицы — не держим очередь ходов, пока медленная модель генерирует (до минут)
+    const job = (async () => {
       try {
         const changed = await this.generateOracle(sessionId, mode, opts);
         this.broadcast(sessionId, { type: "oracle", sessionId, status: "ready", mode, changed });
@@ -67,8 +69,10 @@ export class Engine {
         this.broadcast(sessionId, { type: "oracle", sessionId, status: "error", mode, error: e?.message || "Ошибка генерации" });
       } finally {
         this.oracleJobs.delete(key);
+        this.oraclePromises.delete(job);
       }
-    });
+    })();
+    this.oraclePromises.add(job);
     return true;
   }
 
@@ -140,7 +144,7 @@ export class Engine {
   async whenIdle(sessionId?: string) {
     for (;;) {
       const chains = sessionId ? [this.chains.get(sessionId)] : [...this.chains.values()];
-      const live = chains.filter(Boolean);
+      const live: Promise<unknown>[] = [...chains.filter(Boolean) as Promise<unknown>[], ...this.oraclePromises];
       if (!live.length) return;
       await Promise.all(live);
     }
@@ -378,6 +382,11 @@ export class Engine {
     const dailyMod = !isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.daily ? DAILY_MODIFIERS.find(m => m.id === s.config.daily!.modifier) : undefined;
     if (!isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.heroes?.length) {
       const genre = genreOf(`${s.setting} ${s.name}`);
+      // модель могла не прислать героя (или весь дашборд) — заводим по данным настройки
+      const have = new Set((dashboard.characters || []).map(c => c.name));
+      for (const h of s.config.heroes) {
+        if (!have.has(h.name)) (dashboard.characters ||= []).push({ name: h.name, hp: "10/10", stress: 0, tokens: 1, gold: 10, xp: 0, condition: "", goal: h.concept || "", inventory: [], equipment: [], abilities: [] } as any);
+      }
       dashboard.characters = (dashboard.characters || []).map(c => {
         const h = s.config.heroes!.find(x => x.name === c.name);
         if (!h) return c;
@@ -388,6 +397,7 @@ export class Engine {
         return out;
       });
     }
+    if (!isClarify) ensurePlayable(dashboard, s.setting);
     if (dailyMod) {
       if (dailyMod.hero) dashboard.characters = (dashboard.characters || []).map(c => dailyMod.hero!(c) as any);
       if (dailyMod.doom) dashboard.doomPool = Math.max(Number(dashboard.doomPool) || 0, dailyMod.doom);
@@ -710,3 +720,22 @@ export const cutToSentence = (text: string) => {
   const cut = t.search(/[^.!?…»"\]]*$/);
   return cut > t.length * 0.5 ? t.slice(0, cut).trimEnd() : t;
 };
+
+const FALLBACK_ACTIONS = [
+  { category: "Профильный", name: "Действовать по призванию", description: "Опереться на то, в чём герой силён" },
+  { category: "Рискованный", name: "Пойти напролом", description: "Быстро и смело — но последствия могут ударить" },
+  { category: "Синергия", name: "Разузнать подробнее", description: "Расспросить, осмотреться, найти зацепку" },
+];
+
+/** Минимум для игры: у сцены есть место, у каждого активного героя — варианты действий. */
+export function ensurePlayable(d: DashboardData, setting: string) {
+  if (!(d.locations || []).length) {
+    const name = (setting.split(/[.,;\n]/)[1] || setting.split(/[.,;\n]/)[0] || "Место действия").trim().slice(0, 40) || "Место действия";
+    d.locations = [{ id: "start", name, description: "", status: "visited", connections: [] } as any];
+  }
+  if (!d.currentLocationId || !(d.locations || []).some(l => l.id === d.currentLocationId)) d.currentLocationId = d.locations![0].id;
+  for (const c of d.characters || []) {
+    if (c.status === "base" || /повержен|мёртв|мертв/i.test(String(c.status || ""))) continue;
+    if (!(c.actions || []).length) c.actions = FALLBACK_ACTIONS.map(a => ({ ...a }));
+  }
+}

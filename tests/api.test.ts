@@ -113,6 +113,18 @@ describe('соло', () => {
     if (dc.modifier.doom) expect(lastDash(s).doomPool).toBeGreaterThanOrEqual(dc.modifier.doom);
   });
 
+  it('модель не прислала дашборд на старте — герой, место и варианты всё равно есть', async () => {
+    const id = await createSession({ ...rpgSetup(), plotHook: 'Тихий вечер #nodash' });
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const d = lastDash(s);
+    const hero = d.characters.find((c: any) => c.name === 'Арн');
+    expect(hero?.hp).toMatch(/\d+\/\d+/);
+    expect(hero.actions.length).toBeGreaterThan(0);
+    expect(d.locations.some((l: any) => l.id === d.currentLocationId)).toBe(true);
+    const state = (await gm().get(`/api/sessions/${id}/state`)).body;
+    expect(state.characters['Арн']).toBeTruthy();
+  });
+
   it('итоги партии попадают в архив', async () => {
     const id = await createSession(rpgSetup());
     await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
