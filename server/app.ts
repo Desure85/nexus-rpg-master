@@ -38,7 +38,8 @@ export async function createApp(opts: AppOptions = {}) {
     for (const c of clients) if (c.readyState === WebSocket.OPEN) c.send(msg);
   };
 
-  const { engine, billing, tenancy } = buildApi(app, { db, broadcast });
+  const { engine, billing, tenancy, ops } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
+  ops.start();
 
   wss.on("connection", ws => {
     let room: string | null = null;
@@ -90,6 +91,7 @@ export async function createApp(opts: AppOptions = {}) {
 
   const close = async () => {
     clearInterval(heartbeat);
+    ops.stop();
     for (const ws of wss.clients) ws.terminate();
     await new Promise<void>(r => wss.close(() => r()));
     await new Promise<void>(r => (server.listening ? server.close(() => r()) : r()));
@@ -97,5 +99,5 @@ export async function createApp(opts: AppOptions = {}) {
     db.close();
   };
 
-  return { app, server, wss, db, engine, billing, tenancy, close };
+  return { app, server, wss, db, engine, billing, tenancy, ops, close };
 }
