@@ -261,11 +261,57 @@ async function tale(browser) {
   await ctx.close();
 }
 
+async function worldPlay(browser) {
+  log('\n== Мир автора ==');
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage();
+  await register(page);
+  const body = {
+    title: 'Туманные Острова', icon: '🌫️', genre: 'horror', description: 'Архипелаг, где туман крадёт имена.', visibility: 'link',
+    data: {
+      setting: 'Северный архипелаг: маяки, рыбацкие деревни, контрабандисты. Туман живой.',
+      core: 'Туман живой и забирает имена у тех, кто остаётся в нём после заката. Маяки — единственная защита. Безымянные бродят по отмелям и зовут родных.',
+      tone: 'Меланхолично и таинственно, без жестоких сцен.',
+      cards: [
+        { kind: 'npc', name: 'Смотритель Ивар', keys: ['смотритель', 'маяк'], text: 'Старик с повязкой на глазу, хранит последний огонь Северного маяка. Боится темноты, говорит загадками, всегда носит связку медных ключей.' },
+        { kind: 'faction', name: 'Гильдия ныряльщиков', keys: ['ныряльщик', 'гильдия'], text: 'Достают со дна утраченные имена и продают их.' },
+      ],
+      locations: [
+        { id: 'port', name: 'Порт Сольвей', description: 'Причалы и рыбный рынок', services: ['market', 'tavern'], connections: ['lighthouse'] },
+        { id: 'lighthouse', name: 'Северный маяк', description: 'Старая башня на скале' },
+      ],
+      scenarios: [{ id: 'dark', title: 'Погасший маяк', hook: 'Этой ночью Северный маяк погас впервые за сто лет, и туман двинулся к порту. Смотритель Ивар не отвечает.', mode: 'short', startLocationId: 'port' }],
+      heroes: [{ name: 'Рина', concept: 'Лоцман, знает все отмели', gender: 'Ж', archetype: 'scout' }],
+    },
+  };
+  const w = (await api(page, '/api/worlds', { method: 'POST', body: JSON.stringify(body) })).body;
+  check('мир создан', !!w?.id);
+  await page.getByText('Миры', { exact: true }).first().click();
+  await page.getByRole('button', { name: 'Играть', exact: true }).first().click();
+  await snap(page, 'world_play_dialog');
+  await page.getByRole('button', { name: /^Играть \(/ }).click();
+  await page.waitForTimeout(1500);
+  const me = (await api(page, '/api/auth/me')).body;
+  const sid = (await api(page, `/api/workspaces/${me.workspaces[0].id}/sessions`)).body?.[0]?.id;
+  check('мир: партия создана', !!sid);
+  let { s, ms } = await waitTurn(page, sid, 1);
+  recordTurn('Мир: старт', s, ms);
+  check('мир: стартовое место из сценария', lastDash(s)?.currentLocationId === 'port', lastDash(s)?.currentLocationId);
+  check('мир: лор скрыт от клиента', !JSON.stringify(s.config || {}).includes('Безымянные'));
+  ({ s, ms } = await gmTurn(page, sid, 'Рина идёт к маяку и зовёт смотрителя', 2));
+  recordTurn('Мир: ход про смотрителя', s, ms);
+  const txt = lastAssistant(s)?.content || '';
+  // тестовая модель лор не читает — проверка только на живом ИИ
+  if (process.env.LIVE) check('мир: мастер опирается на карточку (Ивар/ключи/повязка)', /Ивар|ключ|повязк/i.test(txt), txt.slice(0, 120));
+  await snap(page, 'world_turn');
+  await ctx.close();
+}
+
 const main = async () => {
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
-  const only = (process.env.ONLY || 'solo,mp,tale').split(',');
+  const only = (process.env.ONLY || 'solo,mp,tale,world').split(',');
   const t0 = Date.now();
-  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale]]) {
+  for (const [id, fn] of [['solo', solo], ['mp', multiplayer], ['tale', tale], ['world', worldPlay]]) {
     if (!only.includes(id)) continue;
     try { await fn(browser); } catch (e) { check(`${id}: сценарий прошёл без ошибок`, false, String(e?.message || e).slice(0, 300)); }
   }

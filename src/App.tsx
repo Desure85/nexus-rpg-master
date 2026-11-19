@@ -21,6 +21,7 @@ import { OraclePanel } from './components/OraclePanel';
 import { RichParagraphs, UserContent, renderInline } from './components/RichText';
 import { GuideButton } from './components/GuideModal';
 import { HallModal } from './components/HallModal';
+import { WorldsModal, type WorldStart } from './components/WorldsModal';
 import { ACHIEVEMENTS } from '../shared/achievements';
 import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
@@ -53,6 +54,13 @@ const ResetRoute: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 };
 
 /** Приглашение мастера в пространство: /invite/:token */
+/** Ссылка на мир: открываем каталог миров с этим миром и уходим на главную. */
+const WorldLinkRoute: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen }) => {
+  const { worldId } = useParams();
+  useEffect(() => { if (worldId) onOpen(worldId); }, [worldId]);
+  return <Navigate to="/" replace />;
+};
+
 const InviteRoute: React.FC<{ user: CurrentUser | null; registration: ServerConfig['registration']; onAccepted: (wid?: string) => void }> = ({ user, registration, onAccepted }) => {
   const { token = '' } = useParams();
   const navigate = useNavigate();
@@ -136,6 +144,7 @@ export default function App() {
   currentIdRef.current = currentSession?.id || null;
 
   const [hallOpen, setHallOpen] = useState(false);
+  const [worldsOpen, setWorldsOpen] = useState<{ openId?: string } | null>(null);
   const isTale = currentSession?.mode === 'tale';
   const dashBefore = useMemo(() => dashboardsBefore(currentSession?.history || []), [currentSession?.history]);
   const taleFinished = !!currentSession?.config?.tale?.finished;
@@ -564,6 +573,20 @@ export default function App() {
     } as SetupData);
   };
 
+  const startWorld = (w: WorldStart) => {
+    setWorldsOpen(null);
+    return handleStartAdventure({
+      title: w.title,
+      setting: '',
+      plotHook: '',
+      style: w.mode === 'tale' ? 'fairytale' : 'balanced',
+      mode: w.mode,
+      worldId: w.worldId,
+      scenarioId: w.scenarioId,
+      characters: w.characters.map((h, k) => ({ id: String(k), name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype })),
+    } as SetupData);
+  };
+
   const handleStartAdventure = async (setup: SetupData) => {
     try {
       const created = await api<GameSession>('/api/sessions', {
@@ -875,6 +898,7 @@ export default function App() {
       <Route path="/character/:sessionId/:charName" element={<><CharacterView /><PromptModal /></>} />
       <Route path="/invite/:token" element={authState === 'loading' ? gate(null) : <InviteRoute user={user} registration={serverConfig?.registration || 'open'} onAccepted={(wid) => loadMe(wid)} />} />
       <Route path="/reset/:token" element={<ResetRoute onDone={() => loadMe()} />} />
+      <Route path="/world/:worldId" element={gate(<WorldLinkRoute onOpen={id => setWorldsOpen({ openId: id })} />)} />
       <Route path="*" element={<Navigate to="/" replace />} />
       <Route path="/" element={gate(
         <div className="flex h-screen h-[100dvh] bg-[#0a0502] overflow-hidden relative">
@@ -1667,6 +1691,13 @@ export default function App() {
                 <p className="text-white/40 text-xs mt-2">Интерактивная сказка с выборами — для детей или взрослых. В конце получается книга.</p>
               </button>
             </div>
+            <button onClick={() => setWorldsOpen({})} className="w-full max-w-4xl mx-4 px-5 py-4 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-left flex items-center gap-4 transition-all">
+              <span className="text-3xl">🌍</span>
+              <span className="min-w-0">
+                <span className="block text-white font-bold">Миры</span>
+                <span className="block text-xs text-white/45">Создайте свой мир с лором, местами и завязками — играйте сами или поделитесь ссылкой. Или сыграйте в мир из каталога.</span>
+              </span>
+            </button>
             <div className="w-full max-w-4xl px-4 text-left space-y-3">
               <h3 className="text-[10px] uppercase tracking-widest font-bold text-white/40">Готовые сценарии</h3>
               <div className="flex gap-3 overflow-x-auto pb-2 snap-x">
@@ -1689,6 +1720,7 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-6">
+              <button onClick={() => setWorldsOpen({})} className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2">🌍 Миры</button>
               <button onClick={() => setHallOpen(true)} className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2">🎖️ Зал героев</button>
               <GuideButton audience="gm" className="text-xs text-amber-300/80 hover:text-amber-200 flex items-center gap-2" />
               <button onClick={() => setIsSettingsOpen(true)} className="text-xs text-white/40 hover:text-white flex items-center gap-2">
@@ -1700,6 +1732,7 @@ export default function App() {
       </main>
 
       {hallOpen && <HallModal onClose={() => setHallOpen(false)} />}
+      {worldsOpen && <WorldsModal openId={worldsOpen.openId} maxHeroes={workspace?.limits?.maxHeroes || 4} onClose={() => setWorldsOpen(null)} onPlay={startWorld} />}
       {isSettingsOpen && (
         <SettingsModal
           settings={effectiveSettings}
