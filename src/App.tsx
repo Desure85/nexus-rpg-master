@@ -24,7 +24,7 @@ import { HallModal } from './components/HallModal';
 import { ACHIEVEMENTS } from '../shared/achievements';
 import { TurnSummary, dashboardsBefore } from './components/TurnSummary';
 import { SCENARIOS, quickScenario, type Scenario } from '../shared/scenarios';
-import { dailyChallenge } from '../shared/daily';
+import { dailyChallenge, DAILY_MODIFIERS } from '../shared/daily';
 import { DailyCard, markDailyPlayed } from './components/DailyCard';
 import { ActionChips } from './components/ActionChips';
 import { DisclaimerFooter } from './components/Disclaimer';
@@ -969,6 +969,10 @@ export default function App() {
               <div className="px-4 lg:px-8 py-3 lg:py-4 border-b border-white/5 flex justify-between items-center gap-4 bg-black/20 overflow-x-auto">
                 <div className="flex items-center gap-4 shrink-0">
                   <h2 className="font-display font-bold text-white/80 truncate max-w-[40vw] lg:max-w-xs" title={currentSession.name}>{currentSession.name}</h2>
+                  {currentSession.config?.daily && (() => {
+                    const m = DAILY_MODIFIERS.find(x => x.id === currentSession.config!.daily!.modifier);
+                    return m ? <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[10px] text-amber-200" title={`Испытание дня: ${m.desc}`}>{m.icon} {m.title}</span> : null;
+                  })()}
                   {!isTale && (
                     <>
                       <div className="h-4 w-px bg-white/10" />
