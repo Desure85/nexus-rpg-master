@@ -94,6 +94,9 @@ function rpgReply(req: LlmRequest): string {
   if (thr) dash.threats = [{ name: thr[1].trim(), hp: `${thr[2]}/${thr[2]}`, features: [] }];
   let tail = `\n\n<dashboard_json>${JSON.stringify(dash)}</dashboard_json>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user)) tail += `\n<session_summary>Герои прошли через туман и раскрыли тайну записки.</session_summary>`;
+  if (/\[(SESSION SUMMARY|FINALE)\]/.test(user) && /world_chronicle/.test(req.system)) tail += `\n<world_chronicle>Туман отступил от порта: героиня зажгла маяк заново.</world_chronicle>`;
+  for (const m of user.matchAll(/#faction:([^:#\n]+):([+-])/g)) tail += ` [FACTION: ${m[1].trim()} ${m[2]}1]`;
+  for (const m of user.matchAll(/#wclock:([^#\n]+?)(?=\s|$)/g)) tail += ` [WORLD CLOCK: ${m[1].trim()} +1]`;
   if (/\[SAVE_CHAPTER\]/.test(user)) tail += `\n<lore_update>Архив: герои раскрыли тайну записки.</lore_update>\n<final_draft>Глава о тумане и записке.</final_draft>`;
   return body + tail;
 }

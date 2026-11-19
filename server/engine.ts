@@ -5,7 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
-import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, type ChronicleEntry } from "../shared/world";
+import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, stateWithDelta, worldStateBlock, parseWorldTags, applyWorldTags, type ChronicleEntry } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -373,6 +373,18 @@ export class Engine {
     const { clean: cleanAi, changes } = parseStateTags(aiContent);
     const parsed = parseDashboard(cleanAi, currentDashboard);
 
+    // Живой мир: фракции и шкалы мира — сдвиги партии считает движок (±1 за ход, ±2 за партию)
+    if (!isClarify && fresh.config.world?.data && (fresh.config.world.data.factions?.length || fresh.config.world.data.clocks?.length)) {
+      const { delta, changed } = applyWorldTags(fresh.config.world.data, fresh.config.worldDelta || { factions: {}, clocks: {} }, parseWorldTags(aiContent));
+      if (changed.length) {
+        fresh.config.worldDelta = delta;
+        this.game.queueNews(sessionId, `[WORLD] Мир меняется: ${changed.join(", ")}.`);
+      }
+    }
+    // Запись для летописи мира — в архив партии (оттуда её берёт хроника мира)
+    const worldChronicle = aiContent.match(/<world_chronicle>([\s\S]*?)<\/world_chronicle>/i)?.[1]?.trim();
+    if (worldChronicle) parsed.cleanText = parsed.cleanText.replace(/<world_chronicle>[\s\S]*?<\/world_chronicle>/gi, "").trim();
+
     const side = parseSideTags(aiContent);
     for (const t of side.trophies) this.db.prepare("INSERT INTO collection (id, session_id, name, desc, type) VALUES (?,?,?,?, 'trophy')").run(crypto.randomUUID(), sessionId, t.name, t.desc);
     for (const f of side.fronts) this.db.prepare("INSERT INTO fronts (id, session_id, name, impulse, portents, doom) VALUES (?,?,?,?,?,?)").run(crypto.randomUUID(), sessionId, f.name, f.impulse, JSON.stringify(f.portents), f.doom);
@@ -594,7 +606,7 @@ export class Engine {
     fresh.history = [...fresh.history, { role: "assistant", content: stripStrayTags(parsed.cleanText), dashboard }];
     fresh.codex = codex;
     if (parsed.loreUpdate) fresh.lore = parsed.loreUpdate;
-    const archiveAdd = [parsed.finalDraft, parsed.sessionSummary ? `# Итоги партии\n\n${parsed.sessionSummary}` : ""].filter(Boolean).join("\n\n---\n\n");
+    const archiveAdd = [parsed.finalDraft, parsed.sessionSummary ? `# Итоги партии\n\n${parsed.sessionSummary}` : "", worldChronicle ? `# Хроника мира\n\n${worldChronicle}` : ""].filter(Boolean).join("\n\n---\n\n");
     if (archiveAdd) fresh.archive = fresh.archive ? `${fresh.archive}\n\n---\n\n${archiveAdd}` : archiveAdd;
     saveSession(this.db, fresh);
     this.broadcast(sessionId, { type: "turn_end", sessionId, turnId, sessionSummary: parsed.sessionSummary || null });
@@ -646,7 +658,9 @@ export class Engine {
     const { text } = worldPromptBlock({ title: w.title, data: w.data }, recent);
     let chronicle = "";
     try { chronicle = chronicleBlock(this.worldChronicle(w.id, s.id)); } catch { /* хроники может не быть */ }
-    return text + chronicle + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "");
+    const st = w.state ? stateWithDelta(w.data, w.state, s.config.worldDelta) : null;
+    return text + chronicle + (st ? worldStateBlock(w.data, st) : "") + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "")
+      + `\nКогда подводишь итоги партии ([SESSION SUMMARY] или [FINALE]), дополнительно выведи <world_chronicle>2–3 предложения для летописи мира: что изменилось в мире и кто из героев к этому причастен — без оценок игры и без markdown</world_chronicle>.`;
   }
 
   private buildRpgSystem(s: StoredSession, extra: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {
@@ -747,7 +761,7 @@ export const isTruncatedTurn = (text: string) => !/<\/dashboard_json>/i.test(tex
 /** Срезаем незакрытый служебный блок и недописанную фразу. */
 export const cutToSentence = (text: string) => {
   let t = text;
-  const open = t.search(/<(dashboard_json|codex_json|lore_update|session_summary|final_draft|choices_json)>(?![\s\S]*<\/\1>)/i);
+  const open = t.search(/<(dashboard_json|codex_json|lore_update|session_summary|final_draft|choices_json|world_chronicle)>(?![\s\S]*<\/\1>)/i);
   if (open >= 0) t = t.slice(0, open);
   t = t.trimEnd();
   if (/[.!?…»")\]]$/.test(t)) return t;
@@ -783,7 +797,7 @@ export const stripStrayTags = (text: string) => text
   .replace(/^[ \t]*\[(suggestedRoll|dashboard|actions|threats|clocks|codex)\][^\n]*\n?/gim, "")
   .replace(/^[ \t]*\[[a-z][a-z _-]{2,30}\][ \t]*\n?/gm, "")
   .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
-  .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST)(:[^\]\n]*)?\]/g, "")
+  .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST|FACTION|WORLD[ _]CLOCK)(:[^\]\n]*)?\]/g, "")
   // пояснения к числам в скобках: «(урон 1, не 2: тропа выбрана верно)», «(−2 HP)»
   .replace(/\s*\((?=[^)]*\d)(?:урон|HP|ОЗ|хп|опыт|XP|стресс|DC|сложность|бросок|[+−-]\s*\d+\s*(?:HP|ОЗ|XP|стресс|золот))[^)]{0,100}\)/gi, "")
   .replace(/\n[ \t]+(?=[—–-]\s)/g, "\n")

@@ -58,6 +58,16 @@ export interface WorldItem {
   desc?: string;
 }
 
+/** Фракция мира: отношение к героям от −3 (война) до +3 (преданы) — общее для всех партий мира. */
+export interface WorldFaction { id: string; name: string; desc: string; attitude: number }
+/** Шкала мира: надвигающаяся угроза или план, общий для всех партий; заполнилась — событие мира. */
+export interface WorldClock { id: string; name: string; max: number; value: number; onFull: string }
+/** Текущее состояние мира (меняется итогами партий): id → значение */
+export interface WorldState { factions: Record<string, number>; clocks: Record<string, number> }
+
+export const ATTITUDES: Record<string, string> = { '-3': 'война', '-2': 'враждебны', '-1': 'настороже', '0': 'нейтральны', '1': 'расположены', '2': 'союзники', '3': 'преданы' };
+export const attitudeLabel = (n: number) => ATTITUDES[String(Math.max(-3, Math.min(3, Math.round(n))))];
+
 export interface WorldData {
   setting: string;          // короткое описание мира — уходит как сеттинг партии
   core: string;             // постоянная память мастера
@@ -72,6 +82,8 @@ export interface WorldData {
   currency?: string;
   /** Лавки продают только предметы мира (иначе — вдобавок к товарам жанра) */
   shopReplace?: boolean;
+  factions?: WorldFaction[];
+  clocks?: WorldClock[];
   /** Живой мир: итоги партий попадают в хронику — off / review (автор принимает) / auto */
   living?: 'off' | 'review' | 'auto';
 }
@@ -96,9 +108,11 @@ export interface World {
   hidden?: boolean;
   updated_at?: string;
   mine?: boolean;
+  /** текущее состояние фракций и шкал (только в полном виде мира) */
+  state?: WorldState;
 }
 
-export const WORLD_LIMITS = { enemies: 40, items: 60, cards: 80, cardText: 1500, keys: 10, core: 3000, setting: 1500, tone: 1500, locations: 40, scenarios: 12, heroes: 12, hook: 1500 };
+export const WORLD_LIMITS = { factions: 12, clocks: 8, enemies: 40, items: 60, cards: 80, cardText: 1500, keys: 10, core: 3000, setting: 1500, tone: 1500, locations: 40, scenarios: 12, heroes: 12, hook: 1500 };
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v : '').trim().slice(0, max);
 const slug = (v: string, i: number) => (v || '').toLowerCase().replace(/[^a-zа-яё0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 40) || `id-${i}`;
@@ -167,7 +181,16 @@ export function normalizeWorldData(raw: any): WorldData {
       ...(str(it?.desc, 300) ? { desc: str(it.desc, 300) } : {}),
     };
   }).filter((it: WorldItem) => it.name), (it: WorldItem) => it.name.toLowerCase());
+  const clamp = (v: unknown, lo: number, hi: number, d: number) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+  const factions: WorldFaction[] = uniq((Array.isArray(d.factions) ? d.factions : []).slice(0, WORLD_LIMITS.factions).map((f: any, i: number) => ({
+    id: str(f?.id, 40) || `f${i}`, name: str(f?.name, 60), desc: str(f?.desc, 400), attitude: clamp(f?.attitude, -3, 3, 0),
+  })).filter((f: WorldFaction) => f.name), (f: WorldFaction) => f.id);
+  const clocks: WorldClock[] = uniq((Array.isArray(d.clocks) ? d.clocks : []).slice(0, WORLD_LIMITS.clocks).map((c: any, i: number) => {
+    const max = clamp(c?.max, 3, 12, 6);
+    return { id: str(c?.id, 40) || `k${i}`, name: str(c?.name, 60), max, value: clamp(c?.value, 0, max - 1, 0), onFull: str(c?.onFull, 400) };
+  }).filter((c: WorldClock) => c.name), (c: WorldClock) => c.id);
   return {
+    ...(factions.length ? { factions } : {}), ...(clocks.length ? { clocks } : {}),
     enemies, items,
     ...(str(d.currency, 30) ? { currency: str(d.currency, 30) } : {}),
     ...(d.shopReplace && items.some(i => i.inShop) ? { shopReplace: true } : {}),
@@ -325,4 +348,73 @@ export const chronicleBlock = (entries: ChronicleEntry[], budget = 2000) => {
     lines.push(line);
   }
   return `\n### Хроника мира — уже случилось (это канон: последствия видны, NPC помнят; не повторяй эти сюжеты)\n${lines.join('\n')}`;
+};
+
+/* ------------------------------------------------ состояние мира: фракции и шкалы ------------------------------------------------ */
+
+/** Состояние мира с учётом определений: новые фракции/шкалы получают стартовые значения, удалённые — выпадают. */
+export const worldState = (d: Pick<WorldData, 'factions' | 'clocks'>, stored?: Partial<WorldState> | null): WorldState => ({
+  factions: Object.fromEntries((d.factions || []).map(f => [f.id, Math.max(-3, Math.min(3, stored?.factions?.[f.id] ?? f.attitude))])),
+  clocks: Object.fromEntries((d.clocks || []).map(c => [c.id, Math.max(0, Math.min(c.max, stored?.clocks?.[c.id] ?? c.value))])),
+});
+
+/** Сдвиги состояния за партию: id → изменение */
+export interface WorldDelta { factions: Record<string, number>; clocks: Record<string, number> }
+/** За одну партию фракция или шкала сдвигается не больше чем на 2 — мир меняется постепенно. */
+export const DELTA_PER_SESSION = 2;
+
+/** Теги мастера: [FACTION: Гильдия +1], [WORLD CLOCK: Туман наступает +1] */
+export const parseWorldTags = (text: string) => {
+  const grab = (re: RegExp) => [...text.matchAll(re)].map(m => ({ name: m[1].replace(/[«»"]/g, '').trim(), delta: (m[2] === '+' ? 1 : -1) * Math.min(1, parseInt(m[3], 10) || 0) })).filter(x => x.name && x.delta);
+  return {
+    factions: grab(/\[FACTION:\s*([^\]]+?)\s*([+\-−–])\s*(\d+)\s*\]/gi),
+    clocks: grab(/\[WORLD[ _]CLOCK:\s*([^\]]+?)\s*([+\-−–])\s*(\d+)\s*\]/gi),
+  };
+};
+
+const byName = <T extends { name: string }>(list: T[] | undefined, name: string) => {
+  const n = normName(name);
+  return (list || []).find(x => normName(x.name) === n) || (list || []).find(x => { const m = normName(x.name); return m.includes(n) || n.includes(m); });
+};
+
+/**
+ * Применяет теги хода к сдвигам партии: каждая фракция/шкала — не больше ±1 за ход и ±2 за партию.
+ * Возвращает новые сдвиги и человекочитаемые изменения для новостей.
+ */
+export const applyWorldTags = (d: Pick<WorldData, 'factions' | 'clocks'>, delta: WorldDelta, tags: ReturnType<typeof parseWorldTags>) => {
+  const next: WorldDelta = { factions: { ...delta.factions }, clocks: { ...delta.clocks } };
+  const changed: string[] = [];
+  const seen = new Set<string>();
+  for (const t of tags.factions) {
+    const f = byName(d.factions, t.name);
+    if (!f || seen.has(`f:${f.id}`)) continue;
+    seen.add(`f:${f.id}`);
+    const cur = next.factions[f.id] || 0;
+    const v = Math.max(-DELTA_PER_SESSION, Math.min(DELTA_PER_SESSION, cur + t.delta));
+    if (v !== cur) { next.factions[f.id] = v; changed.push(`${f.name} ${t.delta > 0 ? '+1' : '−1'}`); }
+  }
+  for (const t of tags.clocks) {
+    const c = byName(d.clocks, t.name);
+    if (!c || seen.has(`c:${c.id}`)) continue;
+    seen.add(`c:${c.id}`);
+    const cur = next.clocks[c.id] || 0;
+    const v = Math.max(-DELTA_PER_SESSION, Math.min(DELTA_PER_SESSION, cur + t.delta));
+    if (v !== cur) { next.clocks[c.id] = v; changed.push(`«${c.name}» ${t.delta > 0 ? '+1' : '−1'}`); }
+  }
+  return { delta: next, changed };
+};
+
+/** Состояние «старт партии + сдвиги партии» для показа и промпта. */
+export const stateWithDelta = (d: Pick<WorldData, 'factions' | 'clocks'>, start: WorldState, delta?: WorldDelta | null): WorldState => worldState(d, {
+  factions: Object.fromEntries(Object.entries(start.factions).map(([k, v]) => [k, v + (delta?.factions?.[k] || 0)])),
+  clocks: Object.fromEntries(Object.entries(start.clocks).map(([k, v]) => [k, v + (delta?.clocks?.[k] || 0)])),
+});
+
+/** Блок состояния мира для мастера + правила тегов. */
+export const worldStateBlock = (d: Pick<WorldData, 'factions' | 'clocks'>, st: WorldState) => {
+  if (!(d.factions || []).length && !(d.clocks || []).length) return '';
+  const f = (d.factions || []).map(x => `- ${x.name}: ${attitudeLabel(st.factions[x.id] ?? x.attitude)} к героям (${st.factions[x.id] ?? x.attitude})${x.desc ? ` — ${x.desc}` : ''}`);
+  const c = (d.clocks || []).map(x => `- «${x.name}»: ${st.clocks[x.id] ?? x.value}/${x.max}${x.onFull ? ` (когда заполнится: ${x.onFull})` : ''}`);
+  return `\n### Состояние мира (общее для всех партий — веди себя согласно ему)${f.length ? `\nФракции:\n${f.join('\n')}` : ''}${c.length ? `\nШкалы мира:\n${c.join('\n')}` : ''}
+Когда поступок героев заметно меняет отношение фракции, поставь [FACTION: Название +1] или [FACTION: Название -1]; когда события сцены приближают угрозу шкалы — [WORLD CLOCK: Название +1] (или -1, если герои её отодвинули). Не чаще одного раза на фракцию/шкалу за ход и только по последствиям сцены; числа считает движок.`;
 };

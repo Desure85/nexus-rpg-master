@@ -145,6 +145,8 @@ export default function App() {
 
   const [hallOpen, setHallOpen] = useState(false);
   const [worldsOpen, setWorldsOpen] = useState<{ openId?: string } | null>(null);
+  const [worldInbox, setWorldInbox] = useState(0);
+  useEffect(() => { if (user && !worldsOpen) api<{ newEntries: number }>('/api/worlds/inbox').then(r => setWorldInbox(r.newEntries)).catch(() => undefined); }, [user, worldsOpen]);
   const isTale = currentSession?.mode === 'tale';
   const dashBefore = useMemo(() => dashboardsBefore(currentSession?.history || []), [currentSession?.history]);
   const taleFinished = !!currentSession?.config?.tale?.finished;
@@ -1589,6 +1591,7 @@ export default function App() {
                     data={currentDashboard} 
                     sessionId={currentSession.id}
                     currency={currentSession.config?.world?.currency}
+                    worldState={currentSession.config?.world as any}
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
@@ -1698,7 +1701,7 @@ export default function App() {
             <button onClick={() => setWorldsOpen({})} className="w-full max-w-4xl mx-4 px-5 py-4 rounded-2xl border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] text-left flex items-center gap-4 transition-all">
               <span className="text-3xl">🌍</span>
               <span className="min-w-0">
-                <span className="block text-white font-bold">Миры</span>
+                <span className="block text-white font-bold">Миры{worldInbox > 0 && <span className="ml-2 px-2 py-0.5 rounded-full bg-amber-400 text-black text-[10px] align-middle" title="Новые записи в хронике ваших миров ждут решения">📜 {worldInbox}</span>}</span>
                 <span className="block text-xs text-white/45">Создайте свой мир с лором, местами и завязками — играйте сами или поделитесь ссылкой. Или сыграйте в мир из каталога.</span>
               </span>
             </button>
