@@ -23,6 +23,8 @@ interface DashboardProps {
   onEconomy?: (action: 'rest' | 'buy' | 'inn' | 'heal', charName: string, item?: string) => void;
   onParty?: (charName: string, status: string) => void;
   isCampaign?: boolean;
+  /** Название денег мира автора («раковины») */
+  currency?: string;
   onClaimBase?: (name: string) => void;
   onUpgradeBase?: (building: string) => void;
   onTrain?: (charName: string) => void;
@@ -35,10 +37,16 @@ interface DashboardProps {
 
 /** Предмет с эффектом в названии («восстанавливает 5 HP», «снимает 2 Стресса») движок умеет применить. */
 export const isUsableItem = (item: string) => isConsumable(item);
+/** Снаряжение с бонусом «(+N к …)» в сумке — куда его надеть. */
+export const gearSlot = (item: string): string | null => {
+  const b = item.match(/\(([+−-]?\d+\s*к\s*[а-яё]+)[^)]*\)\s*$/i)?.[1];
+  if (!b) return null;
+  return /защит|брон/i.test(b) ? 'body' : /атак|урон/i.test(b) ? 'main-hand' : 'accessory';
+};
 
 const ROLL_RU: Record<string, string> = { classic: 'Обычный бросок (d20)', triple: 'Резонанс стресса (3d20)', shifted: 'Сдвиг судьбы (3d20+d6)', taint: 'Бросок хаоса (2d20)' };
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, currency, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -359,9 +367,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span
                     className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300/90 cursor-pointer hover:text-amber-200"
-                    title="Золото (клик — задать вручную)"
+                    title={`${currency ? currency[0].toUpperCase() + currency.slice(1) : 'Золото'} (клик — задать вручную)`}
                     onClick={async () => {
-                      const next = await customPrompt(`Золото: ${char.name}`, String(char.gold ?? 0));
+                      const next = await customPrompt(`${currency || 'Золото'}: ${char.name}`, String(char.gold ?? 0));
                       if (next !== null) updateChar(char.name, { gold: Math.max(0, parseInt(next) || 0) });
                     }}
                   >
@@ -386,7 +394,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         <button
                           onClick={() => onEconomy('rest', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
-                          title="Таверна: 10 золота → HP макс, стресс -2"
+                          title={`Таверна: 10 ${currency || 'золота'} → HP макс, стресс -2`}
                         >
                           🍺 Таверна · 10
                         </button>
@@ -395,7 +403,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         <button
                           onClick={() => onEconomy('inn', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-all"
-                          title="Постоялый двор: 20 золота → полное восстановление (HP макс, стресс 0)"
+                          title={`Постоялый двор: 20 ${currency || 'золота'} → полное восстановление (HP макс, стресс 0)`}
                         >
                           🛏️ Ночлег · 20
                         </button>
@@ -404,7 +412,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                         <button
                           onClick={() => onEconomy('heal', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all"
-                          title="Лекарь: 12 золота → +5 HP"
+                          title={`Лекарь: 12 ${currency || 'золота'} → +5 HP`}
                         >
                           ⚕️ Лекарь · 12
                         </button>
@@ -499,6 +507,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                           <button onClick={() => onUseItem(char.name, item)} className="text-emerald-400/70 hover:text-emerald-300 font-bold" title={`Использовать: ${describeEffect(item)}`}>
                             ✚
                           </button>
+                        )}
+                        {onUpdate && gearSlot(item) && (
+                          <button
+                            onClick={() => {
+                              // надеть: предмет из сумки в слот; что было в слоте — обратно в сумку
+                              const slot = gearSlot(item)!;
+                              const inv = [...(char.inventory || [])];
+                              inv.splice(idx, 1);
+                              const eq = [...(char.equipment || [])];
+                              const at = eq.findIndex(e => e.slot === slot);
+                              const prevItem = at >= 0 ? eq[at].item : null;
+                              const prevName = typeof prevItem === 'string' ? prevItem : prevItem?.name;
+                              if (prevName && prevName !== 'Пусто') inv.push(typeof prevItem === 'string' || !prevItem?.bonus ? prevName : `${prevName} (${prevItem.bonus})`);
+                              const name = item.replace(/\s*\([^)]*\)\s*$/, '');
+                              const entry = { slot, item: { name, description: '', bonus: item.match(/\(([^)]*)\)\s*$/)?.[1] || '', rarity: 'common' as const } };
+                              if (at >= 0) eq[at] = entry as any; else eq.push(entry as any);
+                              updateChar(char.name, { inventory: inv, equipment: eq });
+                            }}
+                            className="text-sky-300/70 hover:text-sky-200 font-bold"
+                            title="Надеть"
+                          >⇡</button>
                         )}
                         <button 
                           onClick={async () => {

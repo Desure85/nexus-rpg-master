@@ -1087,6 +1087,43 @@ describe('миры', () => {
     expect(th.features.join(' ')).toMatch(/голосами|.+/);
   });
 
+  it('каталог: публикация с проверкой, поиск, жанр, лайки, жалобы и модерация', async () => {
+    const bad = await gm().post('/api/worlds', { title: 'Пустой', visibility: 'public', data: {} });
+    expect(bad.status).toBe(400);
+    const a = (await gm().post('/api/worlds', { ...worldBody(), title: 'Ледяной Предел', genre: 'fantasy', description: 'Северные льды и драконы', visibility: 'public' })).body;
+    const b = (await gm().post('/api/worlds', { ...worldBody(), title: 'Неон-Сити', genre: 'cyber', description: 'Мегаполис корпораций', visibility: 'public' })).body;
+    const u1 = await account('fan1@example.com'), u2 = await account('fan2@example.com'), u3 = await account('fan3@example.com');
+    const ids = (r: any) => r.body.map((w: any) => w.id);
+    expect(ids(await u1.get('/api/worlds?scope=public&q=драконы'))).toEqual([a.id]);
+    expect(ids(await u1.get('/api/worlds?scope=public&genre=cyber'))).toEqual([b.id]);
+    const like = (await u1.post(`/api/worlds/${b.id}/like`)).body;
+    expect(like).toEqual({ likes: 1, liked: true });
+    expect((await u1.get('/api/worlds?scope=public&sort=likes')).body[0]).toMatchObject({ id: b.id, liked: true, likes: 1 });
+    expect((await u1.post(`/api/worlds/${b.id}/like`)).body).toEqual({ likes: 0, liked: false });
+    expect((await gm().post(`/api/worlds/${a.id}/report`, { reason: 'своё' })).status).toBe(400);
+    for (const u of [u1, u2, u1, u3]) await u.post(`/api/worlds/${a.id}/report`, { reason: 'чужая вселенная' });
+    expect(ids(await u1.get('/api/worlds?scope=public'))).not.toContain(a.id);
+    expect((await u1.get(`/api/worlds/${a.id}`)).status).toBe(200); // по ссылке играть можно
+    const reps = (await gm().get('/api/admin/worlds/reports')).body;
+    expect(reps.find((r: any) => r.id === a.id).reports).toBe(3);
+    expect((await u1.get('/api/admin/worlds/reports')).status).toBe(403);
+    await gm().post(`/api/admin/worlds/${a.id}/moderate`, { hidden: false });
+    expect(ids(await u1.get('/api/worlds?scope=public'))).toContain(a.id);
+  });
+
+  it('ИИ-конструктор: черновик мира из описания', async () => {
+    expect((await gm().post('/api/worlds/generate', { prompt: 'коротко', workspaceId: gm().wid })).status).toBe(400);
+    const r = await gm().post('/api/worlds/generate', { prompt: 'Северный край, где Туман крадёт имена, а маяки — последняя защита', workspaceId: gm().wid });
+    expect(r.status).toBe(200);
+    expect(r.body.title).toBeTruthy();
+    expect(r.body.data.cards.length).toBeGreaterThan(4);
+    expect(r.body.data.locations.find((l: any) => l.id === 'town').connections).toContain('archive');
+    expect(r.body.data.enemies.some((e: any) => e.tier === 'boss')).toBe(true);
+    expect(r.body.data.items.find((i: any) => i.kind === 'gear').bonus).toBe('+1 к атаке');
+    const other = await account('gen@example.com');
+    expect((await other.post('/api/worlds/generate', { prompt: 'Северный край, где туман крадёт имена', workspaceId: gm().wid })).status).toBe(403);
+  });
+
   it('чужой приватный мир нельзя запустить', async () => {
     const other = await account('stranger@example.com');
     const w = (await other.post('/api/worlds', worldBody())).body;

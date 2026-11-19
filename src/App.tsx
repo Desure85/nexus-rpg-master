@@ -1585,6 +1585,7 @@ export default function App() {
                   <Dashboard 
                     data={currentDashboard} 
                     sessionId={currentSession.id}
+                    currency={currentSession.config?.world?.currency}
                     enabledMechanics={settings.mechanics} 
                     onUpdate={handleUpdateDashboard}
                     onSearch={(kind, name) => kind === 'body' ? handleSearchBody(name || '') : handleSearchLocation()}
@@ -1732,7 +1733,7 @@ export default function App() {
       </main>
 
       {hallOpen && <HallModal onClose={() => setHallOpen(false)} />}
-      {worldsOpen && <WorldsModal openId={worldsOpen.openId} maxHeroes={workspace?.limits?.maxHeroes || 4} onClose={() => setWorldsOpen(null)} onPlay={startWorld} />}
+      {worldsOpen && <WorldsModal openId={worldsOpen.openId} workspaceId={workspace?.id} maxHeroes={workspace?.limits?.maxHeroes || 4} onClose={() => setWorldsOpen(null)} onPlay={startWorld} />}
       {isSettingsOpen && (
         <SettingsModal
           settings={effectiveSettings}

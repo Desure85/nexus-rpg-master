@@ -6,6 +6,8 @@ import { Engine } from "./engine";
 import { completeWithUsage, describeProvider, LlmError } from "./llm";
 import { createHeroes, veteranLine } from "./heroes";
 import { createWorlds } from "./worlds";
+import { WORLD_GEN_SYSTEM, parseGeneratedWorld, closeJson } from "../shared/world";
+import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
@@ -185,6 +187,40 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       });
       billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
       res.json({ text: r.text });
+    } catch (e: any) {
+      const status = e instanceof BillingError || e instanceof LlmError ? e.status : 502;
+      res.status(status).json({ error: e?.code || "llm_error", message: e?.message });
+    }
+  });
+
+  // ИИ-конструктор мира: черновик из абзаца описания (автор потом правит в редакторе)
+  app.post("/api/worlds/generate", requireUser, llmLimiter, async (req, res) => {
+    const idea = str(req.body?.prompt, 2000).trim();
+    const workspaceId = str(req.body?.workspaceId, 64);
+    if (idea.length < 10) return res.status(400).json({ error: "prompt_required", message: "Опишите мир хотя бы в паре предложений" });
+    if (!tenancy.membership(workspaceId, req.auth.user!.id) && !req.auth.user!.isSuperadmin) return res.status(403).json({ error: "forbidden" });
+    const { llm, mode } = tenancy.resolveLlm(workspaceId);
+    try {
+      billing.assertCanSpend(workspaceId, mode);
+      // Мир — длинный JSON: модель может упереться в лимит или оборвать ответ. Просим продолжить с места обрыва (до 3 раз).
+      const messages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: `Описание мира от автора:\n${idea}${req.body?.genre ? `\nЖанр: ${str(req.body.genre, 20)}` : ""}` }];
+      let acc = "";
+      let world: ReturnType<typeof parseGeneratedWorld> | null = null;
+      for (let attempt = 0; attempt < 4 && !world; attempt++) {
+        const r = await completeWithUsage(llm, { system: WORLD_GEN_SYSTEM, messages, temperature: 0.9, maxTokens: 16000 });
+        billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
+        acc += attempt ? r.text.replace(/^\s*```(?:json)?\s*/, "") : r.text;
+        try { world = parseGeneratedWorld(normalizeBlocks(acc)); } catch {
+          console.warn(`[worlds] черновик мира не разобран (попытка ${attempt + 1}, ${acc.length} симв.), хвост: ${JSON.stringify(acc.slice(-120))}`);
+          messages.splice(1, messages.length - 1, { role: "assistant", content: acc }, { role: "user", content: "Ответ оборвался. Продолжи JSON РОВНО с места обрыва — без повторов, пояснений и markdown." });
+        }
+      }
+      if (!world) {
+        // последний шанс: закрыть незакрытые строки и скобки и взять, что успело прийти
+        try { world = parseGeneratedWorld(closeJson(acc)); } catch { /* ниже */ }
+      }
+      if (!world || !world.data.cards.length) return res.status(502).json({ error: "bad_world", message: "Модель не смогла собрать мир — попробуйте ещё раз или опишите короче" });
+      res.json(world);
     } catch (e: any) {
       const status = e instanceof BillingError || e instanceof LlmError ? e.status : 502;
       res.status(status).json({ error: e?.code || "llm_error", message: e?.message });

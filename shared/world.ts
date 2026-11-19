@@ -86,6 +86,9 @@ export interface World {
   owner_id?: string;
   author?: string;
   plays?: number;
+  likes?: number;
+  liked?: boolean;
+  hidden?: boolean;
   updated_at?: string;
   mine?: boolean;
 }
@@ -241,4 +244,63 @@ export const findEnemy = (enemies: WorldEnemy[] | undefined, threatName: string)
   if (!t || !enemies?.length) return undefined;
   return enemies.find(e => normName(e.name) === t)
     || enemies.find(e => { const n = normName(e.name); const st = n.length > 5 ? n.slice(0, n.length - 2) : n; return new RegExp(`(^|[^a-zа-я0-9])${st.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(t); });
+};
+
+/** Промпт конструктора мира: модель отдаёт черновик мира одним JSON (дальше — normalizeWorldData). */
+export const WORLD_GEN_SYSTEM = `Ты — КОНСТРУКТОР МИРОВ для настольной ролевой игры с ИИ-мастером. По описанию автора создай черновик мира на русском.
+Ответь ТОЛЬКО JSON-объектом без markdown и пояснений:
+{
+ "title": "название мира", "icon": "один эмодзи", "genre": "fantasy|horror|cyber|space|post|west",
+ "description": "1–2 предложения для игроков — чем мир цепляет",
+ "setting": "где и когда, общество, магия/технологии — 3–5 предложений",
+ "core": "канон мастера: главные законы мира, конфликт, что все знают — до 1200 символов",
+ "tone": "тон и табу одной строкой",
+ "currency": "как называются деньги",
+ "cards": [{"kind":"npc|place|faction|item|lore","name":"...","keys":["слово","слово"],"text":"внешность, мотив, тайна или суть — 2–4 предложения"}],
+ "locations": [{"id":"латиницей-через-дефис","name":"...","description":"...","services":["market","tavern","inn","smith","healer","questboard","library","stables","dock"],"dangerLevel":1,"connections":["id другого места"]}],
+ "scenarios": [{"id":"s1","title":"...","hook":"завязка: что случилось и почему герои вмешаются — 2–3 предложения","mode":"short","startLocationId":"id места"}],
+ "heroes": [{"name":"...","concept":"кто он одной фразой","gender":"М|Ж"}],
+ "enemies": [{"name":"...","tier":"minion|regular|elite|boss","traits":"повадки и слабость"}],
+ "items": [{"name":"...","kind":"consumable|gear|misc","heal":3,"calm":1,"bonus":"+1 к атаке","price":10,"inShop":true,"rarity":"common|uncommon|rare|epic"}]
+}
+Объём: карточек 8–12 (персонажи, фракции, места, предметы, история), мест 4–6 со связями (у сферы услуг — 1–2 безопасных поселения), сюжетов 2–3, героев 3–4, врагов 4–6 (один boss), предметов 4–6 (расходники, снаряжение, сюжетные). Ключи карточек — слова, которыми о них будут говорить в игре (имя, прозвище, род занятий). Всё самобытное: не бери персонажей и названия из чужих книг, игр и фильмов.`;
+
+/** Достаёт JSON мира из ответа модели (бывает обёрнут в \`\`\`json или с текстом вокруг). */
+export const parseGeneratedWorld = (text: string) => {
+  const t = text.replace(/\`\`\`(?:json)?/g, '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b <= a) throw new Error('Модель не прислала мир — попробуйте ещё раз или опишите подробнее');
+  const j = JSON.parse(t.slice(a, b + 1));
+  const genre = WORLD_GENRES.some(g => g.id === j.genre) ? j.genre as Genre : 'fantasy';
+  return { title: String(j.title || '').slice(0, 80), icon: String(j.icon || '🌍').slice(0, 4), genre, description: String(j.description || '').slice(0, 600), data: normalizeWorldData(j) };
+};
+
+/** Закрывает оборванный JSON: незакрытую строку, хвостовую запятую, открытые [ и {. Неполный последний элемент отбрасывается. */
+export const closeJson = (text: string) => {
+  const t = text.replace(/\`\`\`(?:json)?/g, '');
+  const start = t.indexOf('{');
+  if (start < 0) return t;
+  let out = '';
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  let lastSafe = 0; // позиция после последнего завершённого элемента
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    out += c;
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']');
+    else if (c === '}' || c === ']') { stack.pop(); lastSafe = out.length; if (!stack.length) return out; }
+    else if (c === ',') lastSafe = out.length - 1;
+  }
+  // обрезаем до последнего целого элемента и закрываем по стеку на тот момент
+  let cut = out.slice(0, lastSafe).replace(/,\s*$/, '');
+  const st: string[] = [];
+  let s2 = false, e2 = false;
+  for (const c of cut) {
+    if (s2) { if (e2) e2 = false; else if (c === '\\') e2 = true; else if (c === '"') s2 = false; continue; }
+    if (c === '"') s2 = true; else if (c === '{' || c === '[') st.push(c === '{' ? '}' : ']'); else if (c === '}' || c === ']') st.pop();
+  }
+  cut = cut.replace(/,\s*$/, '').replace(/:\s*$/, ': null');
+  return cut + st.reverse().join('');
 };
