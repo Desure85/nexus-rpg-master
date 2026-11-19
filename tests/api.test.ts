@@ -1111,6 +1111,19 @@ describe('миры', () => {
     expect(ids(await u1.get('/api/worlds?scope=public'))).toContain(a.id);
   });
 
+  it('ИИ-конструктор: черновик мира из описания', async () => {
+    expect((await gm().post('/api/worlds/generate', { prompt: 'коротко', workspaceId: gm().wid })).status).toBe(400);
+    const r = await gm().post('/api/worlds/generate', { prompt: 'Северный край, где Туман крадёт имена, а маяки — последняя защита', workspaceId: gm().wid });
+    expect(r.status).toBe(200);
+    expect(r.body.title).toBeTruthy();
+    expect(r.body.data.cards.length).toBeGreaterThan(4);
+    expect(r.body.data.locations.find((l: any) => l.id === 'town').connections).toContain('archive');
+    expect(r.body.data.enemies.some((e: any) => e.tier === 'boss')).toBe(true);
+    expect(r.body.data.items.find((i: any) => i.kind === 'gear').bonus).toBe('+1 к атаке');
+    const other = await account('gen@example.com');
+    expect((await other.post('/api/worlds/generate', { prompt: 'Северный край, где туман крадёт имена', workspaceId: gm().wid })).status).toBe(403);
+  });
+
   it('чужой приватный мир нельзя запустить', async () => {
     const other = await account('stranger@example.com');
     const w = (await other.post('/api/worlds', worldBody())).body;

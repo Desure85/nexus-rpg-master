@@ -49,7 +49,8 @@ const download = (name: string, text: string) => {
 export interface WorldStart { worldId: string; scenarioId?: string; title?: string; mode: 'short' | 'campaign' | 'tale'; characters: WorldHero[] }
 
 /** Каталог миров: свои и общие; отсюда — редактор и запуск игры. */
-export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number }> = ({ onClose, onPlay, openId, maxHeroes = 4 }) => {
+export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number; workspaceId?: string }> = ({ onClose, onPlay, openId, maxHeroes = 4, workspaceId }) => {
+  const [genOpen, setGenOpen] = useState(false);
   const [tab, setTab] = useState<'mine' | 'public'>('mine');
   const [list, setList] = useState<World[] | null>(null);
   const [editing, setEditing] = useState<World | null>(null);
@@ -92,7 +93,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
           <h2 className="font-display text-xl text-white">🌍 Миры</h2>
           <button onClick={onClose} className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/5" aria-label="Закрыть"><X size={18} /></button>
         </div>
-        <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 px-4 py-3 border-b border-white/5 shrink-0">
           <button onClick={() => setTab('mine')} className={chip(tab === 'mine')}>Мои миры</button>
           <button onClick={() => setTab('public')} className={chip(tab === 'public')}>Каталог</button>
           <button onClick={async () => {
@@ -101,6 +102,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
             setEditing({ ...newWorld(), title: r.title || '', icon: r.icon || '🌍', genre: r.genre || 'fantasy', description: r.description || '', data: r.data });
             customAlert(`Импорт: ${r.format}. Карточек: ${r.data.cards.length}, мест: ${r.data.locations.length}, сюжетов: ${r.data.scenarios.length}.${r.notes.length ? `\n\n${r.notes.join('\n')}` : ''}\n\nПроверьте мир и сохраните.`);
           }} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/5 text-white/70 text-xs hover:text-white" title="SillyTavern, NovelAI, Character Card, AI Dungeon, экспорт Nexus"><Upload size={13} /> Импорт</button>
+          <button onClick={() => setGenOpen(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-500/20 text-violet-200 text-xs font-bold hover:bg-violet-500/30" title="Опишите мир — ИИ соберёт черновик"><Sparkles size={13} /> С ИИ</button>
           <button onClick={() => setEditing(newWorld())} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 text-black text-xs font-bold hover:bg-amber-300"><Plus size={14} /> Создать</button>
         </div>
         {tab === 'public' && (
@@ -159,10 +161,52 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
           )}
         </div>
       </div>
+      {genOpen && <WorldGenerator workspaceId={workspaceId} onClose={() => setGenOpen(false)} onDraft={d => { setGenOpen(false); setEditing({ ...newWorld(), ...d }); }} />}
       {editing && <WorldEditor world={editing} onClose={() => setEditing(null)} onSaved={w => { setEditing(null); setTab('mine'); load('mine'); if (!editing.id) setPlaying(w); }} />}
       {playing && <WorldPlay world={playing} maxHeroes={maxHeroes} onClose={() => setPlaying(null)} onPlay={s => { setPlaying(null); onPlay(s); }} />}
     </div>,
     document.body,
+  );
+};
+
+/* ------------------------------------------------------------------ ИИ-черновик ------------------------------------------------------------------ */
+
+const IDEAS = [
+  'Северный архипелаг, где туман крадёт имена, а маяки — последняя защита. Контрабандисты, смотрители, гильдия ныряльщиков.',
+  'Город-улей на спине гигантской черепахи. Касты, воздушные шары, черепаха умирает, и никто не знает почему.',
+  'Добрая сказка: лесная деревня зверей, где пропала Весна. Совы-почтальоны, ворчливый барсук-мельник, хитрая лиса.',
+  'Неоновый мегаполис, где воспоминания продаются в аптеках. Корпорации, подпольные мнемо-хакеры, детектив без прошлого.',
+];
+
+const WorldGenerator: React.FC<{ workspaceId?: string; onClose: () => void; onDraft: (w: Partial<World>) => void }> = ({ workspaceId, onClose, onDraft }) => {
+  const [idea, setIdea] = useState('');
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const d = await api<Pick<World, 'title' | 'icon' | 'genre' | 'description' | 'data'>>('/api/worlds/generate', { body: { prompt: idea, workspaceId } });
+      onDraft(d);
+      customAlert(`Черновик готов: карточек ${d.data.cards.length}, мест ${d.data.locations.length}, сюжетов ${d.data.scenarios.length}, врагов ${(d.data.enemies || []).length}. Поправьте, что хочется, и сохраните.`);
+    } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось сгенерировать'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70" onClick={busy ? undefined : onClose}>
+      <div className="w-full sm:max-w-lg bg-[#1a1614] border border-white/10 rounded-t-2xl sm:rounded-2xl p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-bold flex items-center gap-2"><Sparkles size={16} className="text-violet-300" /> Мир с помощью ИИ</h3>
+          {!busy && <button onClick={onClose} className="p-1 text-white/40 hover:text-white" aria-label="Закрыть"><X size={18} /></button>}
+        </div>
+        <p className="text-xs text-white/50 leading-relaxed">Опишите мир в паре абзацев: где, кто, в чём конфликт, какое настроение. ИИ соберёт черновик — канон, карточки, карту, сюжеты, героев, врагов и предметы. Всё можно будет поправить.</p>
+        <textarea className={`${input} min-h-[140px]`} maxLength={2000} value={idea} onChange={e => setIdea(e.target.value)} placeholder="Например: северный архипелаг, где туман крадёт имена…" disabled={busy} />
+        <div className="flex flex-wrap gap-1.5">
+          {IDEAS.map(t => <button key={t} disabled={busy} onClick={() => setIdea(t)} className="px-2.5 py-1 rounded-full bg-white/5 text-[11px] text-white/55 hover:text-white text-left">{t.split('.')[0]}</button>)}
+        </div>
+        <button onClick={go} disabled={busy || idea.trim().length < 10} className="w-full py-3 rounded-xl bg-violet-500 text-white font-bold disabled:opacity-40">
+          {busy ? 'Мастер сочиняет мир… обычно до минуты' : 'Собрать черновик'}
+        </button>
+        <p className="text-[10px] text-white/30 text-center">Списывает кредиты как обычная генерация · ИИ может ошибаться</p>
+      </div>
+    </div>
   );
 };
 

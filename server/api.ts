@@ -6,6 +6,8 @@ import { Engine } from "./engine";
 import { completeWithUsage, describeProvider, LlmError } from "./llm";
 import { createHeroes, veteranLine } from "./heroes";
 import { createWorlds } from "./worlds";
+import { WORLD_GEN_SYSTEM, parseGeneratedWorld } from "../shared/world";
+import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
@@ -185,6 +187,33 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       });
       billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
       res.json({ text: r.text });
+    } catch (e: any) {
+      const status = e instanceof BillingError || e instanceof LlmError ? e.status : 502;
+      res.status(status).json({ error: e?.code || "llm_error", message: e?.message });
+    }
+  });
+
+  // ИИ-конструктор мира: черновик из абзаца описания (автор потом правит в редакторе)
+  app.post("/api/worlds/generate", requireUser, llmLimiter, async (req, res) => {
+    const idea = str(req.body?.prompt, 2000).trim();
+    const workspaceId = str(req.body?.workspaceId, 64);
+    if (idea.length < 10) return res.status(400).json({ error: "prompt_required", message: "Опишите мир хотя бы в паре предложений" });
+    if (!tenancy.membership(workspaceId, req.auth.user!.id) && !req.auth.user!.isSuperadmin) return res.status(403).json({ error: "forbidden" });
+    const { llm, mode } = tenancy.resolveLlm(workspaceId);
+    try {
+      billing.assertCanSpend(workspaceId, mode);
+      const r = await completeWithUsage(llm, {
+        system: WORLD_GEN_SYSTEM,
+        messages: [{ role: "user", content: `Описание мира от автора:\n${idea}${req.body?.genre ? `\nЖанр: ${str(req.body.genre, 20)}` : ""}` }],
+        temperature: 0.9,
+        maxTokens: 8192,
+      });
+      billing.recordUsage({ workspaceId, userId: req.auth.user!.id, kind: "generate", mode, llm, usage: r.usage });
+      try {
+        res.json(parseGeneratedWorld(normalizeBlocks(r.text)));
+      } catch (e: any) {
+        res.status(502).json({ error: "bad_world", message: e instanceof SyntaxError ? "Модель прислала испорченный JSON — попробуйте ещё раз" : e.message });
+      }
     } catch (e: any) {
       const status = e instanceof BillingError || e instanceof LlmError ? e.status : 502;
       res.status(status).json({ error: e?.code || "llm_error", message: e?.message });

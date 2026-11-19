@@ -1,3 +1,4 @@
+import { mockWorldReply } from "./mock-world";
 // «Рассказчик» для демо без ИИ (MOCK_STYLE=demo): правдоподобные ответы в протоколе модели.
 // Не умный, но живой: читает действия игроков, подсказки оракула [MUSE], угрозы и слоты действий,
 // и отдаёт нарратив + теги механик, чтобы в демо работали урон, лут, опыт, уровни и предметы.
@@ -463,6 +464,7 @@ function oracleReply(user: string) {
 
 export function demoReply(req: LlmRequest): string {
   const user = lastUser(req);
+  if (/КОНСТРУКТОР МИРОВ/.test(req.system)) return mockWorldReply(user);
   if (/дизайнер таблиц оракула/.test(req.system)) return oracleReply(user);
   if (/Сказочник/.test(req.system)) return taleReply(req, user);
   if (/креативный помощник/.test(req.system)) return ideaReply(user);
