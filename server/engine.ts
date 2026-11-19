@@ -190,7 +190,7 @@ export class Engine {
       this.broadcast(sessionId, { type: "update", sessionId });
       const content = s.mode === "tale"
         ? `[TALE_CHOICE] Слушатели решили (сообщения выше). Объедини их выборы в продолжение сказки.`
-        : `[ROUND] Игроки прислали действия (сообщения [PLAYER ACTION] выше). Обработай ВСЕ действия сразу и дай сцену-ответ каждому. ${IDLE_RULES[cfg.idlePlayerAction] || IDLE_RULES.random}`;
+        : `[ROUND] Игроки прислали действия (сообщения [PLAYER ACTION] выше). Обработай ВСЕ действия сразу и дай сцену-ответ каждому. Называй героев по именам, не «ты»: за столом несколько игроков, и каждый должен узнать свою часть сцены. ${IDLE_RULES[cfg.idlePlayerAction] || IDLE_RULES.random}`;
       try {
         await this.runTurn(sessionId, content, {});
       } catch (e: any) {
@@ -569,7 +569,7 @@ export class Engine {
       else codex.push({ ...u, id: u.id || crypto.randomUUID() });
     }
 
-    fresh.history = [...fresh.history, { role: "assistant", content: parsed.cleanText, dashboard }];
+    fresh.history = [...fresh.history, { role: "assistant", content: stripStrayTags(parsed.cleanText), dashboard }];
     fresh.codex = codex;
     if (parsed.loreUpdate) fresh.lore = parsed.loreUpdate;
     const archiveAdd = [parsed.finalDraft, parsed.sessionSummary ? `# Итоги партии\n\n${parsed.sessionSummary}` : ""].filter(Boolean).join("\n\n---\n\n");
@@ -596,7 +596,7 @@ export class Engine {
 
   /** Провайдер оборвал поток (нет закрытого dashboard_json): срезаем недописанное и просим модель закончить ход. */
   private async repairTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, partial: string) {
-    console.warn(`[engine] ход оборван (${partial.length} симв.), дописываем`);
+    console.warn(`[engine] ход оборван (${partial.length} симв.), дописываем; хвост: ${JSON.stringify(partial.slice(-160))}`);
     const head = cutToSentence(partial);
     try {
       const tail = await this.callLlm(s, cfg, {
@@ -604,7 +604,7 @@ export class Engine {
         messages: [
           ...request.messages,
           { role: "assistant", content: head },
-          { role: "user", content: "[SYSTEM: твой ответ оборвался из-за сбоя связи. Продолжи с места обрыва, НЕ повторяя написанное: закончи сцену 1–3 предложениями и обязательно выведи все служебные блоки по формату (<dashboard_json> с вариантами действий и т. д.). Теги изменений ([DAMAGE], [XP] …), которые уже есть в тексте выше, не повторяй.]" },
+          { role: "user", content: "[SYSTEM: твой ответ оборвался из-за сбоя связи. Продолжи с места обрыва, НЕ повторяя написанное: закончи сцену 1–3 предложениями (без реплик и поступков героев игроков — только мир и NPC) и обязательно выведи все служебные блоки по формату (<dashboard_json> с вариантами действий и т. д.). Теги изменений ([DAMAGE], [XP] …), которые уже есть в тексте выше, не повторяй.]" },
         ],
       }, "turn_repair", () => undefined);
       const joined = `${head}${/^\s/.test(tail) ? "" : " "}${tail.replace(/^\s*(Продолжаю|Продолжение)[^\n]*\n/i, "")}`;
@@ -691,7 +691,7 @@ export class Engine {
       const extra = ["Пойти дальше и посмотреть, что будет", "Позвать на помощь друзей", "Остановиться и хорошенько подумать"];
       choices = [...choices, ...extra.filter(e => !choices.includes(e))].slice(0, 3);
     }
-    fresh.history = [...fresh.history, { role: "assistant", content: t.text, ...(isFinal ? {} : { choices }) } as Message];
+    fresh.history = [...fresh.history, { role: "assistant", content: stripStrayTags(t.text), ...(isFinal ? {} : { choices }) } as Message];
     if (t.lore) fresh.lore = t.lore;
     if (isFinal) {
       const title = t.title || fresh.name;
@@ -739,3 +739,17 @@ export function ensurePlayable(d: DashboardData, setting: string) {
     if (!(c.actions || []).length) c.actions = FALLBACK_ACTIONS.map(a => ({ ...a }));
   }
 }
+
+/**
+ * Служебное, что модель иногда повторяет в тексте: эхо входных тегов ([LOOT FOUND: …], [ROLL: …]),
+ * недописанные теги изменений ([DAMAGE: Имя] без числа), подписи полей дашборда ([suggestedRoll] …).
+ * Игроку это не нужно — чистим перед сохранением ответа.
+ */
+export const stripStrayTags = (text: string) => text
+  .replace(/^[ \t]*\[(suggestedRoll|dashboard|actions|threats|clocks|codex)\][^\n]*\n?/gim, "")
+  .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
+  .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST)(:[^\]\n]*)?\]/g, "")
+  .replace(/\n[ \t]+(?=[—–-]\s)/g, "\n")
+  .replace(/[ \t]+\n/g, "\n")
+  .replace(/\n{3,}/g, "\n\n")
+  .trim();
