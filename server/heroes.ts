@@ -94,6 +94,7 @@ export function createHeroes(db: DB, broadcast: (room: string, data: any) => voi
       if (before.some((t: any) => num(t.hp) > 0 && (after.find((x: any) => x.name === t.name) ? num(after.find((x: any) => x.name === t.name).hp) <= 0 : true))) { codes.push("first_blood"); break; }
     }
     if (row.mode === "tale" && config.tale?.finished) codes.push("storyteller");
+    if (config.daily && /\[(SESSION SUMMARY|FINALE)\]/.test(text) && history[history.length - 1]?.role === "assistant") codes.push("daily");
     if (history.filter(m => m.role === "assistant").length >= 30) codes.push("saga");
     if (history.some(m => m.role === "user" && (m.content.match(/\[PLAYER ACTION:/g) || []).length >= 2)) codes.push("fellowship");
     unlock(row.created_by, codes.filter(c => ACHIEVEMENTS.some(a => a.code === c)), sessionId);

@@ -17,6 +17,8 @@ export interface SetupData {
   multiplayer?: boolean;
   autoApprove?: boolean;
   tale?: { age: string; chapters: number; moral?: string };
+  /** Ключ испытания дня (YYYY-MM-DD) */
+  daily?: string;
 }
 
 interface Props {
