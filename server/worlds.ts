@@ -34,6 +34,22 @@ export function createWorlds(db: DB) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (world_id, user_id)
     );
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS world_chronicle (
+      id TEXT PRIMARY KEY,
+      world_id TEXT NOT NULL,
+      session_id TEXT,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'game',
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      heroes TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_chronicle_world ON world_chronicle(world_id, status, created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chronicle_session ON world_chronicle(session_id, title);
+  `);
   const cols = (db.prepare("PRAGMA table_info(worlds)").all() as { name: string }[]).map(c => c.name);
   if (!cols.includes("likes")) db.exec("ALTER TABLE worlds ADD COLUMN likes INTEGER NOT NULL DEFAULT 0");
   if (!cols.includes("hidden")) db.exec("ALTER TABLE worlds ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
@@ -42,14 +58,14 @@ export function createWorlds(db: DB) {
 
   const row2world = (r: any, userId?: string, full = true): World => ({
     id: r.id, title: r.title, icon: r.icon, genre: r.genre, description: r.description,
-    visibility: r.visibility, version: r.version, plays: r.plays, likes: r.likes || 0, liked: !!r.liked, hidden: !!r.hidden, updated_at: r.updated_at,
+    visibility: r.visibility, version: r.version, plays: r.plays, likes: r.likes || 0, liked: !!r.liked, chronicle: r.chronicle || 0, ...(userId && r.owner_id === userId ? { chronicleNew: r.chronicle_new || 0 } : {}), hidden: !!r.hidden, updated_at: r.updated_at,
     author: r.author || undefined, mine: !!userId && r.owner_id === userId,
     data: full ? JSON.parse(r.data) : (() => { const d = JSON.parse(r.data); return { ...d, cards: [], core: "", counts: { cards: d.cards?.length || 0, locations: d.locations?.length || 0, scenarios: d.scenarios?.length || 0 } }; })(),
   });
 
   const SELECT = "SELECT w.*, u.name AS author FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
   /** Первый параметр запроса — id пользователя (для отметки «нравится») */
-  const SELECT_FOR = "SELECT w.*, u.name AS author, EXISTS(SELECT 1 FROM world_likes l WHERE l.world_id = w.id AND l.user_id = ?) AS liked FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
+  const SELECT_FOR = "SELECT w.*, u.name AS author, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'canon') AS chronicle, (SELECT COUNT(*) FROM world_chronicle c WHERE c.world_id = w.id AND c.status = 'new') AS chronicle_new, EXISTS(SELECT 1 FROM world_likes l WHERE l.world_id = w.id AND l.user_id = ?) AS liked FROM worlds w LEFT JOIN users u ON u.id = w.owner_id";
   const lc = (v: string) => v.toLowerCase().replace(/ё/g, "е");
 
   /** Мир, доступный пользователю для игры: свой, по ссылке или из каталога. */
@@ -186,5 +202,91 @@ export function createWorlds(db: DB) {
     });
   };
 
-  return { register, getForPlay, countPlay };
+  /* ---------------------------------------- живой мир: хроника ---------------------------------------- */
+
+  const livingMode = (worldId: string): "off" | "review" | "auto" => {
+    const r = db.prepare("SELECT data FROM worlds WHERE id = ?").get(worldId) as any;
+    if (!r) return "off";
+    const m = JSON.parse(r.data).living;
+    return m === "off" || m === "auto" ? m : "review";
+  };
+
+  /**
+   * После хода: партия в мире дошла до итогов (или сказка дописана) — событие в хронику мира.
+   * Режим мира: off — не пишем, review — ждёт автора, auto — сразу канон.
+   */
+  const checkSession = (sessionId: string) => {
+    const row = db.prepare("SELECT s.name, s.archive, s.config, s.mode, s.created_by, s.history FROM sessions s WHERE s.id = ?").get(sessionId) as any;
+    if (!row) return null;
+    const config = JSON.parse(row.config || "{}");
+    const wid = config.world?.id;
+    if (!wid || !row.archive) return null;
+    const mode = livingMode(wid);
+    if (mode === "off") return null;
+    let title = "", summary = "";
+    if (row.mode === "tale") {
+      if (!config.tale?.finished) return null;
+      title = `Сказка: ${row.archive.match(/^# (.+)$/m)?.[1] || row.name}`;
+      summary = (row.archive.match(/\*([^*]{10,})\*\s*$/)?.[1] || row.archive.replace(/^#.*$/m, "")).trim();
+    } else {
+      const parts = String(row.archive).split(/# Итоги партии\s*/);
+      if (parts.length < 2) return null;
+      summary = parts[parts.length - 1].split(/\n---\n/)[0].trim();
+      title = row.name;
+    }
+    if (!summary) return null;
+    const heroes = (config.heroes || []).map((h: any) => h.name).filter(Boolean).join(", ");
+    const res = db.prepare(`INSERT OR IGNORE INTO world_chronicle (id, world_id, session_id, user_id, kind, title, summary, heroes, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(crypto.randomUUID(), wid, sessionId, row.created_by || "", row.mode === "tale" ? "tale" : "game", title.slice(0, 120), summary.slice(0, 1200), heroes.slice(0, 200), mode === "auto" ? "canon" : "new");
+    return res.changes ? { worldId: wid, status: mode === "auto" ? "canon" : "new" } : null;
+  };
+
+  /** Канон хроники для промпта новой партии (последние события, кроме этой же партии). */
+  const canonFor = (worldId: string, exceptSession?: string, limit = 6) =>
+    db.prepare(`SELECT kind, title, summary, heroes, created_at FROM world_chronicle WHERE world_id = ? AND status = 'canon' AND (session_id IS NULL OR session_id != ?)
+      ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(worldId, exceptSession || "", limit) as { kind: string; title: string; summary: string; heroes: string; created_at: string }[];
+
+  const registerChronicle = (app: Express, requireUser: any) => {
+    // Хроника: игроки видят канон и свои записи; автор — всё
+    app.get("/api/worlds/:wid/chronicle", requireUser, (req: any, res) => {
+      const uid = req.auth.user.id;
+      const w = getForPlay(uid, req.params.wid);
+      if (!w) return res.status(404).json({ error: "world_not_found" });
+      const rows = db.prepare(`SELECT c.id, c.kind, c.title, c.summary, c.heroes, c.status, c.created_at, c.user_id, u.name AS player
+        FROM world_chronicle c LEFT JOIN users u ON u.id = c.user_id WHERE c.world_id = ? ${w.mine ? "" : "AND (c.status = 'canon' OR c.user_id = ?)"} ORDER BY c.created_at DESC, c.rowid DESC LIMIT 100`)
+        .all(...(w.mine ? [w.id] : [w.id, uid])) as any[];
+      res.json(rows.map(({ user_id, ...r }) => ({ ...r, mine: user_id === uid })));
+    });
+    // Автор: принять в канон / скрыть
+    app.patch("/api/worlds/:wid/chronicle/:cid", requireUser, (req: any, res) => {
+      const own = db.prepare("SELECT 1 FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, req.auth.user.id);
+      if (!own) return res.status(404).json({ error: "world_not_found" });
+      const status = ["canon", "hidden", "new"].includes(req.body?.status) ? req.body.status : null;
+      const summary = typeof req.body?.summary === "string" ? str(req.body.summary, 1200) : null;
+      if (!status && summary === null) return res.status(400).json({ error: "nothing_to_change" });
+      db.prepare(`UPDATE world_chronicle SET ${[status ? "status = @status" : "", summary !== null ? "summary = @summary" : ""].filter(Boolean).join(", ")} WHERE id = @id AND world_id = @wid`)
+        .run({ status, summary, id: req.params.cid, wid: req.params.wid });
+      res.json({ status: "ok" });
+    });
+    // Автор: событие мира между партиями («Северный маяк снова горит») — сразу канон
+    app.post("/api/worlds/:wid/chronicle", requireUser, (req: any, res) => {
+      const uid = req.auth.user.id;
+      const own = db.prepare("SELECT 1 FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, uid);
+      if (!own) return res.status(404).json({ error: "world_not_found" });
+      const title = str(req.body?.title, 120), summary = str(req.body?.summary, 1200);
+      if (!title || !summary) return res.status(400).json({ error: "required", message: "Нужны заголовок и текст события" });
+      const id = crypto.randomUUID();
+      db.prepare("INSERT INTO world_chronicle (id, world_id, session_id, user_id, kind, title, summary, status) VALUES (?, ?, NULL, ?, 'news', ?, ?, 'canon')").run(id, req.params.wid, uid, title, summary);
+      res.status(201).json({ id });
+    });
+    app.delete("/api/worlds/:wid/chronicle/:cid", requireUser, (req: any, res) => {
+      const own = db.prepare("SELECT 1 FROM worlds WHERE id = ? AND owner_id = ?").get(req.params.wid, req.auth.user.id);
+      if (!own) return res.status(404).json({ error: "world_not_found" });
+      db.prepare("DELETE FROM world_chronicle WHERE id = ? AND world_id = ?").run(req.params.cid, req.params.wid);
+      res.json({ status: "ok" });
+    });
+  };
+
+  return { register: (app: Express, requireUser: any) => { register(app, requireUser); registerChronicle(app, requireUser); }, getForPlay, countPlay, checkSession, canonFor };
 }

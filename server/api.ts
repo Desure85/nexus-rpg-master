@@ -38,7 +38,13 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   // после каждого хода мастера — проверка достижений
   const broadcastWithHooks = (room: string, data: any) => {
     broadcast(room, data);
-    if (data?.type === "turn_end") { try { heroes.checkSession(data.sessionId); } catch (e) { console.error("[achievements]", e); } }
+    if (data?.type === "turn_end") {
+      try { heroes.checkSession(data.sessionId); } catch (e) { console.error("[achievements]", e); }
+      try {
+        const added = worlds.checkSession(data.sessionId);
+        if (added) broadcast(room, { type: "chronicle_added", sessionId: data.sessionId, status: added.status });
+      } catch (e) { console.error("[chronicle]", e); }
+    }
   };
   const billing = createBilling(db);
   const tenancy = createTenancy(db, billing);
@@ -656,7 +662,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
 
   // ------------------------------- игровые сервисы -------------------------------
   const gameApi = registerGameRoutes(app, { db, broadcast });
-  engine = new Engine(db, gameApi, broadcastWithHooks, tenancy, billing);
+  engine = new Engine(db, gameApi, broadcastWithHooks, tenancy, billing, (wid, sid) => worlds.canonFor(wid, sid));
   heroes.register(app, requireUser);
   worlds.register(app, requireUser);
 

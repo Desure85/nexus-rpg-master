@@ -316,6 +316,9 @@ export default function App() {
         loadSessionById(id).catch(() => undefined);
         fetchSessions();
         break;
+      case 'chronicle_added':
+        showToast(e.status === 'canon' ? '📜 Итоги партии вошли в хронику мира' : '📜 Итоги партии отправлены в хронику мира — автор решит, станут ли они каноном');
+        break;
       case 'claims_changed':
       case 'actions_changed':
         fetchPanels();

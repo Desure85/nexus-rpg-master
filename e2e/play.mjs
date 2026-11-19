@@ -31,7 +31,7 @@ const waitTurn = async (page, sid, minAssistant) => {
     const n = (s?.history || []).filter(m => m.role === 'assistant').length;
     if (s && !s.busy && n >= minAssistant) return { s, ms: Date.now() - t0 };
     if (page.__failed) throw new Error(`ошибка в интерфейсе: ${page.__failed}`);
-    const err = await page.locator('text=/Ошибка хода|Не удалось|не ответила/').first().textContent({ timeout: 200 }).catch(() => null);
+    const err = await page.locator('text=/^(Ошибка хода|Не удалось|Модель не ответила)/').first().textContent({ timeout: 200 }).catch(() => null);
     if (err && Date.now() - t0 > 5000) throw new Error(`ошибка хода: ${err.slice(0, 200)}`);
     if (Date.now() - t0 > TURN_TIMEOUT) throw new Error(`ход не завершился за ${TURN_TIMEOUT / 1000} с`);
     await page.waitForTimeout(1500);
@@ -324,6 +324,23 @@ async function worldPlay(browser) {
   const nameless = (lastDash(s)?.threats || []).find(t => /безымян/i.test(t.name));
   if (nameless) check('мир: HP безымянного из бестиария (11 минус удары)', /\/11$/.test(String(nameless.hp)), nameless.hp);
   else log('   (безымянный не остался на сцене — HP не проверить)');
+  // живой мир: итоги партии → хроника → канон → новая партия о нём знает
+  ({ s, ms } = await gmTurn(page, sid, '[SESSION SUMMARY] Подведи итоги партии', 4));
+  recordTurn('Мир: итоги партии', s, ms);
+  await page.waitForTimeout(1000);
+  const chron = (await api(page, `/api/worlds/${w.id}/chronicle`)).body || [];
+  check('живой мир: итоги партии в хронике', chron.length === 1 && chron[0].status === 'new', JSON.stringify(chron[0] || {}).slice(0, 160));
+  if (chron[0]) {
+    await api(page, `/api/worlds/${w.id}/chronicle/${chron[0].id}`, { method: 'PATCH', body: JSON.stringify({ status: 'canon' }) });
+    const me2 = (await api(page, '/api/auth/me')).body;
+    const created = await api(page, '/api/sessions', { method: 'POST', body: JSON.stringify({ workspaceId: me2.workspaces[0].id, setup: { worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Тарн', concept: 'Ныряльщик гильдии', gender: 'М' }] } }) });
+    const s2 = created.body;
+    let r2 = await waitTurn(page, s2.id, 1);
+    await api(page, `/api/sessions/${s2.id}/turn`, { method: 'POST', body: JSON.stringify({ content: 'Тарн расспрашивает в порту, что случилось той ночью на маяке и кто такая Рина' }) });
+    r2 = await waitTurn(page, s2.id, 2);
+    recordTurn('Живой мир: новая партия расспрашивает о прошлой', r2.s, r2.ms);
+    if (process.env.LIVE) check('живой мир: новая партия помнит прошлую (Рина)', /Рин/.test(lastAssistant(r2.s)?.content || ''), (lastAssistant(r2.s)?.content || '').slice(0, 140));
+  }
   await ctx.close();
 }
 
