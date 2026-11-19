@@ -308,9 +308,13 @@ export const getTechnicalInstructions = (mechanics: MechanicConfig[]) => {
   ${dashFields}
 }
 - Числа — числами. features, sceneAspects, sceneLoot, echoes, inventory — массивы строк.
-- Пиши всех персонажей и все известные локации; неизменившиеся поля можно повторить как есть.
-- Числа героев (hp, stress, tokens, gold, xp) копируй из [STATE]: менять их можно только тегами из раздела 4.
-- abilities: перечисляй ВСЕ способности героя, старые не удаляй.
+- ВЫВОДИ ТОЛЬКО ИЗМЕНЕНИЯ — движок хранит всё остальное и сам сливает. Каждый ответ короче — игра быстрее.
+  • characters: для каждого активного героя — "name" и "actions" (свежие варианты под новую ситуацию) плюс только изменившиеся поля (condition, goal, inventory, equipment, relationships, новые abilities).
+  • Числа героев (hp, stress, tokens, gold, xp) НЕ пиши — их ведёт движок, менять их можно только тегами из раздела 4. Новому персонажу (спутник, призванный зверь) укажи "hp".
+  • locations — только новые и изменившиеся (по id); currentLocationId — при перемещении.
+  • threats, sceneAspects, sceneLoot, clocks, echoes, quests, decisionTree — если в списке что-то изменилось, выведи его целиком; не изменилось — не выводи.
+  • atmosphere и suggestedRoll — всегда.
+- На старте игры ([GAME START]) выведи дашборд полностью.
 - Персонажи со статусом 🏠 в [STATE] находятся на базе: в сценах не участвуют, действий им не давай.
 - suggestedRoll: какой бросок нужен для самого вероятного следующего действия, почему и с какой сложностью (dc).
 ${isEnabled('actions') ? '- actions: строго по [ACTION SLOTS]; если тега нет — 1–3 действия разных категорий.\n' : ''}${isEnabled('doom_pool') ? '- doomPool: 0–10, +1 за провал или Искушение; после [WORLD EVENT] — 0.\n' : ''}${isEnabled('loot') ? '- sceneLoot: добыча сцены; подбирается действием Loot «Подобрать [Предмет]», после этого переносится в inventory.\n' : ''}${isEnabled('equipment') ? '- equipment: у каждого предмета конкретный bonus; пустой слот — "Пусто". Слоты можно добавлять под сеттинг («Киберимплант»).\n' : ''}
@@ -329,7 +333,7 @@ ${isEnabled('actions') ? '- actions: строго по [ACTION SLOTS]; если 
 
 2. <codex_json>[{"name": "...", "type": "npc|location|item|lore", "description": "...", "status": "..."}]</codex_json> — только новые и изменившиеся записи. Это твоя внешняя память: фиксируй имена NPC, их мотивы и обещания.
 
-3. <lore_update>...</lore_update> — если произошло важное: ПОЛНЫЙ краткий пересказ всего сюжета, до 400 слов. На [CLARIFY] не выводи.
+3. <lore_update>...</lore_update> — только после поворотного события (не чаще раза в 4–5 ходов): ПОЛНЫЙ краткий пересказ всего сюжета, до 250 слов. На [CLARIFY] не выводи.
 
 4. <final_draft>...</final_draft> — только на [SAVE_CHAPTER].
 5. <session_summary>...</session_summary> — только на [SESSION SUMMARY] или в конце [FINALE].

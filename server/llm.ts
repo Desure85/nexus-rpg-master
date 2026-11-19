@@ -32,7 +32,7 @@ export class LlmError extends Error {
 
 const env = (k: string) => (process.env[k] || "").trim();
 const randomId = () => (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-const TIMEOUT_MS = () => Number(process.env.LLM_TIMEOUT_MS || 180_000);
+const TIMEOUT_MS = () => Number(process.env.LLM_TIMEOUT_MS || 240_000);
 
 /** Срезает «мета»-абзацы, которые некоторые модели выдают перед ответом. */
 const META_RE = /skill|brainstorm|AGENTS|creative writing|let me (check|think|just)|user (is asking|asks|wants|keeps)|according to|I.?ll answer|I will answer|this is (a|just|the)|Пользователь|навык|скилл|рассужд|отвечу как|я отвечу/i;
@@ -193,6 +193,7 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
         // модели с рассуждениями (DeepSeek, Kimi…) шлют «мысли» отдельно — не показываем, но учитываем
         const thought = ev.choices?.[0]?.delta?.reasoning_content || ev.choices?.[0]?.delta?.reasoning || "";
         if (thought) reasoningChars += thought.length;
+        if (ev.choices?.[0]?.finish_reason) finishReason = ev.choices[0].finish_reason;
         if (ev.choices?.[0]?.finish_reason === "length") console.warn(`[llm] ответ обрезан по лимиту токенов (${acc.length} символов текста, ${reasoningChars} рассуждений)`);
         if (ev.usage) usage = { inputTokens: ev.usage.prompt_tokens || 0, outputTokens: ev.usage.completion_tokens || 0, estimated: false };
       } catch { /* keep-alive / мусор */ }

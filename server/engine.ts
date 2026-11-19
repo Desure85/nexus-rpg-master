@@ -596,7 +596,7 @@ export class Engine {
 
   /** Провайдер оборвал поток (нет закрытого dashboard_json): срезаем недописанное и просим модель закончить ход. */
   private async repairTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, request: LlmRequest, partial: string) {
-    console.warn(`[engine] ход оборван (${partial.length} симв.), дописываем`);
+    console.warn(`[engine] ход оборван (${partial.length} симв.), дописываем; хвост: ${JSON.stringify(partial.slice(-160))}`);
     const head = cutToSentence(partial);
     try {
       const tail = await this.callLlm(s, cfg, {
