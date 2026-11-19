@@ -5,7 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
-import { worldPromptBlock, findEnemy, enemyStats } from "../shared/world";
+import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, type ChronicleEntry } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -42,7 +42,9 @@ export class Engine {
   private oraclePromises = new Set<Promise<void>>();
   private oracleAttempt = new Map<string, number>();
 
-  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing) {
+  constructor(private db: DB, private game: GameApi, private broadcast: Broadcast, private tenancy: Tenancy, private billing: Billing,
+    /** Канон хроники мира (живой мир): события других партий */
+    private worldChronicle: (worldId: string, exceptSession: string) => ChronicleEntry[] = () => []) {
     this.oracle = createOracleStore(db);
   }
 
@@ -642,7 +644,9 @@ export class Engine {
     if (!w?.data) return "";
     const recent = s.history.slice(-5).map(m => m.content).join("\n");
     const { text } = worldPromptBlock({ title: w.title, data: w.data }, recent);
-    return text + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "");
+    let chronicle = "";
+    try { chronicle = chronicleBlock(this.worldChronicle(w.id, s.id)); } catch { /* хроники может не быть */ }
+    return text + chronicle + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "");
   }
 
   private buildRpgSystem(s: StoredSession, extra: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {

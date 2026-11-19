@@ -1124,6 +1124,47 @@ describe('миры', () => {
     expect((await other.post('/api/worlds/generate', { prompt: 'Северный край, где туман крадёт имена', workspaceId: gm().wid })).status).toBe(403);
   });
 
+  it('живой мир: итоги партий — в хронику, автор принимает в канон, канон виден новым партиям', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const w = (await gm().post('/api/worlds', { ...worldBody(), visibility: 'link' })).body;
+    const player = await account('chron@example.com');
+    const pw = (await player.get('/api/auth/me')).body.workspaces[0].id;
+    const start = async (u: any, wid: string) => {
+      const r = await u.post('/api/sessions', { setup: { worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] }, workspaceId: wid });
+      await ctx.engine.whenIdle(r.body.id);
+      return r.body.id as string;
+    };
+    const sid = await start(player, pw);
+    await player.post(`/api/sessions/${sid}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
+    await ctx.engine.whenIdle(sid);
+    const mine = (await player.get(`/api/worlds/${w.id}/chronicle`)).body;
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ status: 'new', mine: true, heroes: 'Рина' });
+    expect(mine[0].summary).toContain('раскрыли тайну');
+    const stranger = await account('chron2@example.com');
+    expect((await stranger.get(`/api/worlds/${w.id}/chronicle`)).body).toEqual([]);
+    const own = (await gm().get('/api/worlds?scope=mine')).body.find((x: any) => x.id === w.id);
+    expect(own.chronicleNew).toBe(1);
+    expect((await player.patch(`/api/worlds/${w.id}/chronicle/${mine[0].id}`, { status: 'canon' })).status).toBe(404);
+    await gm().patch(`/api/worlds/${w.id}/chronicle/${mine[0].id}`, { status: 'canon', summary: 'Рина зажгла Северный маяк, туман отступил.' });
+    await gm().post(`/api/worlds/${w.id}/chronicle`, { title: 'Гильдия раскололась', summary: 'Половина ныряльщиков ушла к пепельникам.' });
+    expect((await stranger.get(`/api/worlds/${w.id}/chronicle`)).body.map((e: any) => e.title)).toEqual(['Гильдия раскололась', expect.any(String)]);
+    // новая партия видит канон в промпте мастера
+    const sid2 = await start(stranger, (await stranger.get('/api/auth/me')).body.workspaces[0].id);
+    await stranger.post(`/api/sessions/${sid2}/turn`, { content: 'Рина осматривается' });
+    await ctx.engine.whenIdle(sid2);
+    const log = ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? ORDER BY id DESC LIMIT 1").get(sid2) as any;
+    const sys = JSON.parse(log.request).system as string;
+    expect(sys).toContain('Хроника мира');
+    expect(sys).toContain('Рина зажгла Северный маяк');
+    expect(sys).toContain('Гильдия раскололась');
+    // режим «выкл» — в хронику не пишем
+    await gm().patch(`/api/worlds/${w.id}`, { data: { ...w.data, living: 'off' } });
+    await stranger.post(`/api/sessions/${sid2}/turn`, { content: '[SESSION SUMMARY] итоги' });
+    await ctx.engine.whenIdle(sid2);
+    expect((await gm().get(`/api/worlds/${w.id}/chronicle`)).body).toHaveLength(2);
+  });
+
   it('чужой приватный мир нельзя запустить', async () => {
     const other = await account('stranger@example.com');
     const w = (await other.post('/api/worlds', worldBody())).body;

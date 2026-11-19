@@ -72,6 +72,8 @@ export interface WorldData {
   currency?: string;
   /** Лавки продают только предметы мира (иначе — вдобавок к товарам жанра) */
   shopReplace?: boolean;
+  /** Живой мир: итоги партий попадают в хронику — off / review (автор принимает) / auto */
+  living?: 'off' | 'review' | 'auto';
 }
 
 export interface World {
@@ -88,6 +90,9 @@ export interface World {
   plays?: number;
   likes?: number;
   liked?: boolean;
+  /** записей хроники в каноне; новых — ждут автора (только для автора) */
+  chronicle?: number;
+  chronicleNew?: number;
   hidden?: boolean;
   updated_at?: string;
   mine?: boolean;
@@ -166,6 +171,7 @@ export function normalizeWorldData(raw: any): WorldData {
     enemies, items,
     ...(str(d.currency, 30) ? { currency: str(d.currency, 30) } : {}),
     ...(d.shopReplace && items.some(i => i.inShop) ? { shopReplace: true } : {}),
+    ...(d.living === 'off' || d.living === 'auto' ? { living: d.living } : {}),
     setting: str(d.setting, WORLD_LIMITS.setting),
     core: str(d.core, WORLD_LIMITS.core),
     tone: str(d.tone, WORLD_LIMITS.tone) || undefined,
@@ -303,4 +309,20 @@ export const closeJson = (text: string) => {
   }
   cut = cut.replace(/,\s*$/, '').replace(/:\s*$/, ': null');
   return cut + st.reverse().join('');
+};
+
+export interface ChronicleEntry { kind: string; title: string; summary: string; heroes: string; created_at?: string }
+
+/** Хроника мира в промпте: что уже случилось в других партиях — это канон мира. */
+export const chronicleBlock = (entries: ChronicleEntry[], budget = 2000) => {
+  if (!entries.length) return '';
+  let left = budget;
+  const lines: string[] = [];
+  for (const e of entries) {
+    const line = `- ${e.kind === 'news' ? 'Событие' : e.kind === 'tale' ? 'Сказка' : 'Партия'} «${e.title}»${e.heroes ? ` (${e.heroes})` : ''}: ${e.summary.replace(/\s+/g, ' ').slice(0, 350)}`;
+    if (line.length > left) break;
+    left -= line.length;
+    lines.push(line);
+  }
+  return `\n### Хроника мира — уже случилось (это канон: последствия видны, NPC помнят; не повторяй эти сюжеты)\n${lines.join('\n')}`;
 };

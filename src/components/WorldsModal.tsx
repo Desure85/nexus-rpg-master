@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock, Heart, Flag, Search, Upload, Download, Sparkles } from 'lucide-react';
+import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock, Heart, Flag, Search, Upload, Download, Sparkles, ScrollText, Check, EyeOff } from 'lucide-react';
 import { customPrompt } from './PromptModal';
 import { importWorld, exportWorld, cardFromPng, type ImportResult } from '../../shared/world-import';
 import { api, appLink } from '../api';
@@ -51,6 +51,7 @@ export interface WorldStart { worldId: string; scenarioId?: string; title?: stri
 /** Каталог миров: свои и общие; отсюда — редактор и запуск игры. */
 export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number; workspaceId?: string }> = ({ onClose, onPlay, openId, maxHeroes = 4, workspaceId }) => {
   const [genOpen, setGenOpen] = useState(false);
+  const [chron, setChron] = useState<World | null>(null);
   const [tab, setTab] = useState<'mine' | 'public'>('mine');
   const [list, setList] = useState<World[] | null>(null);
   const [editing, setEditing] = useState<World | null>(null);
@@ -150,6 +151,9 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                       {w.mine && <button onClick={async () => setEditing(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white"><Pencil size={12} /> Изменить</button>}
                       {w.mine && <button onClick={async () => { const f = await full(w); download(f.title, exportWorld(f)); }} className="p-1.5 rounded-lg bg-white/5 text-white/50 hover:text-white" aria-label="Скачать JSON" title="Скачать JSON"><Download size={13} /></button>}
                       <button onClick={async () => { try { await api(`/api/worlds/${w.id}/copy`, { method: 'POST' }); setTab('mine'); load('mine'); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white" title="Копия в мои миры — можно переделать под себя"><Copy size={12} /> {w.mine ? 'Копия' : 'Ремикс'}</button>
+                      <button onClick={() => setChron(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.chronicleNew ? 'text-amber-200 bg-amber-500/15' : 'text-white/50 bg-white/5 hover:text-white'}`} title="Хроника мира: что случилось в партиях">
+                        <ScrollText size={12} /> {w.chronicle || 0}{w.chronicleNew ? ` +${w.chronicleNew}` : ''}
+                      </button>
                       <button onClick={() => like(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.liked ? 'text-rose-300 bg-rose-500/10' : 'text-white/50 bg-white/5 hover:text-white'}`} aria-label="Нравится"><Heart size={12} fill={w.liked ? 'currentColor' : 'none'} /> {w.likes || 0}</button>
                       {!w.mine && <button onClick={() => report(w)} className="ml-auto p-1.5 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={13} /></button>}
                       {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
@@ -161,6 +165,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
           )}
         </div>
       </div>
+      {chron && <ChronicleModal world={chron} onClose={() => { setChron(null); load(); }} />}
       {genOpen && <WorldGenerator workspaceId={workspaceId} onClose={() => setGenOpen(false)} onDraft={d => { setGenOpen(false); setEditing({ ...newWorld(), ...d }); }} />}
       {editing && <WorldEditor world={editing} onClose={() => setEditing(null)} onSaved={w => { setEditing(null); setTab('mine'); load('mine'); if (!editing.id) setPlaying(w); }} />}
       {playing && <WorldPlay world={playing} maxHeroes={maxHeroes} onClose={() => setPlaying(null)} onPlay={s => { setPlaying(null); onPlay(s); }} />}
@@ -250,6 +255,7 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
               </div>
             )}
           </div>
+          <ChroniclePreview worldId={world.id} />
           <div>
             <span className={label}>Герои (до {maxHeroes})</span>
             <div className="flex flex-wrap gap-1.5">
@@ -321,6 +327,11 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
             <div><span className={label}>Описание для игроков</span><textarea className={`${input} min-h-[70px]`} maxLength={600} value={w.description} placeholder="Чем мир цепляет — 1–3 предложения" onChange={e => setW({ ...w, description: e.target.value })} /></div>
             <div><span className={label}>Сеттинг для мастера</span><textarea className={`${input} min-h-[90px]`} maxLength={1500} value={d.setting} placeholder="Где и когда всё происходит, что за общество, какая магия или технологии" onChange={e => setD({ setting: e.target.value })} /></div>
             <div><span className={label}>Тон и табу</span><textarea className={`${input} min-h-[60px]`} maxLength={1500} value={d.tone || ''} placeholder="Например: меланхолично, без жестокости к детям, больше загадок" onChange={e => setD({ tone: e.target.value })} /></div>
+            <div>
+              <span className={label}>Живой мир</span>
+              <div className="flex flex-wrap gap-1.5">{([['review', 'С моей проверкой'], ['auto', 'Автоматически'], ['off', 'Выключен']] as const).map(([v, n]) => <button key={v} onClick={() => setD({ living: v === 'review' ? undefined : v })} className={chip((d.living || 'review') === v)}>{n}</button>)}</div>
+              <p className="text-[11px] text-white/35 mt-1.5">{d.living === 'off' ? 'Партии не меняют мир.' : 'Итоги партий попадают в хронику мира, и новые партии о них знают: NPC помнят, последствия видны.'}{!d.living ? ' Вы решаете, что из сыгранного станет каноном.' : ''}</p>
+            </div>
             <div>
               <span className={label}>Доступ</span>
               <div className="flex flex-wrap gap-1.5">{(['private', 'link', 'public'] as const).map(v => <button key={v} onClick={() => setW({ ...w, visibility: v })} className={chip(w.visibility === v)}>{VIS_LABEL[v]}</button>)}</div>
@@ -520,5 +531,82 @@ const ItemEditor: React.FC<{ item: WorldItem; onChange: (i: WorldItem) => void; 
       <label className="flex items-center gap-2 text-[11px] text-white/50"><input type="checkbox" className="accent-amber-400" checked={!!item.inShop} disabled={!item.price} onChange={e => onChange({ ...item, inShop: e.target.checked || undefined })} /> Продаётся в лавках{!item.price ? ' (укажите цену)' : ''}</label>
       <p className="text-[11px] text-white/40">В игре: <span className="text-white/70">{label}</span>{item.kind === 'consumable' && describeEffect(label) ? ` · ${describeEffect(label)}` : ''}</p>
     </Box>
+  );
+};
+
+/* ------------------------------------------------------------------ хроника ------------------------------------------------------------------ */
+
+interface ChronicleRow { id: string; kind: 'game' | 'tale' | 'news'; title: string; summary: string; heroes: string; status: 'new' | 'canon' | 'hidden'; created_at: string; player?: string; mine?: boolean }
+const KIND_ICON = { game: '⚔️', tale: '📖', news: '📯' } as const;
+const fmtDate = (d: string) => { try { return new Date(d.replace(' ', 'T') + 'Z').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch { return ''; } };
+
+const ChroniclePreview: React.FC<{ worldId: string }> = ({ worldId }) => {
+  const [rows, setRows] = useState<ChronicleRow[]>([]);
+  useEffect(() => { api<ChronicleRow[]>(`/api/worlds/${worldId}/chronicle`).then(r => setRows(r.filter(x => x.status === 'canon').slice(0, 3))).catch(() => undefined); }, [worldId]);
+  if (!rows.length) return null;
+  return (
+    <div>
+      <span className={label}>Хроника мира — уже случилось</span>
+      <div className="space-y-1.5">
+        {rows.map(r => <p key={r.id} className="text-xs text-white/55 leading-snug"><span className="text-white/80">{KIND_ICON[r.kind]} {r.title}</span>{r.heroes ? <span className="text-white/35"> · {r.heroes}</span> : null} — {r.summary.slice(0, 160)}{r.summary.length > 160 ? '…' : ''}</p>)}
+      </div>
+    </div>
+  );
+};
+
+const ChronicleModal: React.FC<{ world: World; onClose: () => void }> = ({ world, onClose }) => {
+  const [rows, setRows] = useState<ChronicleRow[] | null>(null);
+  const [news, setNews] = useState({ title: '', summary: '' });
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const load = () => api<ChronicleRow[]>(`/api/worlds/${world.id}/chronicle`).then(setRows).catch(() => setRows([]));
+  useEffect(() => { load(); }, [world.id]);
+  const patch = async (id: string, body: object) => { await api(`/api/worlds/${world.id}/chronicle/${id}`, { method: 'PATCH', body }); load(); };
+  const owner = !!world.mine;
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70" onClick={onClose}>
+      <div className="w-full sm:max-w-xl max-h-[92dvh] bg-[#1a1614] border border-white/10 rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-5 py-4 border-b border-white/10 flex items-center gap-3 shrink-0">
+          <ScrollText size={18} className="text-amber-300" />
+          <h3 className="text-white font-bold flex-1 truncate">Хроника: {world.title}</h3>
+          <button onClick={onClose} className="p-1.5 text-white/40 hover:text-white" aria-label="Закрыть"><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-5 space-y-3">
+          <p className="text-[11px] text-white/40 leading-snug">{owner
+            ? 'Итоги партий в вашем мире. То, что в каноне, мастер учитывает в новых партиях. Новые записи ждут вашего решения: можно поправить текст перед принятием.'
+            : 'Что уже случилось в этом мире. Итоги ваших партий тоже попадут сюда — автор мира решит, станут ли они каноном.'}</p>
+          {owner && (
+            <div className="p-3 rounded-xl bg-black/30 border border-white/10 space-y-2">
+              <span className={label}>📯 Событие мира между партиями</span>
+              <input className={input} placeholder="Северный маяк снова горит" maxLength={120} value={news.title} onChange={e => setNews({ ...news, title: e.target.value })} />
+              <textarea className={`${input} min-h-[60px]`} placeholder="Что изменилось в мире и как это заметят герои" maxLength={1200} value={news.summary} onChange={e => setNews({ ...news, summary: e.target.value })} />
+              <button disabled={!news.title.trim() || !news.summary.trim()} onClick={async () => { await api(`/api/worlds/${world.id}/chronicle`, { body: news }); setNews({ title: '', summary: '' }); load(); }} className="px-3 py-1.5 rounded-lg bg-amber-400 text-black text-xs font-bold disabled:opacity-40">Добавить в канон</button>
+            </div>
+          )}
+          {rows === null ? <p className="text-white/40 text-sm">Загружаем…</p> : rows.length === 0 ? <p className="text-sm text-white/45">Пока пусто. Сыграйте партию до итогов («Финал вечера» или «Итоги») — и она появится здесь.</p> : rows.map(r => (
+            <div key={r.id} className={`p-3 rounded-xl border space-y-1.5 ${r.status === 'new' ? 'border-amber-400/30 bg-amber-500/5' : r.status === 'hidden' ? 'border-white/5 opacity-50' : 'border-white/10 bg-white/[0.02]'}`}>
+              <div className="flex items-start gap-2">
+                <p className="flex-1 text-sm text-white"><span className="mr-1">{KIND_ICON[r.kind]}</span>{r.title}</p>
+                <span className="text-[10px] text-white/35 shrink-0">{fmtDate(r.created_at)}{r.status === 'new' ? ' · ждёт автора' : r.status === 'hidden' ? ' · скрыто' : ''}</span>
+              </div>
+              {(r.heroes || r.player) && <p className="text-[11px] text-white/40">{r.heroes}{r.player && r.kind !== 'news' ? ` · играл(а) ${r.player}` : ''}</p>}
+              {editing === r.id
+                ? <textarea className={`${input} min-h-[80px]`} value={draft} maxLength={1200} onChange={e => setDraft(e.target.value)} />
+                : <p className="text-xs text-white/60 leading-relaxed whitespace-pre-line">{r.summary}</p>}
+              {owner && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {editing === r.id
+                    ? <button onClick={async () => { await patch(r.id, { summary: draft }); setEditing(null); }} className="px-2.5 py-1 rounded-lg bg-white text-black text-[11px] font-bold">Сохранить текст</button>
+                    : <button onClick={() => { setEditing(r.id); setDraft(r.summary); }} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/60 text-[11px] flex items-center gap-1"><Pencil size={11} /> Править</button>}
+                  {r.status !== 'canon' && <button onClick={() => patch(r.id, { status: 'canon' })} className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-200 text-[11px] flex items-center gap-1"><Check size={11} /> В канон</button>}
+                  {r.status !== 'hidden' && <button onClick={() => patch(r.id, { status: 'hidden' })} className="px-2.5 py-1 rounded-lg bg-white/5 text-white/50 text-[11px] flex items-center gap-1"><EyeOff size={11} /> Скрыть</button>}
+                  <button onClick={async () => { if (await customConfirm('Удалить запись из хроники?')) { await api(`/api/worlds/${world.id}/chronicle/${r.id}`, { method: 'DELETE' }); load(); } }} className="ml-auto p-1 text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={13} /></button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 };

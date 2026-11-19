@@ -87,7 +87,8 @@ export type SocketEvent =
   | { type: 'level_up'; sessionId: string; leveled: string[] }
   | { type: 'achievement'; sessionId: string; codes: string[] }
   | { type: 'oracle'; sessionId: string; status: 'generating' | 'ready' | 'error'; mode: string; changed?: string[]; error?: string }
-  | { type: 'update' | 'claims_changed' | 'actions_changed' | 'deleted'; sessionId: string };
+  | { type: 'update' | 'claims_changed' | 'actions_changed' | 'deleted'; sessionId: string }
+  | { type: 'chronicle_added'; sessionId: string; status: 'new' | 'canon' };
 
 /** Подписка на комнату сессии с автопереподключением. */
 export function useSessionSocket(sessionId: string | null | undefined, onEvent: (e: SocketEvent) => void, onReconnect?: () => void) {
