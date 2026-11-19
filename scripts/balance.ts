@@ -24,3 +24,13 @@ for (const [name, n, tier, cnt] of SCEN) {
   const pct = (x: number) => `${Math.round(x * 100)}%`.padStart(5);
   console.log(name.padEnd(28), pct(r.win).padStart(6), r.rounds.toFixed(1).padStart(6), pct(r.hpLost).padStart(11), pct(r.downed).padStart(9), pct(r.dead).padStart(6));
 }
+
+// Партия целиком: соло-герой, 12 и 20 сцен, город каждые 4 сцены (shared/campaign-sim.ts)
+import('../shared/campaign-sim').then(({ simulateCampaigns }) => {
+  console.log('\nПартия соло'.padEnd(16), 'гибель', 'поражений', 'на грани', 'уровень', 'деньги', 'зелий', 'лечений в городе');
+  for (const scenes of [12, 20]) {
+    const r = simulateCampaigns(4000, undefined, scenes);
+    const pct = (x: number) => `${Math.round(x * 100)}%`;
+    console.log(`${scenes} сцен`.padEnd(16), pct(r.dead).padStart(6), r.defeats.toFixed(2).padStart(9), pct(r.nearDeath).padStart(8), r.level.toFixed(1).padStart(7), Math.round(r.gold).toString().padStart(6), r.potionsUsed.toFixed(1).padStart(5), r.townHeals.toFixed(1).padStart(16));
+  }
+});

@@ -8,6 +8,7 @@ import { LocationMap } from './LocationMap';
 import { api, characterLink } from '../api';
 import { archetypeById } from '../../shared/archetypes';
 import { isConsumable, describeEffect } from '../../shared/items';
+import { ECONOMY } from '../../shared/balance';
 import { levelFromXp } from '../../shared/rules';
 import { Portal } from './Portal';
 import { DeltaBadge } from './TurnSummary';
@@ -393,31 +394,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
                   </span>
                   {(onEconomy && (hasTavern || hasInn || hasHealer)) && (
                     <div className="flex gap-1">
-                      {hasTavern && (char.gold ?? 0) >= 10 && (
+                      {hasTavern && (char.gold ?? 0) >= ECONOMY.rest.cost && (
                         <button
                           onClick={() => onEconomy('rest', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 transition-all"
-                          title={`Таверна: 10 ${currency || 'золота'} → HP макс, стресс -2`}
+                          title={`Таверна: ${ECONOMY.rest.cost} ${currency || 'золота'} → половина HP, стресс -1`}
                         >
-                          🍺 Таверна · 10
+                          🍺 Таверна · {ECONOMY.rest.cost}
                         </button>
                       )}
-                      {hasInn && (char.gold ?? 0) >= 20 && (
+                      {hasInn && (char.gold ?? 0) >= ECONOMY.inn.cost && (
                         <button
                           onClick={() => onEconomy('inn', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 transition-all"
-                          title={`Постоялый двор: 20 ${currency || 'золота'} → полное восстановление (HP макс, стресс 0)`}
+                          title={`Постоялый двор: ${ECONOMY.inn.cost} ${currency || 'золота'} → полное восстановление (HP макс, стресс 0)`}
                         >
-                          🛏️ Ночлег · 20
+                          🛏️ Ночлег · {ECONOMY.inn.cost}
                         </button>
                       )}
-                      {hasHealer && (char.gold ?? 0) >= 12 && (
+                      {hasHealer && (char.gold ?? 0) >= ECONOMY.healer.cost && (
                         <button
                           onClick={() => onEconomy('heal', char.name)}
                           className="text-[9px] px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 transition-all"
-                          title={`Лекарь: 12 ${currency || 'золота'} → +5 HP`}
+                          title={`Лекарь: ${ECONOMY.healer.cost} ${currency || 'золота'} → +${ECONOMY.healer.heal} HP`}
                         >
-                          ⚕️ Лекарь · 12
+                          ⚕️ Лекарь · {ECONOMY.healer.cost}
                         </button>
                       )}
                     </div>
