@@ -4,9 +4,9 @@ import type { GameApi } from "./game";
 import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
-import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, upgradeSystemPrompt, type StoredSession, type SessionConfig } from "./store";
+import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
-  CLARIFY_SYSTEM_PROMPT, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
+  CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
 import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags } from "../shared/parse";
@@ -206,7 +206,8 @@ export class Engine {
       llm,
       aiMode: mode,
       loggingEnabled: g.loggingEnabled,
-      systemPrompt: c.systemPrompt ? upgradeSystemPrompt(c.systemPrompt) : g.systemPrompt,
+      // системный промпт — только из кода; владелец и мастер могут лишь дописать пожелания
+      extraInstructions: [g.extraInstructions, c.extraInstructions].map(x => (x || "").trim()).filter(Boolean).join("\n\n"),
       mechanics: c.mechanics ? mergeMechanics(c.mechanics) : g.mechanics,
       idlePlayerAction: c.idlePlayerAction || g.idlePlayerAction,
       tale: { ...DEFAULT_TALE, ...(c.tale || {}) },
@@ -343,7 +344,7 @@ export class Engine {
     const isClarify = userText.startsWith("[CLARIFY]");
     const currentDashboard = lastDashboard(s.history);
     const mechanics = cfg.mechanics;
-    const system = this.buildRpgSystem(s, cfg.systemPrompt, mechanics, currentDashboard, isClarify);
+    const system = this.buildRpgSystem(s, cfg.extraInstructions, mechanics, currentDashboard, isClarify);
     const request: LlmRequest = { system, messages: this.contextWindow(s.history) };
 
     const turnId = crypto.randomUUID();
@@ -575,7 +576,7 @@ export class Engine {
     return mechanics.find(m => m.id === id)?.enabled ?? false;
   }
 
-  private buildRpgSystem(s: StoredSession, basePrompt: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {
+  private buildRpgSystem(s: StoredSession, extra: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {
     const isEnabled = (id: string) => this.isEnabled(mechanics, id);
     const filtered: any = structuredClone(dash);
     if (!isEnabled("threats_dash")) delete filtered.threats;
@@ -596,10 +597,10 @@ export class Engine {
     const codex = s.codex.length ? `\n\n### КОДЕКС (NPC, Локации, Предметы):\n${JSON.stringify(s.codex, null, 2)}\n` : "";
     const dashCtx = `\n\n### ТЕКУЩЕЕ СОСТОЯНИЕ ИГРЫ (DASHBOARD):\n${JSON.stringify(filtered, null, 2)}\nОБЯЗАТЕЛЬНО используй эти данные как основу для следующего JSON.`;
     const active = mechanics.filter(m => m.enabled).map(m => `### ${m.name}\n${m.description}`).join("\n\n");
-    const mechCtx = active ? `\n\n## АКТИВНЫЕ МЕХАНИКИ\nПроверки выполняются тобой. Стат всегда суммируется с итоговым кубиком.\n${active}` : "";
-    const base = isClarify ? CLARIFY_SYSTEM_PROMPT : basePrompt;
+    const mechCtx = active ? `\n\n## АКТИВНЫЕ МЕХАНИКИ\nБроски, итоги и исходы считает движок приложения — ты описываешь последствия.\n${active}` : "";
+    const base = isClarify ? CLARIFY_SYSTEM_PROMPT : SYSTEM_PROMPT;
     const style = s.style ? getStyleInstruction(s.style) : "";
-    return `${base}${isClarify ? "" : mechCtx}${style}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
+    return `${base}${isClarify ? "" : mechCtx}${style}${extraInstructionsBlock(extra)}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
   }
 
   private async runTaleTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, content: string) {
@@ -610,7 +611,7 @@ export class Engine {
     const isFinal = /^\[TALE_END\]/.test(content) || chapter >= tale.chapters;
     const heroes = (lastDashboard(s.history).characters || []).map(c => `- ${c.name}${c.goal ? `: ${c.goal}` : ""}`).join("\n");
     const memory = (heroes ? `\n\n## ГЕРОИ СКАЗКИ\n${heroes}` : "") + (s.lore ? `\n\n## ПАМЯТЬ СКАЗКИ\n${s.lore}` : "");
-    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, isFinal ? undefined : this.taleIdeaFor(s)) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
+    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, isFinal ? undefined : this.taleIdeaFor(s)) + extraInstructionsBlock(cfg.extraInstructions) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
 
     const turnId = crypto.randomUUID();
     this.busy.add(sessionId);

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AppSettings } from '../types';
-import { X, Save, Terminal, Type, RotateCcw, Users, KeyRound, LogOut } from 'lucide-react';
-import { SYSTEM_PROMPT } from '../../shared/rules';
+import { X, Save, Type, Users, KeyRound, LogOut, Feather, Lock } from 'lucide-react';
+import { MECHANIC_INFO } from '../../shared/rules';
 import { api } from '../api';
 import { inputCls, labelCls } from './PlatformAiForm';
 
@@ -16,6 +16,8 @@ interface SettingsModalProps {
 }
 
 type Tab = 'prompt' | 'mechanics' | 'appearance' | 'account';
+
+const EXTRA_PRESETS = ['Больше диалогов NPC', 'Короткие ответы', 'Мрачнее и серьёзнее', 'Больше юмора', 'Без жестоких сцен', 'Больше загадок', 'Быстрее к действию'];
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionName, user, onSave, onLogout, onClose }) => {
   const [local, setLocal] = useState<AppSettings>(settings);
@@ -35,7 +37,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'prompt', label: 'Промпт' },
+    { id: 'prompt', label: 'Мастер' },
     { id: 'mechanics', label: 'Механики' },
     { id: 'appearance', label: 'Вид' },
     { id: 'account', label: 'Аккаунт' },
@@ -51,14 +53,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <div className="w-full max-w-2xl bg-[#1a1614] border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-        <div className="p-6 border-b border-white/10 flex justify-between items-center">
+        <div className="p-6 border-b border-white/10 flex justify-between items-center shrink-0">
           <h2 className="font-display text-xl text-white">Настройки Nexus</h2>
           <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-lg text-white/40 hover:text-white">
             <X size={20} />
           </button>
         </div>
 
-        <div className="flex border-b border-white/10 overflow-x-auto">
+        <div className="flex border-b border-white/10 overflow-x-auto shrink-0">
           {tabs.map(t => (
             <button
               key={t.id}
@@ -72,21 +74,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {activeTab === 'prompt' && (
-            <div className="space-y-4 h-full flex flex-col">
-              <div className="flex justify-between items-center">
-                <label className={labelCls}><Terminal size={12} /> Базовые инструкции мастера</label>
-                <button onClick={() => setLocal({ ...local, systemPrompt: SYSTEM_PROMPT })} className="text-[10px] uppercase tracking-widest font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
-                  <RotateCcw size={10} /> По умолчанию
-                </button>
+            <div className="space-y-4">
+              <div>
+                <label className={labelCls}><Feather size={12} /> Пожелания мастеру</label>
+                <p className="text-xs text-white/50 mt-1 leading-relaxed">
+                  Как вести игру: тон, темп, о чём писать больше, чего избегать. Правила, броски и формат ответа задаёт движок — пожелания их не отменяют.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {EXTRA_PRESETS.map(p => {
+                  const lines = (local.extraInstructions || '').split('\n').map(l => l.trim());
+                  const on = lines.includes(p);
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setLocal({ ...local, extraInstructions: (on ? lines.filter(l => l !== p) : [...lines.filter(Boolean), p]).join('\n') })}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] transition-colors ${on ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200' : 'border-white/10 bg-white/5 text-white/70 hover:border-white/30 hover:text-white'}`}
+                    >{on ? '✓' : '+'} {p}</button>
+                  );
+                })}
               </div>
               <textarea
-                value={local.systemPrompt}
-                onChange={e => setLocal({ ...local, systemPrompt: e.target.value })}
-                className="flex-1 w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white font-mono text-xs focus:outline-none focus:border-white/30 transition-all resize-none min-h-[300px]"
+                value={local.extraInstructions || ''}
+                maxLength={3000}
+                onChange={e => setLocal({ ...local, extraInstructions: e.target.value })}
+                placeholder="Например: больше живых диалогов с NPC, мрачная атмосфера, без пыток и жестокости к животным, ответы покороче."
+                className="w-full p-4 bg-black/40 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-white/30 transition-all resize-y min-h-[160px]"
               />
-              <p className="text-[10px] text-white/30 italic">
-                {sessionName ? `Сохраняется для сессии «${sessionName}». ` : 'Будет применён к новым сессиям. '}
-                JSON-схемы дашборда и кодекса добавляются автоматически. В режиме «Сказка» используется отдельный промпт сказочника.
+              <p className="text-[10px] text-white/30 flex justify-between">
+                <span>{sessionName ? `Для сессии «${sessionName}» и новых игр.` : 'Для новых игр.'} Работает и в режиме «Сказка».</span>
+                <span>{(local.extraInstructions || '').length}/3000</span>
               </p>
             </div>
           )}
@@ -108,32 +125,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
                   ))}
                 </div>
               </div>
-              {(local.mechanics || []).map((mechanic, index) => (
-                <div key={mechanic.id} className="p-4 bg-black/40 border border-white/10 rounded-xl space-y-3">
-                  <label className="text-xs font-bold text-white flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={mechanic.enabled}
-                      onChange={e => {
-                        const m = [...(local.mechanics || [])];
-                        m[index] = { ...m[index], enabled: e.target.checked };
-                        setLocal({ ...local, mechanics: m });
-                      }}
-                      className="accent-emerald-500 w-4 h-4"
-                    />
-                    {mechanic.name}
-                  </label>
-                  <textarea
-                    value={mechanic.description}
-                    onChange={e => {
-                      const m = [...(local.mechanics || [])];
-                      m[index] = { ...m[index], description: e.target.value };
-                      setLocal({ ...local, mechanics: m });
-                    }}
-                    className="w-full p-3 bg-black/60 border border-white/5 rounded-lg text-white/80 font-mono text-[10px] focus:outline-none focus:border-white/20 resize-none min-h-[80px]"
-                  />
-                </div>
-              ))}
+              {(['Броски', 'Герой', 'Сцена', 'Повествование'] as const).map(group => {
+                const items = (local.mechanics || []).filter(m => (MECHANIC_INFO[m.id]?.group || 'Повествование') === group);
+                if (!items.length) return null;
+                return (
+                  <div key={group} className="space-y-1.5">
+                    <div className="text-[10px] uppercase tracking-widest font-bold text-white/40 px-1">{group}</div>
+                    <div className="bg-black/40 border border-white/10 rounded-xl divide-y divide-white/5">
+                      {items.map(mechanic => {
+                        const info = MECHANIC_INFO[mechanic.id];
+                        const core = !!info?.core;
+                        return (
+                          <label key={mechanic.id} className={`flex items-start gap-3 p-3 ${core ? 'opacity-60' : 'cursor-pointer hover:bg-white/[0.03]'}`}>
+                            <input
+                              type="checkbox"
+                              checked={core || mechanic.enabled}
+                              disabled={core}
+                              onChange={e => setLocal({ ...local, mechanics: (local.mechanics || []).map(m => m.id === mechanic.id ? { ...m, enabled: e.target.checked } : m) })}
+                              className="accent-emerald-500 w-4 h-4 mt-0.5 shrink-0"
+                            />
+                            <span className="min-w-0">
+                              <span className="text-sm text-white flex items-center gap-1.5">{info?.title || mechanic.name}{core && <Lock size={10} className="text-white/40" />}</span>
+                              <span className="block text-[11px] text-white/45 leading-snug">{core ? 'Основа игры — всегда включено. ' : ''}{info?.hint}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
