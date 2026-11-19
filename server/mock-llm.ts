@@ -92,7 +92,11 @@ function rpgReply(req: LlmRequest): string {
   if ((/\[ENCOUNTER:/.test(user) && !/тишина/.test(user)) || /#enemy|#hit/.test(user)) dash.threats = [{ name: "Мародёр", hp: "10/10", features: ["Ржавый тесак"] }];
   const thr = user.match(/#threat:([^:#\n]+):(\d+)/);
   if (thr) dash.threats = [{ name: thr[1].trim(), hp: `${thr[2]}/${thr[2]}`, features: [] }];
+  // #npc:Имя:уровень — NPC в кодексе и отношение первого героя к нему (для памяти NPC мира)
+  const npcs = [...user.matchAll(/#npc:([^:#\n]+):(-?\d+)/g)];
+  if (npcs.length && names[0]) dash.characters = [{ name: names[0], relationships: npcs.map(m => ({ target: m[1].trim(), level: Number(m[2]), status: Number(m[2]) > 0 ? "должен героине услугу" : "держит обиду" })) }];
   let tail = `\n\n<dashboard_json>${JSON.stringify(dash)}</dashboard_json>`;
+  if (npcs.length) tail += `\n<codex_json>${JSON.stringify(npcs.map(m => ({ name: m[1].trim(), type: "npc", description: `${m[1].trim()} из тестовой партии`, status: "жив" })))}</codex_json>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user)) tail += `\n<session_summary>Герои прошли через туман и раскрыли тайну записки.</session_summary>`;
   if (/\[(SESSION SUMMARY|FINALE)\]/.test(user) && /world_chronicle/.test(req.system)) tail += `\n<world_chronicle>Туман отступил от порта: героиня зажгла маяк заново.</world_chronicle>`;
   for (const m of user.matchAll(/#faction:([^:#\n]+):([+-])/g)) tail += ` [FACTION: ${m[1].trim()} ${m[2]}1]`;

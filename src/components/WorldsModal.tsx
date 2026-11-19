@@ -6,7 +6,7 @@ import { importWorld, exportWorld, cardFromPng, type ImportResult } from '../../
 import { api, appLink } from '../api';
 import { customAlert, customConfirm } from './PromptModal';
 import { ARCHETYPES } from '../../shared/archetypes';
-import { WORLD_GENRES, LORE_KINDS, ENEMY_TIER_LIST, attitudeLabel, type WorldFaction, type WorldClock, type WorldState, emptyWorldData, normalizeWorldData, enemyStats, itemLabel, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation, type WorldEnemy, type WorldItem } from '../../shared/world';
+import { WORLD_GENRES, LORE_KINDS, ENEMY_TIER_LIST, attitudeLabel, relationLabel, type NpcMemory, type WorldFaction, type WorldClock, type WorldState, emptyWorldData, normalizeWorldData, enemyStats, itemLabel, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation, type WorldEnemy, type WorldItem } from '../../shared/world';
 import { ENEMY_TIERS } from '../../shared/balance';
 import { describeEffect } from '../../shared/items';
 
@@ -277,6 +277,7 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: strin
             )}
           </div>
           <ChroniclePreview worldId={world.id} />
+          {!world.locked && <NpcMemoryPanel worldId={world.id} />}
           {world.locked && (
             <div className="p-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.06] text-xs text-white/65 leading-relaxed">
               Это платный мир. До покупки видны описание и сюжеты; лор ({(d as any).counts?.cards ?? 0} карточек), бестиарий и предметы откроются после покупки. Купленный мир ваш навсегда: играйте сколько угодно и делайте ремиксы для себя.
@@ -310,6 +311,41 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: strin
             className="flex-1 py-3 rounded-xl bg-amber-400 text-black font-bold disabled:opacity-40 flex items-center justify-center gap-2"
           ><Play size={16} /> Играть{heroes.length ? ` (${heroes.map(h => h.name).join(', ')})` : ''}</button>}
         </div>
+      </div>
+    </div>
+  );
+};
+
+/* ------------------------------------------------------------------ память NPC ------------------------------------------------------------------ */
+
+const NpcMemoryPanel: React.FC<{ worldId: string }> = ({ worldId }) => {
+  const [list, setList] = useState<NpcMemory[] | null>(null);
+  const [all, setAll] = useState(false);
+  const load = () => api<NpcMemory[]>(`/api/worlds/${worldId}/memory`).then(setList).catch(() => setList([]));
+  useEffect(() => { load(); }, [worldId]);
+  if (!list?.length) return null;
+  const forget = async (name?: string) => {
+    if (!name && !(await customConfirm('Забыть всех знакомых в этом мире? Мастер начнёт с чистого листа.'))) return;
+    await api(`/api/worlds/${worldId}/memory${name ? `?name=${encodeURIComponent(name)}` : ''}`, { method: 'DELETE' }).catch(() => undefined);
+    load();
+  };
+  const tone = (l: number) => l >= 3 ? 'border-emerald-400/30 text-emerald-200' : l <= -3 ? 'border-red-400/30 text-red-200' : 'border-white/10 text-white/70';
+  const shown = all ? list : list.slice(0, 8);
+  return (
+    <div data-testid="npc-memory">
+      <div className="flex items-baseline justify-between">
+        <span className={label}>Вас помнят · {list.length}</span>
+        <button onClick={() => forget()} className="text-[10px] text-white/35 hover:text-white/70">Забыть всех</button>
+      </div>
+      <p className="text-[11px] text-white/40 mb-2">Знакомые из ваших прошлых партий в этом мире: мастер введёт их, когда сцена приведёт, с отношением к вашим героям.</p>
+      <div className="flex flex-wrap gap-1.5">
+        {shown.map(n => (
+          <span key={n.name} title={[n.description, n.status && `Сейчас: ${n.status}`].filter(Boolean).join('\n')} className={`group inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full border bg-white/[0.03] text-[11px] ${tone(n.level)}`}>
+            {n.name}{n.level ? <span className="opacity-60">· {relationLabel(n.level)}{n.hero ? ` (${n.hero})` : ''}</span> : null}
+            <button onClick={() => forget(n.name)} aria-label={`Забыть ${n.name}`} className="opacity-30 group-hover:opacity-80 hover:text-white"><X size={11} /></button>
+          </span>
+        ))}
+        {list.length > 8 && !all && <button onClick={() => setAll(true)} className="text-[11px] text-white/45 hover:text-white">ещё {list.length - 8}</button>}
       </div>
     </div>
   );

@@ -5,7 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
-import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, stateWithDelta, worldStateBlock, parseWorldTags, parseWorldJson, applyWorldTags, type ChronicleEntry } from "../shared/world";
+import { worldPromptBlock, findEnemy, enemyStats, chronicleBlock, stateWithDelta, worldStateBlock, parseWorldTags, parseWorldJson, npcMemoryBlock, applyWorldTags, type ChronicleEntry } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -690,7 +690,7 @@ export class Engine {
     let chronicle = "";
     try { chronicle = chronicleBlock(this.worldChronicle(w.id, s.id)); } catch { /* хроники может не быть */ }
     const st = w.state ? stateWithDelta(w.data, w.state, s.config.worldDelta) : null;
-    return text + chronicle + (st ? worldStateBlock(w.data, st) : "") + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "")
+    return text + chronicle + npcMemoryBlock(w.npcMemory) + (st ? worldStateBlock(w.data, st) : "") + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "")
       + `\nКогда подводишь итоги партии ([SESSION SUMMARY] или [FINALE]), дополнительно выведи <world_chronicle>2–3 предложения для летописи мира: что изменилось в мире и кто из героев к этому причастен — без оценок игры и без markdown</world_chronicle>.`;
   }
 

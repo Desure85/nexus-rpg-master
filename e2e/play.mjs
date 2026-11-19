@@ -313,7 +313,7 @@ async function worldPlay(browser) {
   const cur = (lastDash(s)?.locations || []).find(l => l.id === lastDash(s)?.currentLocationId);
   check('мир: стартовое место из сценария', /Сольвей/.test(cur?.name || ''), cur?.name);
   check('мир: лор скрыт от клиента', !JSON.stringify(s.config || {}).includes('Безымянные'));
-  ({ s, ms } = await gmTurn(page, sid, 'Рина идёт к маяку и зовёт смотрителя', 2));
+  ({ s, ms } = await gmTurn(page, sid, `Рина идёт к маяку и зовёт смотрителя${process.env.LIVE ? '' : ' #npc:Смотритель Ивар:4'}`, 2));
   recordTurn('Мир: ход про смотрителя', s, ms);
   const txt = lastAssistant(s)?.content || '';
   // тестовая модель лор не читает — проверка только на живом ИИ
@@ -333,6 +333,10 @@ async function worldPlay(browser) {
   const chron = (await api(page, `/api/worlds/${w.id}/chronicle`)).body || [];
   check('живой мир: итоги партии в хронике', chron.length === 1 && chron[0].status === 'new', JSON.stringify(chron[0] || {}).slice(0, 160));
   if (process.env.LIVE) check('живой мир: запись летописи короткая (до 600 симв.)', (chron[0]?.summary || '').length > 20 && (chron[0]?.summary || '').length <= 600, (chron[0]?.summary || '').slice(0, 200));
+  const mem = (await api(page, `/api/worlds/${w.id}/memory`)).body || [];
+  log(`   память NPC: ${JSON.stringify(mem.map(n => [n.name, n.level, n.status]))}`);
+  report.push(`### Память NPC после партии\n\n\`${JSON.stringify(mem.map(n => ({ name: n.name, level: n.level, hero: n.hero, status: n.status })))}\`\n`);
+  check('память NPC: знакомые сохранились', process.env.LIVE ? mem.length > 0 : mem.some(n => n.name === 'Смотритель Ивар' && n.level === 4), JSON.stringify(mem.map(n => n.name)));
   const sNow = (await api(page, `/api/sessions/${sid}`)).body;
   log(`   мир в партии: ${JSON.stringify({ f: sNow.config?.world?.factions, c: sNow.config?.world?.clocks })}`);
   report.push(`### Состояние мира после партии\n\n\`${JSON.stringify({ factions: sNow.config?.world?.factions, clocks: sNow.config?.world?.clocks, chronicleDelta: chron[0]?.delta })}\`\n`);
@@ -345,6 +349,11 @@ async function worldPlay(browser) {
     await api(page, `/api/sessions/${s2.id}/turn`, { method: 'POST', body: JSON.stringify({ content: 'Тарн расспрашивает в порту, что случилось той ночью на маяке и кто такая Рина' }) });
     r2 = await waitTurn(page, s2.id, 2);
     recordTurn('Живой мир: новая партия расспрашивает о прошлой', r2.s, r2.ms);
+    await page.goto(`${BASE.replace(/\/$/, '')}/world/${w.id}`);
+    await page.waitForTimeout(2000);
+    check('память NPC: «Вас помнят» в диалоге запуска', await page.getByTestId('npc-memory').count() > 0);
+    await snap(page, 'world_npc_memory');
+    await page.keyboard.press('Escape').catch(() => undefined);
     if (process.env.LIVE) check('живой мир: новая партия помнит прошлую (Рина)', /Рин/.test(lastAssistant(r2.s)?.content || ''), (lastAssistant(r2.s)?.content || '').slice(0, 140));
   }
   await ctx.close();
