@@ -45,7 +45,7 @@ const assistantTexts = s => s.history.filter(m => m.role === 'assistant').map(m 
 
 const recordTurn = (title, s, ms) => {
   const a = lastAssistant(s);
-  report.push(`### ${title} (${(ms / 1000).toFixed(1)} с)\n\n${(a?.content || '').slice(0, 900)}\n`);
+  report.push(`### ${title} (${(ms / 1000).toFixed(1)} с)\n\n${process.env.FULL_REPORT ? (a?.content || '') : (a?.content || '').slice(0, 900)}\n`);
   check(`${title}: нет сырых тегов в тексте`, !RAW_TAGS.test(a?.content || ''), (a?.content || '').match(RAW_TAGS)?.[0]);
 };
 
@@ -55,6 +55,30 @@ const watchDialogs = page => page.on('dialog', async d => {
   await d.dismiss().catch(() => undefined);
   page.__failed = d.message();
 });
+
+/** Мягкие метрики качества текста (в отчёт, не валят прогон). */
+function qualityMetrics(title, texts, hero) {
+  const narr = texts.map(t => t.replace(/<[^>]+>[\s\S]*?<\/[^>]+>/g, '').replace(/\[[A-Z ]+:[^\]]*\]/g, '').trim());
+  const len = narr.map(t => t.length);
+  const words = t => t.toLowerCase().match(/[а-яё]{4,}/g) || [];
+  const tri = t => { const w = words(t); return new Set(w.slice(2).map((x, i) => `${w[i]} ${w[i + 1]} ${x}`)); };
+  let overlap = 0;
+  for (let i = 1; i < narr.length; i++) { const a = tri(narr[i - 1]), b = tri(narr[i]); const inter = [...b].filter(x => a.has(x)).length; overlap = Math.max(overlap, b.size ? inter / b.size : 0); }
+  const openings = narr.map(t => t.split(/\s+/).slice(0, 3).join(' ').toLowerCase());
+  const latin = narr.join(' ').match(/\b[a-z]{4,}\b/gi) || [];
+  const dialog = narr.filter(t => /(^|\n)\s*[—–-]\s|«[^»]{5,}»/.test(t)).length;
+  const youActs = !hero ? 0 : narr.filter(t => new RegExp(`${hero}[^.]{0,40}(решает|думает|чувствует|понимает)`).test(t)).length;
+  const m = [
+    `длина ответа: мин ${Math.min(...len)}, средн ${Math.round(len.reduce((a, b) => a + b, 0) / len.length)}, макс ${Math.max(...len)} симв.`,
+    `макс. повтор фраз между соседними ответами: ${(overlap * 100).toFixed(0)}%`,
+    `одинаковых зачинов: ${openings.length - new Set(openings).size}`,
+    `ответов с прямой речью NPC: ${dialog}/${narr.length}`,
+    `латиница в тексте: ${latin.length ? latin.slice(0, 8).join(', ') : 'нет'}`,
+    `мастер решает за героя (эвристика): ${youActs}`,
+  ];
+  report.push(`### Метрики качества — ${title}\n\n${m.map(x => `- ${x}`).join('\n')}\n`);
+  log(`📊 ${title}: ${m.join(' | ')}`);
+}
 
 async function register(page) {
   watchDialogs(page);
@@ -121,6 +145,12 @@ async function solo(browser) {
   const turns = [
     `${hero} осматривается и ищет следы, расспрашивает первого встречного`,
     `${hero} атакует ближайшего противника`,
+    ...(process.env.LONG ? [
+      `${hero} заговаривает с самым подозрительным персонажем и пытается выведать, что тот скрывает`,
+      `${hero} пытается обмануть стражу, выдав себя за посланника`,
+      `${hero} осматривает добычу и решает, что взять с собой`,
+      `${hero} идёт туда, где по слухам скрывается главный враг`,
+    ] : []),
   ];
   let n = 1;
   for (const t of turns) {
@@ -147,6 +177,7 @@ async function solo(browser) {
   const st = (await api(page, `/api/sessions/${sid}/state`)).body?.characters?.[hero];
   const dc = lastDash(s)?.characters?.find(c => c.name === hero);
   check('числа героя совпадают с движком', st && dc && dc.hp === `${st.hp_cur}/${st.hp_max}`, `${dc?.hp} vs ${st?.hp_cur}/${st?.hp_max}`);
+  qualityMetrics('Соло', assistantTexts(s), hero);
   check('ИИ отвечает на разные ходы по-разному', new Set(assistantTexts(s).map(t => t.slice(0, 80))).size === assistantTexts(s).length);
   await ctx.close();
 }
@@ -224,6 +255,7 @@ async function tale(browser) {
     recordTurn(`Сказка: глава ${i}`, s, ms);
   }
   check('сказка закончилась и собрана книга', s.config?.tale?.finished && (s.archive || '').length > 200, s.config?.tale?.title);
+  qualityMetrics('Сказка', assistantTexts(s), '');
   await page.waitForTimeout(1200);
   await snap(page, 'tale_book');
   await ctx.close();
