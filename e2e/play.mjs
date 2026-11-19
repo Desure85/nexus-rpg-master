@@ -31,7 +31,7 @@ const waitTurn = async (page, sid, minAssistant) => {
     const n = (s?.history || []).filter(m => m.role === 'assistant').length;
     if (s && !s.busy && n >= minAssistant) return { s, ms: Date.now() - t0 };
     if (page.__failed) throw new Error(`ошибка в интерфейсе: ${page.__failed}`);
-    const err = await page.locator('text=/Ошибка хода|Не удалось|не ответила/').first().textContent({ timeout: 200 }).catch(() => null);
+    const err = await page.locator('text=/^(Ошибка хода|Не удалось|Модель не ответила)/').first().textContent({ timeout: 200 }).catch(() => null);
     if (err && Date.now() - t0 > 5000) throw new Error(`ошибка хода: ${err.slice(0, 200)}`);
     if (Date.now() - t0 > TURN_TIMEOUT) throw new Error(`ход не завершился за ${TURN_TIMEOUT / 1000} с`);
     await page.waitForTimeout(1500);
