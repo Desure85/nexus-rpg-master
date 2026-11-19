@@ -137,8 +137,9 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
     if (daily) config.daily = { key: daily.key, modifier: daily.modifier.id };
-    if (mode !== "tale" && characters.some((c: any) => c.archetype || c.veteranSheet)) {
-      config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, archetype: c.archetype, veteran: c.veteranSheet }));
+    // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд
+    if (mode !== "tale") {
+      config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, concept: c.concept, archetype: c.archetype, veteran: c.veteranSheet }));
     }
     const id = crypto.randomUUID();
     const title = str(setup.title, 80).trim();

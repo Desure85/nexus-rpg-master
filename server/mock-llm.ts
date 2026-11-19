@@ -42,6 +42,7 @@ ${/#nochoices/.test(user) ? "" : `<choices_json>["Спросить сову о �
 
 function rpgReply(req: LlmRequest): string {
   const user = lastUser(req);
+  if (/GAME START/.test(user) && /#nodash/.test(user)) return "Начинаем. Ветер гонит листья по пустой площади.";
   if (/GAME START/.test(user)) {
     const heroes = parseHeroes(user);
     const chars = heroes.map(h => ({

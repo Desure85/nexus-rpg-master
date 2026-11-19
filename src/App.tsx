@@ -313,7 +313,7 @@ export default function App() {
         break;
       case 'oracle':
         setOracleStatus(prev => ({ state: e.status === 'generating' ? 'generating' : e.status === 'error' ? 'error' : 'idle', error: e.error, tick: prev.tick + 1 }));
-        if (e.status === 'error' && currentSession?.isOwner) showToast(`Оракул: ${e.error}`);
+        if (e.status === 'error' && currentSession?.isOwner) showToast('Таблицы оракула не обновились — мастер использует стандартные. Можно перегенерировать в панели оракула.');
         break;
       case 'level_up':
         showToast(`Новый уровень: ${(e as any).leveled.join(', ')}. Способности появятся в следующем ходе.`);

@@ -14,7 +14,7 @@ export interface SessionConfig {
   autoApprove?: boolean;
   tale?: TaleConfig & { finished?: boolean; title?: string; moral?: string };
   /** Герои при создании: архетип и ветеран из зала героев (снимок листа) */
-  heroes?: { name: string; archetype?: string; veteran?: any }[];
+  heroes?: { name: string; gender?: string; concept?: string; archetype?: string; veteran?: any }[];
   /** Испытание дня: ключ даты и условие */
   daily?: { key: string; modifier: string };
 }

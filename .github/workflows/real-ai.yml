@@ -15,6 +15,9 @@ on:
       only:
         description: "Сценарии: solo,mp,tale"
         default: solo,mp,tale
+      effort:
+        description: "reasoning_effort для моделей с рассуждениями: low | medium | high | default (не передавать)"
+        default: low
       long:
         description: "Длинное соло (больше ходов) и полный текст ответов в логе: 1/0"
         default: "0"
@@ -51,6 +54,7 @@ jobs:
           OPENROUTER_MODEL: ${{ inputs.provider == 'openrouter' && inputs.model || '' }}
           GEMINI_MODEL: ${{ inputs.provider == 'gemini' && inputs.model || '' }}
           GEMINI_REST: "1"
+          LLM_REASONING_EFFORT: ${{ inputs.effort }}
           DB_PATH: /tmp/play.db
           PORT: "3000"
           APP_SECRET: ${{ github.run_id }}-play-test
@@ -78,7 +82,7 @@ jobs:
       - if: always()
         run: |
           cp server.log e2e-report/ || true
-          echo "== предупреждения сервера =="; grep -E "\[(tale|llm|engine)\]|Error" server.log | tail -40 || true
+          echo "== предупреждения сервера =="; grep -E "\[(tale|llm|engine)\]|Error" server.log | tail -80 || true
           cat e2e-report/report.md >> "$GITHUB_STEP_SUMMARY" || true
           if [ "${{ inputs.long }}" = "1" ]; then echo "===== REPORT ====="; cat e2e-report/report.md || true; echo "===== END REPORT ====="; fi
       - if: always()
