@@ -988,6 +988,8 @@ describe('архетипы, зал героев, достижения', () => {
   });
 });
 
+const lastAssistant = (s: any) => [...s.history].reverse().find((m: any) => m.role === 'assistant');
+
 describe('миры', () => {
   const worldBody = (extra: any = {}) => ({
     title: 'Туманные Острова', icon: '🌫️', genre: 'cyber', description: 'Острова в вечном тумане', visibility: 'private',
@@ -1140,7 +1142,7 @@ describe('миры', () => {
     const mine = (await player.get(`/api/worlds/${w.id}/chronicle`)).body;
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ status: 'new', mine: true, heroes: 'Рина' });
-    expect(mine[0].summary).toContain('раскрыли тайну');
+    expect(mine[0].summary).toContain('зажгла маяк');
     const stranger = await account('chron2@example.com');
     expect((await stranger.get(`/api/worlds/${w.id}/chronicle`)).body).toEqual([]);
     const own = (await gm().get('/api/worlds?scope=mine')).body.find((x: any) => x.id === w.id);
@@ -1163,6 +1165,48 @@ describe('миры', () => {
     await stranger.post(`/api/sessions/${sid2}/turn`, { content: '[SESSION SUMMARY] итоги' });
     await ctx.engine.whenIdle(sid2);
     expect((await gm().get(`/api/worlds/${w.id}/chronicle`)).body).toHaveLength(2);
+  });
+
+  it('фракции и шкалы мира: движок ограничивает сдвиги, канон меняет общий мир, полная шкала — событие', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const w = (await gm().post('/api/worlds', worldBody({
+      factions: [{ id: 'guild', name: 'Гильдия ныряльщиков', desc: 'Торгуют именами', attitude: -1 }],
+      clocks: [{ id: 'fog', name: 'Туман наступает', max: 3, value: 1, onFull: 'Туман дошёл до порта — причалы опустели.' }],
+    }))).body;
+    expect(w.state).toEqual({ factions: { guild: -1 }, clocks: { fog: 1 } });
+    const id = await createSession({ worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] });
+    for (let i = 0; i < 3; i++) {
+      await gm().post(`/api/sessions/${id}/turn`, { content: `Рина помогает ныряльщикам #faction:Гильдия ныряльщиков:+ #faction:Гильдия:+ #wclock:Туман наступает` });
+      await ctx.engine.whenIdle(id);
+    }
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.config.world.factions).toEqual([{ name: 'Гильдия ныряльщиков', attitude: 1, delta: 2 }]);
+    expect(s.config.world.clocks).toEqual([{ name: 'Туман наступает', value: 3, max: 3, delta: 2 }]);
+    expect(s.config.worldDelta).toBeUndefined();
+    const log = ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? ORDER BY id DESC LIMIT 1").get(id) as any;
+    const sys = JSON.parse(log.request).system as string;
+    expect(sys).toContain('Состояние мира');
+    expect(sys).toMatch(/Гильдия ныряльщиков: расположены к героям \(1\)/);
+    expect(lastAssistant(s).content).not.toMatch(/\[FACTION|\[WORLD CLOCK/);
+    // итоги → хроника с короткой записью летописи; канон → общий мир меняется; шкала полна → событие
+    await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] итоги' });
+    await ctx.engine.whenIdle(id);
+    const entry = (await gm().get(`/api/worlds/${w.id}/chronicle`)).body[0];
+    expect(entry.summary).toBe('Туман отступил от порта: героиня зажгла маяк заново.');
+    expect(entry.delta).toEqual({ factions: { guild: 2 }, clocks: { fog: 2 } });
+    expect(lastAssistant((await gm().get(`/api/sessions/${id}`)).body).content).not.toContain('world_chronicle');
+    await gm().patch(`/api/worlds/${w.id}/chronicle/${entry.id}`, { status: 'canon' });
+    await gm().patch(`/api/worlds/${w.id}/chronicle/${entry.id}`, { status: 'canon' }); // повтор не применяет дважды
+    const after = (await gm().get(`/api/worlds/${w.id}`)).body;
+    expect(after.state).toEqual({ factions: { guild: 1 }, clocks: { fog: 0 } });
+    const news = (await gm().get(`/api/worlds/${w.id}/chronicle`)).body.find((e: any) => e.kind === 'news');
+    expect(news).toMatchObject({ title: 'Свершилось: Туман наступает', status: 'new' });
+    expect((await gm().get('/api/worlds/inbox')).body.newEntries).toBe(1);
+    // ручная правка автором
+    expect((await gm().patch(`/api/worlds/${w.id}/state`, { factions: { guild: 9 } })).body.factions.guild).toBe(3);
+    // новая партия стартует с текущего состояния мира
+    const id2 = await createSession({ worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] });
+    expect((await gm().get(`/api/sessions/${id2}`)).body.config.world.factions[0].attitude).toBe(3);
   });
 
   it('чужой приватный мир нельзя запустить', async () => {

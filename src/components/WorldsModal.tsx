@@ -6,7 +6,7 @@ import { importWorld, exportWorld, cardFromPng, type ImportResult } from '../../
 import { api, appLink } from '../api';
 import { customAlert, customConfirm } from './PromptModal';
 import { ARCHETYPES } from '../../shared/archetypes';
-import { WORLD_GENRES, LORE_KINDS, ENEMY_TIER_LIST, emptyWorldData, normalizeWorldData, enemyStats, itemLabel, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation, type WorldEnemy, type WorldItem } from '../../shared/world';
+import { WORLD_GENRES, LORE_KINDS, ENEMY_TIER_LIST, attitudeLabel, type WorldFaction, type WorldClock, type WorldState, emptyWorldData, normalizeWorldData, enemyStats, itemLabel, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation, type WorldEnemy, type WorldItem } from '../../shared/world';
 import { ENEMY_TIERS } from '../../shared/balance';
 import { describeEffect } from '../../shared/items';
 
@@ -285,7 +285,7 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
 
 /* ------------------------------------------------------------------ редактор ------------------------------------------------------------------ */
 
-type ETab = 'passport' | 'lore' | 'places' | 'scenarios' | 'heroes' | 'enemies' | 'items';
+type ETab = 'passport' | 'lore' | 'places' | 'scenarios' | 'heroes' | 'enemies' | 'items' | 'factions';
 
 const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: World) => void }> = ({ world, onClose, onSaved }) => {
   const [w, setW] = useState<World>(world);
@@ -302,7 +302,7 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
       onSaved(saved);
     } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось сохранить'); } finally { setSaving(false); }
   };
-  const tabs: [ETab, string][] = [['passport', 'Паспорт'], ['lore', `Лор · ${d.cards.length}`], ['places', `Места · ${d.locations.length}`], ['scenarios', `Сюжеты · ${d.scenarios.length}`], ['heroes', `Герои · ${d.heroes.length}`], ['enemies', `Враги · ${(d.enemies || []).length}`], ['items', `Предметы · ${(d.items || []).length}`]];
+  const tabs: [ETab, string][] = [['passport', 'Паспорт'], ['lore', `Лор · ${d.cards.length}`], ['places', `Места · ${d.locations.length}`], ['scenarios', `Сюжеты · ${d.scenarios.length}`], ['heroes', `Герои · ${d.heroes.length}`], ['enemies', `Враги · ${(d.enemies || []).length}`], ['items', `Предметы · ${(d.items || []).length}`], ['factions', `Фракции · ${(d.factions || []).length + (d.clocks || []).length}`]];
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-stretch sm:items-center justify-center sm:p-4 bg-black/70" onClick={e => e.stopPropagation()}>
@@ -404,6 +404,35 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
               <button onClick={() => setD({ items: [...(d.items || []), { id: uid(), name: '', kind: 'consumable', heal: 3 }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Предмет</button>
             </div>
             {(d.items || []).map((it, i) => <ItemEditor key={it.id} item={it} onChange={ni => setD({ items: d.items!.map((x, j) => j === i ? ni : x) })} onDelete={() => setD({ items: d.items!.filter((_, j) => j !== i) })} />)}
+          </>}
+
+          {tab === 'factions' && <>
+            <p className="text-[11px] text-white/40 leading-snug">Фракции и шкалы — общее состояние мира для всех партий. Поступки героев сдвигают их (движок не даёт больше ±1 за ход и ±2 за партию), а в мир изменения попадают, когда итоги партии становятся каноном хроники. Заполнилась шкала — в хронике появляется событие.</p>
+            <div className="flex items-center justify-between">
+              <span className={label}>Фракции — отношение к героям</span>
+              <button onClick={() => setD({ factions: [...(d.factions || []), { id: uid(), name: '', desc: '', attitude: 0 }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Фракция</button>
+            </div>
+            {(d.factions || []).map((f, i) => (
+              <Box key={f.id} onDelete={() => setD({ factions: d.factions!.filter((_, j) => j !== i) })}>
+                <input className={input} placeholder="Гильдия ныряльщиков" value={f.name} maxLength={60} onChange={e => setD({ factions: d.factions!.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
+                <input className={input} placeholder="Чего хотят и как действуют" value={f.desc} maxLength={400} onChange={e => setD({ factions: d.factions!.map((x, j) => j === i ? { ...x, desc: e.target.value } : x) })} />
+                <AttitudePicker value={f.attitude} onChange={v => setD({ factions: d.factions!.map((x, j) => j === i ? { ...x, attitude: v } : x) })} />
+              </Box>
+            ))}
+            <div className="flex items-center justify-between pt-2">
+              <span className={label}>Шкалы мира — что надвигается</span>
+              <button onClick={() => setD({ clocks: [...(d.clocks || []), { id: uid(), name: '', max: 6, value: 0, onFull: '' }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Шкала</button>
+            </div>
+            {(d.clocks || []).map((c, i) => (
+              <Box key={c.id} onDelete={() => setD({ clocks: d.clocks!.filter((_, j) => j !== i) })}>
+                <input className={input} placeholder="Туман наступает" value={c.name} maxLength={60} onChange={e => setD({ clocks: d.clocks!.map((x, j) => j === i ? { ...x, name: e.target.value } : x) })} />
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[10px] text-white/40">Делений<input type="number" min={3} max={12} className={input} value={c.max} onChange={e => setD({ clocks: d.clocks!.map((x, j) => j === i ? { ...x, max: Math.max(3, Math.min(12, Number(e.target.value) || 6)) } : x) })} /></label>
+                  <label className="text-[10px] text-white/40">На старте<input type="number" min={0} max={c.max - 1} className={input} value={c.value} onChange={e => setD({ clocks: d.clocks!.map((x, j) => j === i ? { ...x, value: Math.max(0, Math.min(c.max - 1, Number(e.target.value) || 0)) } : x) })} /></label>
+                </div>
+                <textarea className={`${input} min-h-[50px]`} placeholder="Что случится, когда шкала заполнится" maxLength={400} value={c.onFull} onChange={e => setD({ clocks: d.clocks!.map((x, j) => j === i ? { ...x, onFull: e.target.value } : x) })} />
+              </Box>
+            ))}
           </>}
 
           {tab === 'heroes' && <>
@@ -536,7 +565,7 @@ const ItemEditor: React.FC<{ item: WorldItem; onChange: (i: WorldItem) => void; 
 
 /* ------------------------------------------------------------------ хроника ------------------------------------------------------------------ */
 
-interface ChronicleRow { id: string; kind: 'game' | 'tale' | 'news'; title: string; summary: string; heroes: string; status: 'new' | 'canon' | 'hidden'; created_at: string; player?: string; mine?: boolean }
+interface ChronicleRow { id: string; kind: 'game' | 'tale' | 'news'; title: string; summary: string; heroes: string; status: 'new' | 'canon' | 'hidden'; created_at: string; player?: string; mine?: boolean; delta?: { factions?: Record<string, number>; clocks?: Record<string, number> } }
 const KIND_ICON = { game: '⚔️', tale: '📖', news: '📯' } as const;
 const fmtDate = (d: string) => { try { return new Date(d.replace(' ', 'T') + 'Z').toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }); } catch { return ''; } };
 
@@ -559,8 +588,13 @@ const ChronicleModal: React.FC<{ world: World; onClose: () => void }> = ({ world
   const [news, setNews] = useState({ title: '', summary: '' });
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const load = () => api<ChronicleRow[]>(`/api/worlds/${world.id}/chronicle`).then(setRows).catch(() => setRows([]));
+  const [full, setFull] = useState<World | null>(null);
+  const load = () => {
+    api<ChronicleRow[]>(`/api/worlds/${world.id}/chronicle`).then(setRows).catch(() => setRows([]));
+    api<World>(`/api/worlds/${world.id}`).then(setFull).catch(() => undefined);
+  };
   useEffect(() => { load(); }, [world.id]);
+  const nameOf = (kind: 'f' | 'c', id: string) => (kind === 'f' ? full?.data.factions : full?.data.clocks)?.find(x => x.id === id)?.name || id;
   const patch = async (id: string, body: object) => { await api(`/api/worlds/${world.id}/chronicle/${id}`, { method: 'PATCH', body }); load(); };
   const owner = !!world.mine;
   return (
@@ -575,6 +609,7 @@ const ChronicleModal: React.FC<{ world: World; onClose: () => void }> = ({ world
           <p className="text-[11px] text-white/40 leading-snug">{owner
             ? 'Итоги партий в вашем мире. То, что в каноне, мастер учитывает в новых партиях. Новые записи ждут вашего решения: можно поправить текст перед принятием.'
             : 'Что уже случилось в этом мире. Итоги ваших партий тоже попадут сюда — автор мира решит, станут ли они каноном.'}</p>
+          {full?.state && <WorldStatePanel world={full} owner={owner} onChange={st => setFull({ ...full, state: st })} />}
           {owner && (
             <div className="p-3 rounded-xl bg-black/30 border border-white/10 space-y-2">
               <span className={label}>📯 Событие мира между партиями</span>
@@ -589,6 +624,9 @@ const ChronicleModal: React.FC<{ world: World; onClose: () => void }> = ({ world
                 <p className="flex-1 text-sm text-white"><span className="mr-1">{KIND_ICON[r.kind]}</span>{r.title}</p>
                 <span className="text-[10px] text-white/35 shrink-0">{fmtDate(r.created_at)}{r.status === 'new' ? ' · ждёт автора' : r.status === 'hidden' ? ' · скрыто' : ''}</span>
               </div>
+              {r.delta && <div className="flex flex-wrap gap-1">{[...Object.entries(r.delta.factions || {}).map(([k, v]) => [nameOf('f', k), v] as const), ...Object.entries(r.delta.clocks || {}).map(([k, v]) => [`«${nameOf('c', k)}»`, v] as const)].map(([n, v]) => (
+                <span key={n} className={`px-2 py-0.5 rounded-full text-[10px] ${v > 0 ? 'bg-emerald-500/10 text-emerald-200' : 'bg-red-500/10 text-red-200'}`}>{n} {v > 0 ? `+${v}` : v}</span>
+              ))}{r.status === 'new' && <span className="text-[10px] text-white/35">применится к миру при принятии в канон</span>}</div>}
               {(r.heroes || r.player) && <p className="text-[11px] text-white/40">{r.heroes}{r.player && r.kind !== 'news' ? ` · играл(а) ${r.player}` : ''}</p>}
               {editing === r.id
                 ? <textarea className={`${input} min-h-[80px]`} value={draft} maxLength={1200} onChange={e => setDraft(e.target.value)} />
@@ -607,6 +645,50 @@ const ChronicleModal: React.FC<{ world: World; onClose: () => void }> = ({ world
           ))}
         </div>
       </div>
+    </div>
+  );
+};
+
+const ATT_COLOR = (v: number) => v <= -2 ? 'text-red-300' : v === -1 ? 'text-orange-300' : v === 0 ? 'text-white/60' : v === 1 ? 'text-emerald-300' : 'text-emerald-200';
+
+const AttitudePicker: React.FC<{ value: number; onChange: (v: number) => void }> = ({ value, onChange }) => (
+  <div className="flex flex-wrap items-center gap-1 text-[11px]">
+    {[-3, -2, -1, 0, 1, 2, 3].map(v => (
+      <button key={v} onClick={() => onChange(v)} className={`px-2 py-1 rounded-lg ${value === v ? 'bg-white/15 text-white font-bold' : 'bg-white/5 text-white/40 hover:text-white/70'}`} title={attitudeLabel(v)}>{v > 0 ? `+${v}` : v}</button>
+    ))}
+    <span className={`ml-1 ${ATT_COLOR(value)}`}>{attitudeLabel(value)}</span>
+  </div>
+);
+
+/** Состояние мира: фракции и шкалы; автор может подправить руками. */
+const WorldStatePanel: React.FC<{ world: World; owner: boolean; onChange: (s: WorldState) => void }> = ({ world, owner, onChange }) => {
+  const d = world.data, st = world.state!;
+  if (!(d.factions || []).length && !(d.clocks || []).length) return null;
+  const set = async (body: object) => onChange(await api<WorldState>(`/api/worlds/${world.id}/state`, { method: 'PATCH', body }));
+  const btn = 'w-6 h-6 rounded bg-white/5 text-white/60 hover:text-white text-xs';
+  return (
+    <div className="p-3 rounded-xl bg-black/30 border border-white/10 space-y-2">
+      <span className={label}>🌐 Состояние мира</span>
+      {(d.factions || []).map((f: WorldFaction) => {
+        const v = st.factions[f.id] ?? f.attitude;
+        return (
+          <div key={f.id} className="flex items-center gap-2 text-xs">
+            <span className="flex-1 text-white/80 truncate" title={f.desc}>{f.name}</span>
+            <span className={ATT_COLOR(v)}>{attitudeLabel(v)} ({v > 0 ? `+${v}` : v})</span>
+            {owner && <><button className={btn} onClick={() => set({ factions: { [f.id]: v - 1 } })}>−</button><button className={btn} onClick={() => set({ factions: { [f.id]: v + 1 } })}>+</button></>}
+          </div>
+        );
+      })}
+      {(d.clocks || []).map((c: WorldClock) => {
+        const v = st.clocks[c.id] ?? c.value;
+        return (
+          <div key={c.id} className="flex items-center gap-2 text-xs">
+            <span className="flex-1 text-white/80 truncate" title={c.onFull}>{c.name}</span>
+            <span className="flex gap-0.5">{Array.from({ length: c.max }, (_, i) => <span key={i} className={`w-2.5 h-2.5 rounded-sm ${i < v ? 'bg-amber-400' : 'bg-white/10'}`} />)}</span>
+            {owner && <><button className={btn} onClick={() => set({ clocks: { [c.id]: v - 1 } })}>−</button><button className={btn} onClick={() => set({ clocks: { [c.id]: v + 1 } })}>+</button></>}
+          </div>
+        );
+      })}
     </div>
   );
 };

@@ -25,6 +25,8 @@ interface DashboardProps {
   isCampaign?: boolean;
   /** Название денег мира автора («раковины») */
   currency?: string;
+  /** Фракции и шкалы мира автора с учётом этой партии */
+  worldState?: { factions?: { name: string; attitude: number; delta: number }[]; clocks?: { name: string; value: number; max: number; delta: number }[] };
   onClaimBase?: (name: string) => void;
   onUpgradeBase?: (building: string) => void;
   onTrain?: (charName: string) => void;
@@ -37,6 +39,7 @@ interface DashboardProps {
 
 /** Предмет с эффектом в названии («восстанавливает 5 HP», «снимает 2 Стресса») движок умеет применить. */
 export const isUsableItem = (item: string) => isConsumable(item);
+const ATTITUDE_RU: Record<string, string> = { '-3': 'война', '-2': 'враждебны', '-1': 'настороже', '0': 'нейтральны', '1': 'расположены', '2': 'союзники', '3': 'преданы' };
 /** Снаряжение с бонусом «(+N к …)» в сумке — куда его надеть. */
 export const gearSlot = (item: string): string | null => {
   const b = item.match(/\(([+−-]?\d+\s*к\s*[а-яё]+)[^)]*\)\s*$/i)?.[1];
@@ -46,7 +49,7 @@ export const gearSlot = (item: string): string | null => {
 
 const ROLL_RU: Record<string, string> = { classic: 'Обычный бросок (d20)', triple: 'Резонанс стресса (3d20)', shifted: 'Сдвиг судьбы (3d20+d6)', taint: 'Бросок хаоса (2d20)' };
 
-export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, currency, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMechanics, onUpdate, onTravel, onExplore, onSearch, onEconomy, onParty, isCampaign, currency, worldState, onClaimBase, onUpgradeBase, onTrain, onHire, onClaimExpeditions, onAcceptQuest, onCarouse, onUseItem }) => {
   const [activeTokenMenu, setActiveTokenMenu] = useState<string | null>(null);
   const [locationView, setLocationView] = useState<'list' | 'map'>('list');
   const [qrData, setQrData] = useState<{ char: string; url: string; img: string } | null>(null);
@@ -770,6 +773,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ data, sessionId, enabledMe
           ))}
         </div>
       </section>
+
+      {/* Мир автора: фракции и шкалы (общие для всех партий мира) */}
+      {(worldState?.factions?.length || worldState?.clocks?.length) ? (
+        <section className="space-y-2">
+          <h4 className="text-[10px] uppercase tracking-widest text-white/40 font-bold">🌐 Мир</h4>
+          <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-1.5">
+            {(worldState.factions || []).map(f => (
+              <div key={f.name} className="flex items-center gap-2 text-[11px]">
+                <span className="flex-1 text-white/75 truncate">{f.name}</span>
+                <span className={f.attitude <= -2 ? 'text-red-300' : f.attitude < 0 ? 'text-orange-300' : f.attitude === 0 ? 'text-white/50' : 'text-emerald-300'}>{ATTITUDE_RU[String(Math.max(-3, Math.min(3, f.attitude)))]}</span>
+                {f.delta ? <span className={`text-[10px] font-bold ${f.delta > 0 ? 'text-emerald-400' : 'text-red-400'}`} title="Сдвиг за эту партию">{f.delta > 0 ? `+${f.delta}` : f.delta}</span> : null}
+              </div>
+            ))}
+            {(worldState.clocks || []).map(c => (
+              <div key={c.name} className="flex items-center gap-2 text-[11px]">
+                <span className="flex-1 text-white/75 truncate">{c.name}</span>
+                <span className="flex gap-0.5">{Array.from({ length: c.max }, (_, i) => <span key={i} className={`w-2 h-2 rounded-sm ${i < c.value ? 'bg-amber-400' : 'bg-white/10'}`} />)}</span>
+                {c.delta ? <span className={`text-[10px] font-bold ${c.delta > 0 ? 'text-amber-300' : 'text-emerald-400'}`} title="Сдвиг за эту партию">{c.delta > 0 ? `+${c.delta}` : c.delta}</span> : null}
+              </div>
+            ))}
+            <p className="text-[9px] text-white/30 pt-1">Изменения войдут в мир, когда итоги партии примут в хронику.</p>
+          </div>
+        </section>
+      ) : null}
 
       {/* Locations */}
       {(showAll || isCampaign) && (<>
