@@ -202,7 +202,7 @@ const WorldGenerator: React.FC<{ workspaceId?: string; onClose: () => void; onDr
           {IDEAS.map(t => <button key={t} disabled={busy} onClick={() => setIdea(t)} className="px-2.5 py-1 rounded-full bg-white/5 text-[11px] text-white/55 hover:text-white text-left">{t.split('.')[0]}</button>)}
         </div>
         <button onClick={go} disabled={busy || idea.trim().length < 10} className="w-full py-3 rounded-xl bg-violet-500 text-white font-bold disabled:opacity-40">
-          {busy ? 'Мастер сочиняет мир… обычно до минуты' : 'Собрать черновик'}
+          {busy ? 'Мастер сочиняет мир… обычно 1–2 минуты' : 'Собрать черновик'}
         </button>
         <p className="text-[10px] text-white/30 text-center">Списывает кредиты как обычная генерация · ИИ может ошибаться</p>
       </div>

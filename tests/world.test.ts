@@ -17,3 +17,16 @@ describe('лор мира', () => {
     expect(used.length).toBeLessThan(30);
   });
 });
+
+import { closeJson, parseGeneratedWorld } from '../shared/world';
+describe('оборванный JSON мира', () => {
+  it('закрывает и отбрасывает неполный хвост', () => {
+    const cut = '{"title":"Мир","genre":"space","cards":[{"kind":"npc","name":"А","keys":["а"],"text":"Текст"},{"kind":"npc","name":"Б","te';
+    const w = parseGeneratedWorld(closeJson(cut));
+    expect(w.title).toBe('Мир');
+    expect(w.data.cards.map(c => c.name)).toEqual(['А']);
+  });
+  it('целый JSON не трогает', () => {
+    expect(JSON.parse(closeJson('текст {"a":[1,2]} хвост'))).toEqual({ a: [1, 2] });
+  });
+});

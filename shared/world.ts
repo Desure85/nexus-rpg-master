@@ -274,3 +274,33 @@ export const parseGeneratedWorld = (text: string) => {
   const genre = WORLD_GENRES.some(g => g.id === j.genre) ? j.genre as Genre : 'fantasy';
   return { title: String(j.title || '').slice(0, 80), icon: String(j.icon || '🌍').slice(0, 4), genre, description: String(j.description || '').slice(0, 600), data: normalizeWorldData(j) };
 };
+
+/** Закрывает оборванный JSON: незакрытую строку, хвостовую запятую, открытые [ и {. Неполный последний элемент отбрасывается. */
+export const closeJson = (text: string) => {
+  const t = text.replace(/\`\`\`(?:json)?/g, '');
+  const start = t.indexOf('{');
+  if (start < 0) return t;
+  let out = '';
+  const stack: string[] = [];
+  let inStr = false, esc = false;
+  let lastSafe = 0; // позиция после последнего завершённого элемента
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    out += c;
+    if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+    if (c === '"') inStr = true;
+    else if (c === '{' || c === '[') stack.push(c === '{' ? '}' : ']');
+    else if (c === '}' || c === ']') { stack.pop(); lastSafe = out.length; if (!stack.length) return out; }
+    else if (c === ',') lastSafe = out.length - 1;
+  }
+  // обрезаем до последнего целого элемента и закрываем по стеку на тот момент
+  let cut = out.slice(0, lastSafe).replace(/,\s*$/, '');
+  const st: string[] = [];
+  let s2 = false, e2 = false;
+  for (const c of cut) {
+    if (s2) { if (e2) e2 = false; else if (c === '\\') e2 = true; else if (c === '"') s2 = false; continue; }
+    if (c === '"') s2 = true; else if (c === '{' || c === '[') st.push(c === '{' ? '}' : ']'); else if (c === '}' || c === ']') st.pop();
+  }
+  cut = cut.replace(/,\s*$/, '').replace(/:\s*$/, ': null');
+  return cut + st.reverse().join('');
+};
