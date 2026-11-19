@@ -91,7 +91,7 @@ export const resolveProvider = (s: LlmSettings): Provider => {
   return PROVIDERS.includes(s.provider) ? s.provider : "gemini";
 };
 
-interface OpenAiTarget { url: string; key: string; model: string; extraHeaders?: Record<string, string> }
+interface OpenAiTarget { url: string; key: string; model: string; extraHeaders?: Record<string, string>; reasoningEffort?: string }
 
 const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
   switch (provider) {
@@ -109,6 +109,8 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
         model: (s.modelName && s.modelName !== "local-model" ? s.modelName : "") || env("OPENCODE_MODEL") || "deepseek-v4.1-flash",
         // opencode Go: свой user agent и стабильный x-opencode-session на разговор (иначе HTTP 400 MissingSessionID)
         extraHeaders: { "User-Agent": "nexus-rpg/1.0", "x-opencode-session": "" },
+        // у reasoning-моделей Go (DeepSeek) «мысли» съедают минуты — игре хватит короткого обдумывания
+        reasoningEffort: env("LLM_REASONING_EFFORT") || "low",
       };
     default:
       return {
@@ -125,7 +127,8 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   // браузер (демо) не даёт задавать User-Agent — не мешаем ему
   if (typeof window !== "undefined") delete headers["User-Agent"];
   if (t.key && t.key !== "not-needed") headers.Authorization = `Bearer ${t.key}`;
-  const res = await fetch(`${t.url.replace(/\/$/, "")}/chat/completions`, {
+  const t0 = Date.now();
+  const send = (effort?: string) => fetch(`${t.url.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers,
     signal,
@@ -134,10 +137,17 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       messages: [{ role: "system", content: req.system }, ...normalizeMessages(req.messages)],
       temperature: req.temperature ?? 0.7,
       ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+      ...(effort && effort !== "default" ? { reasoning_effort: effort } : {}),
       stream: true,
       ...(wantUsage ? { stream_options: { include_usage: true } } : {}),
     }),
   });
+  let res = await send(t.reasoningEffort);
+  // модель не знает reasoning_effort — повторяем без него
+  if (res.status === 400 && t.reasoningEffort) {
+    const body = await res.clone().text().catch(() => "");
+    if (/reasoning/i.test(body)) { console.warn(`[llm] ${t.model}: reasoning_effort не поддерживается — без него`); res = await send(); }
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new LlmError(`Провайдер ответил HTTP ${res.status}: ${body.slice(0, 300)}`, res.status === 401 || res.status === 403 ? 502 : 502);
@@ -157,7 +167,9 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   let acc = "";
   let usage: LlmUsage | undefined;
   let reasoningChars = 0;
+  let firstAt = 0;
   const finish = () => {
+    console.info(`[llm] ${t.model}: ${((Date.now() - t0) / 1000).toFixed(1)} с (первый текст ${firstAt ? ((firstAt - t0) / 1000).toFixed(1) : "—"} с), текст ${acc.length}, рассуждения ${reasoningChars} симв.`);
     if (!acc.trim() && reasoningChars > 0) {
       throw new LlmError("Модель весь лимит потратила на рассуждения и не успела ответить. Увеличьте лимит ответа или выберите модель без рассуждений (например, flash-версию).");
     }
@@ -177,7 +189,7 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
       try {
         const ev = JSON.parse(payload);
         const delta = ev.choices?.[0]?.delta?.content || "";
-        if (delta) { acc += delta; onDelta(delta); }
+        if (delta) { if (!firstAt) firstAt = Date.now(); acc += delta; onDelta(delta); }
         // модели с рассуждениями (DeepSeek, Kimi…) шлют «мысли» отдельно — не показываем, но учитываем
         const thought = ev.choices?.[0]?.delta?.reasoning_content || ev.choices?.[0]?.delta?.reasoning || "";
         if (thought) reasoningChars += thought.length;
