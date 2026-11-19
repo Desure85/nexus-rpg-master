@@ -28,7 +28,9 @@ docker compose up -d --build
 # http://localhost:3000
 ```
 
-База SQLite лежит в `./data/game.db`. Для бэкапа достаточно скопировать этот файл, лучше при остановленном контейнере или через `sqlite3 game.db ".backup backup.db"`.
+База SQLite лежит в `./data/game.db`. Сервер сам делает онлайн-бэкап раз в сутки в `./data/backups` и хранит последние 7 (`BACKUP_INTERVAL_HOURS`, `BACKUP_KEEP`, `BACKUP_DIR`); копируйте их на другой диск или в облако. Вручную: `sqlite3 game.db ".backup backup.db"`.
+
+Здоровье платформы — в «Администрировании» → «Здоровье»: ходы и ошибки за час и сутки, медиана и p95 времени хода, кредиты, бэкапы. Алерты при всплеске ошибок, медленных ходах и проблемах с бэкапом уходят на `ALERT_EMAIL` (нужен `SMTP_URL`) и/или `ALERT_WEBHOOK_URL` (POST `{"text": "..."}` — подходит Slack, Mattermost, свой бот в Telegram).
 
 ### Без Docker
 

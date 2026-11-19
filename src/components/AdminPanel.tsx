@@ -16,7 +16,7 @@ const fmt = (s?: string | null) => (s ? new Date(String(s).replace(' ', 'T') + '
 
 /** Панель администратора платформы: пространства, кредиты, выручка, ИИ платформы. */
 export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSettingsSaved }) => {
-  const [tab, setTab] = useState<'workspaces' | 'ai'>('workspaces');
+  const [tab, setTab] = useState<'workspaces' | 'ai' | 'health'>('workspaces');
   const [data, setData] = useState<{ workspaces: any[]; revenue: any[] } | null>(null);
   const [error, setError] = useState('');
   const [local, setLocal] = useState<AppSettings>(settings);
@@ -60,9 +60,9 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
           <h1 className="font-display text-2xl font-bold text-white">Администрирование платформы</h1>
         </div>
         <div className="flex gap-2">
-          {(['workspaces', 'ai'] as const).map(t => (
+          {(['workspaces', 'ai', 'health'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest ${tab === t ? 'bg-white text-black' : 'bg-white/5 text-white/50'}`}>
-              {t === 'workspaces' ? 'Пространства' : 'ИИ платформы'}
+              {t === 'workspaces' ? 'Пространства' : t === 'ai' ? 'ИИ платформы' : 'Здоровье'}
             </button>
           ))}
         </div>
@@ -129,6 +129,8 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
           </div>
         )}
 
+        {tab === 'health' && <OpsPanel />}
+
         {tab === 'ai' && (
           <div className="max-w-2xl space-y-4">
             <p className="text-xs text-white/50">Этот ИИ используют пространства в режиме «ИИ платформы»; их ходы списывают кредиты. Пространства со своим ключом его не используют.</p>
@@ -139,6 +141,56 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+/** Здоровье платформы: ходы и ошибки за час и сутки, бэкапы, алерты. */
+const OpsPanel: React.FC = () => {
+  const [d, setD] = useState<any>(null);
+  const [msg, setMsg] = useState('');
+  const load = () => api<any>('/api/admin/ops').then(setD).catch(e => setMsg(e.message));
+  useEffect(() => { load(); const t = setInterval(load, 30_000); return () => clearInterval(t); }, []);
+  if (!d) return <p className="text-xs text-white/40">{msg || 'Загрузка…'}</p>;
+  const sec = (ms: number | null) => ms == null ? '—' : `${Math.round(ms / 100) / 10} с`;
+  const Win = ({ title, w }: { title: string; w: any }) => (
+    <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
+      <p className={labelCls}>{title}</p>
+      <p className="text-2xl font-bold text-white mt-1">{w.turns} <span className="text-sm text-white/40 font-normal">ходов</span></p>
+      <p className={`text-sm mt-1 ${w.errorRate >= 10 ? 'text-red-400' : 'text-white/60'}`}>ошибок {w.errors} ({w.errorRate}%)</p>
+      <p className="text-xs text-white/45 mt-1">время хода: медиана {sec(w.p50)}, p95 {sec(w.p95)}</p>
+      {w.lastErrors?.length > 0 && <ul className="mt-2 space-y-0.5">{w.lastErrors.map((e: string, i: number) => <li key={i} className="text-[11px] text-red-300/70 truncate" title={e}>• {e}</li>)}</ul>}
+    </div>
+  );
+  const b = d.backup;
+  return (
+    <div className="space-y-4">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Win title="Последний час" w={d.hour} />
+        <Win title="Сутки" w={d.day} />
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        {[['Игроков за сутки', d.activeUsers24], ['Всего аккаунтов', d.users], ['Кредитов за сутки', d.credits24], ['База', d.dbSizeMb != null ? `${d.dbSizeMb} МБ` : '—'], ['Память', `${d.memoryMb} МБ`], ['Аптайм', `${Math.floor(d.uptimeSec / 3600)} ч ${Math.floor(d.uptimeSec % 3600 / 60)} мин`]].map(([k, v]) => (
+          <div key={k as string} className="p-3 rounded-xl bg-white/[0.03] border border-white/10"><p className={labelCls}>{k}</p><p className="text-white font-semibold mt-1">{v}</p></div>
+        ))}
+      </div>
+      <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className={labelCls}>Бэкапы базы</p>
+          <button disabled={!b.enabled} onClick={async () => { setMsg(''); try { const r = await api<any>('/api/admin/ops/backup', { method: 'POST' }); setMsg(`Готово: ${r.file}, ${Math.round(r.size / 1024)} КБ за ${r.ms} мс`); load(); } catch (e) { setMsg(e instanceof Error ? e.message : 'Ошибка бэкапа'); } }} className="px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs font-bold disabled:opacity-40 flex items-center gap-1"><RefreshCw size={12} /> Сделать сейчас</button>
+        </div>
+        <p className="text-xs text-white/55">{b.enabled ? `Каждые ${b.everyHours} ч, храним ${b.keep}. ` : 'Выключены (база в памяти или BACKUP_INTERVAL_HOURS=0). '}{b.last ? `Последний: ${new Date(b.last.at).toLocaleString('ru-RU')} — ${b.last.ok ? 'успешно' : `ошибка: ${b.last.detail || ''}`}` : 'Ещё не было.'}</p>
+        {b.files?.length > 0 && <ul className="text-[11px] text-white/40 space-y-0.5">{b.files.map((f: any) => <li key={f.file}>{f.file} · {Math.round(f.size / 1024)} КБ</li>)}</ul>}
+        <p className="text-[11px] text-white/35">Файлы лежат на сервере рядом с базой (BACKUP_DIR). Копируйте их на другой диск или в облако — бэкап на той же машине не спасёт от её потери.</p>
+      </div>
+      <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className={labelCls}>Алерты</p>
+          <button disabled={!d.alerts.email && !d.alerts.webhook} onClick={async () => { const r = await api<any>('/api/admin/ops/alert-test', { method: 'POST' }).catch(() => null); setMsg(r?.sent ? 'Тестовый алерт отправлен' : 'Не отправлен (тест не чаще раза в час)'); }} className="px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs font-bold disabled:opacity-40">Проверить</button>
+        </div>
+        <p className="text-xs text-white/55">Почта: {d.alerts.email ? 'включена' : 'нет (ALERT_EMAIL + SMTP_URL)'} · вебхук: {d.alerts.webhook ? 'включён' : 'нет (ALERT_WEBHOOK_URL)'}. Срабатывают при ≥30% ошибок ходов или p95 больше 3 минут за 15 минут, и если бэкап не удался или устарел; не чаще раза в час на тему.</p>
+      </div>
+      {msg && <p className="text-xs text-emerald-300">{msg}</p>}
     </div>
   );
 };

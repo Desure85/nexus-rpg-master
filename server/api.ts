@@ -10,6 +10,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { WORLD_GEN_SYSTEM, parseGeneratedWorld, closeJson } from "../shared/world";
 import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
+import { createOps } from "./ops";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
@@ -32,13 +33,15 @@ const MAX_CHARACTERS = 8;
  * Используется настоящим сервером (server/app.ts) и браузерным демо (demo/).
  * Тело запроса к этому моменту уже должно быть разобрано в req.body.
  */
-export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: string, data: any) => void }) {
+export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: string, data: any) => void; dbPath?: string }) {
   const { db, broadcast } = opts;
   const heroes = createHeroes(db, opts.broadcast);
   const worlds = createWorlds(db);
   // после каждого хода мастера — проверка достижений
+  const ops = createOps(db, { dbPath: opts.dbPath });
   const broadcastWithHooks = (room: string, data: any) => {
     broadcast(room, data);
+    ops.onEvent(data);
     if (data?.type === "turn_end") {
       try { heroes.checkSession(data.sessionId); } catch (e) { console.error("[achievements]", e); }
       try {
@@ -671,6 +674,9 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   const gameApi = registerGameRoutes(app, { db, broadcast });
   engine = new Engine(db, gameApi, broadcastWithHooks, tenancy, billing, (wid, sid) => worlds.canonFor(wid, sid));
   heroes.register(app, requireUser);
+  // правки миров, покупки, отзывы, жалобы: не чаще 60 в минуту на игрока (чтение не ограничиваем)
+  const worldWrites = rateLimit({ windowMs: 60_000, max: Number(process.env.WORLD_WRITES_PER_MIN || 60), key: byUser });
+  app.use("/api/worlds", (req, res, next) => (req.method === "GET" ? next() : worldWrites(req, res, next)));
   worlds.register(app, requireUser);
 
   // ------------------------------- настройки (админ) -------------------------------
@@ -712,9 +718,10 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     }
   });
 
+  ops.register(app);
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
-  return { engine, billing, tenancy, gameApi };
+  return { engine, billing, tenancy, gameApi, ops };
 }
 
 /** Ошибки обработчиков — JSON, без стектрейсов наружу. */
