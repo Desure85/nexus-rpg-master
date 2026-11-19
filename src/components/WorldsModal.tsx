@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock } from 'lucide-react';
+import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock, Heart, Flag, Search, Upload, Download, Sparkles } from 'lucide-react';
+import { customPrompt } from './PromptModal';
 import { api, appLink } from '../api';
 import { customAlert, customConfirm } from './PromptModal';
 import { ARCHETYPES } from '../../shared/archetypes';
@@ -25,8 +26,25 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
   const [list, setList] = useState<World[] | null>(null);
   const [editing, setEditing] = useState<World | null>(null);
   const [playing, setPlaying] = useState<World | null>(null);
-  const load = (t = tab) => { setList(null); api<World[]>(`/api/worlds?scope=${t}`).then(setList).catch(() => setList([])); };
-  useEffect(() => { load(tab); }, [tab]);
+  const [q, setQ] = useState('');
+  const [genre, setGenre] = useState('');
+  const [sort, setSort] = useState<'popular' | 'likes' | 'new'>('popular');
+  const load = (t = tab) => {
+    const qs = t === 'public' ? `&q=${encodeURIComponent(q.trim())}&genre=${genre}&sort=${sort}` : '';
+    api<World[]>(`/api/worlds?scope=${t}${qs}`).then(setList).catch(() => setList([]));
+  };
+  useEffect(() => { setList(null); load(tab); }, [tab, genre, sort]);
+  useEffect(() => { if (tab !== 'public') return; const t = setTimeout(() => load('public'), 300); return () => clearTimeout(t); }, [q]);
+  const like = async (w: World) => {
+    const r = await api<{ likes: number; liked: boolean }>(`/api/worlds/${w.id}/like`, { method: 'POST' });
+    setList(l => (l || []).map(x => x.id === w.id ? { ...x, ...r } : x));
+  };
+  const report = async (w: World) => {
+    const reason = await customPrompt(`Что не так с миром «${w.title}»? Например: чужая вселенная без прав, оскорбления, неприемлемый контент.`, '');
+    if (reason === null) return;
+    await api(`/api/worlds/${w.id}/report`, { body: { reason } }).catch(() => undefined);
+    customAlert('Спасибо, модераторы посмотрят. Если жалоб несколько, мир скроется из каталога до проверки.');
+  };
   useEffect(() => {
     if (openId) api<World>(`/api/worlds/${openId}`).then(setPlaying).catch(e => customAlert(e instanceof Error ? e.message : 'Мир не найден'));
   }, [openId]);
@@ -51,13 +69,28 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
           <button onClick={() => setTab('public')} className={chip(tab === 'public')}>Каталог</button>
           <button onClick={() => setEditing(newWorld())} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-400 text-black text-xs font-bold hover:bg-amber-300"><Plus size={14} /> Создать мир</button>
         </div>
+        {tab === 'public' && (
+          <div className="px-4 py-3 border-b border-white/5 space-y-2 shrink-0">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <input className={`${input} pl-9`} placeholder="Поиск по названию, описанию, автору" value={q} onChange={e => setQ(e.target.value)} />
+            </div>
+            <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
+              <button onClick={() => setGenre('')} className={`${chip(!genre)} shrink-0`}>Все жанры</button>
+              {WORLD_GENRES.map(g => <button key={g.id} onClick={() => setGenre(g.id)} className={`${chip(genre === g.id)} shrink-0`}>{g.name}</button>)}
+            </div>
+            <div className="flex gap-3 text-[11px]">
+              {([['popular', 'Популярные'], ['likes', 'Любимые'], ['new', 'Новые']] as const).map(([id, n]) => <button key={id} onClick={() => setSort(id)} className={sort === id ? 'text-amber-300 font-bold' : 'text-white/45 hover:text-white'}>{n}</button>)}
+            </div>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
           {list === null ? <p className="text-white/40 text-sm">Загружаем…</p> : list.length === 0 ? (
             <div className="text-sm text-white/55 leading-relaxed space-y-2 max-w-lg">
               {tab === 'mine' ? <>
                 <p>Мир — это ваш сеттинг для ИИ-мастера: история, персонажи, места, фракции и готовые завязки. Мастер держит канон мира и подтягивает нужные карточки, когда о них заходит речь.</p>
                 <p>Создайте мир, сыграйте в нём сами или поделитесь ссылкой с друзьями.</p>
-              </> : <p>В каталоге пока пусто. Опубликуйте свой мир — переключите доступ на «В каталоге».</p>}
+              </> : <p>{q || genre ? 'Ничего не нашлось — попробуйте другой запрос или жанр.' : 'В каталоге пока пусто. Опубликуйте свой мир — переключите доступ на «В каталоге».'}</p>}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -75,10 +108,13 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                     </div>
                     {w.description && <p className="text-xs text-white/55 leading-snug line-clamp-3">{w.description}</p>}
                     <p className="text-[11px] text-white/35">карточек {counts.cards} · мест {counts.locations} · сценариев {counts.scenarios}</p>
+                    {w.mine && w.hidden && <p className="text-[11px] text-red-300/80">Скрыт из каталога по жалобам — ждёт проверки модератора</p>}
                     <div className="flex flex-wrap gap-1.5 mt-auto pt-1">
                       <button onClick={async () => setPlaying(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-200 text-xs font-bold hover:bg-emerald-500/25"><Play size={12} /> Играть</button>
                       {w.mine && <button onClick={async () => setEditing(await full(w))} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white"><Pencil size={12} /> Изменить</button>}
                       <button onClick={async () => { try { await api(`/api/worlds/${w.id}/copy`, { method: 'POST' }); setTab('mine'); load('mine'); } catch (e) { customAlert(e instanceof Error ? e.message : 'Ошибка'); } }} className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/5 text-white/70 text-xs hover:text-white" title="Копия в мои миры — можно переделать под себя"><Copy size={12} /> {w.mine ? 'Копия' : 'Ремикс'}</button>
+                      <button onClick={() => like(w)} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs ${w.liked ? 'text-rose-300 bg-rose-500/10' : 'text-white/50 bg-white/5 hover:text-white'}`} aria-label="Нравится"><Heart size={12} fill={w.liked ? 'currentColor' : 'none'} /> {w.likes || 0}</button>
+                      {!w.mine && <button onClick={() => report(w)} className="ml-auto p-1.5 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={13} /></button>}
                       {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
                     </div>
                   </div>
@@ -209,7 +245,7 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
             <div>
               <span className={label}>Доступ</span>
               <div className="flex flex-wrap gap-1.5">{(['private', 'link', 'public'] as const).map(v => <button key={v} onClick={() => setW({ ...w, visibility: v })} className={chip(w.visibility === v)}>{VIS_LABEL[v]}</button>)}</div>
-              <p className="text-[11px] text-white/35 mt-1.5">{w.visibility === 'private' ? 'Мир видите только вы.' : w.visibility === 'link' ? 'Играть может любой, у кого есть ссылка.' : 'Мир виден всем в каталоге, его можно сыграть и скопировать.'} Начатые игры не меняются, когда вы правите мир.</p>
+              <p className="text-[11px] text-white/35 mt-1.5">{w.visibility === 'private' ? 'Мир видите только вы.' : w.visibility === 'link' ? 'Играть может любой, у кого есть ссылка.' : 'Мир виден всем в каталоге, его можно сыграть и скопировать.'} Начатые игры не меняются, когда вы правите мир.{w.visibility === 'public' ? ' Публикуйте только своё: миры по чужим книгам, играм и фильмам без разрешения правообладателя скроют по жалобам.' : ''}</p>
             </div>
           </>}
 

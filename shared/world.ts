@@ -86,6 +86,9 @@ export interface World {
   owner_id?: string;
   author?: string;
   plays?: number;
+  likes?: number;
+  liked?: boolean;
+  hidden?: boolean;
   updated_at?: string;
   mine?: boolean;
 }
