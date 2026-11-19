@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { itemEffect } from "../shared/items";
 import { genreOf, SHOPS, LOOT, moneyIn, type Genre, type LootTier } from "../shared/genre";
 import type { DB } from "./db";
+import { itemLabel, enemyStats, type WorldData } from "../shared/world";
 
 export interface EncounterResult {
   roll: number;
@@ -36,6 +37,15 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     hp: 8 + level * 3 + danger * 2,
     features: 1 + Math.floor(level / 2),
   });
+
+  /** Враг из бестиария мира, ближе всего к бюджету угрозы (боссов не предлагаем — их вводит сюжет). */
+  const bestiaryHint = (sessionId: string, hp: number) => {
+    const en = (worldOf(sessionId)?.enemies || []).filter(e => e.tier !== "boss");
+    if (!en.length) return "";
+    const ranked = [...en].sort((a, b) => Math.abs(enemyStats(a).hp - hp) - Math.abs(enemyStats(b).hp - hp));
+    const pick = ranked[Math.floor(Math.random() * Math.min(2, ranked.length))];
+    return `. Из бестиария мира подойдёт «${pick.name}» (HP ${enemyStats(pick).hp})`;
+  };
 
   const PACING_STYLES: Record<string, { limit: number; safeDelay: number; threshold: number; failedBonus: number }> = {
     narrative: { limit: 1, safeDelay: 3, threshold: 6, failedBonus: 1 },
@@ -95,7 +105,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     const tag = result === "world"
       ? `[WORLD EVENT: ${worldType} (${typeLabel})] Пул Рока разрядился — произойдёт НЕОЖИДАННОЕ событие ${worldType === "positive" ? "в пользу героев (союзник, находка, удача)" : worldType === "neutral" ? "— знамение, встреча, деталь мира" : "— угроза, засада, ухудшение"}. Опиши его живо и ОБНУЛИ doomPool до 0 в следующем dashboard_json.`
       : result === "encounter"
-        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие. Партия уровня ${pl}: враг должен иметь HP ~${budget.hp}, особенностей ${budget.features} (автоскейл)]`
+        ? `[ENCOUNTER: ${reason} — введи новую угрозу или опасное событие. Партия уровня ${pl}: враг должен иметь HP ~${budget.hp}, особенностей ${budget.features} (автоскейл)${bestiaryHint(sessionId, budget.hp)}]`
         : result === "silence"
           ? `[ENCOUNTER: тишина затянулась — введи событие (опасность, интригу или открытие)]`
           : "";
@@ -112,12 +122,21 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     const r = db.prepare("SELECT setting, genre, name FROM sessions WHERE id = ?").get(sessionId) as any;
     return genreOf(`${r?.genre || ""} ${r?.setting || ""} ${r?.name || ""}`);
   };
-  const pickLoot = (pool: LootTier, count: number, used: string[] = [], genre: Genre = "fantasy") => {
-    const available = (LOOT[genre] || LOOT.fantasy)[pool].filter(i => !used.includes(i));
+  /** Данные мира автора у партии (снимок), если партия идёт в мире. */
+  const worldOf = (sessionId: string): WorldData | undefined => {
+    const r = db.prepare("SELECT config FROM sessions WHERE id = ?").get(sessionId) as any;
+    try { return JSON.parse(r?.config || "{}").world?.data; } catch { return undefined; }
+  };
+  const pickLoot = (pool: LootTier, count: number, used: string[] = [], genre: Genre = "fantasy", world?: WorldData) => {
+    // предметы мира этой редкости попадаются вдвое чаще жанровых
+    const own = (world?.items || []).filter(i => i.rarity === pool).map(itemLabel);
+    const available = [...own, ...own, ...(LOOT[genre] || LOOT.fantasy)[pool]].filter((i, k, a) => !used.includes(i) && a.indexOf(i) === k || own.includes(i) && !used.includes(i));
     const picked: string[] = [];
     for (let i = 0; i < count && available.length > 0; i++) {
       const idx = Math.floor(Math.random() * available.length);
-      picked.push(available.splice(idx, 1)[0]);
+      const got = available.splice(idx, 1)[0];
+      picked.push(got);
+      for (let k = available.length - 1; k >= 0; k--) if (available[k] === got) available.splice(k, 1);
     }
     return picked;
   };
@@ -138,7 +157,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     }
     const roll = Math.floor(Math.random() * 20) + 1;
     const tier = tierFor(roll, dangerLevel);
-    const items = tier ? pickLoot(tier, 2, [], genreFor(req.params.id)) : [];
+    const items = tier ? pickLoot(tier, 2, [], genreFor(req.params.id), worldOf(req.params.id)) : [];
     db.prepare("INSERT INTO searches (session_id, target, count) VALUES (?,?,1) ON CONFLICT(session_id, target) DO UPDATE SET count = count + 1")
       .run(req.params.id, key);
     // Находки сразу ложатся на сцену (деньги — делятся между героями в партии): модель только описывает
@@ -172,7 +191,10 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   /** Магазин под жанр сессии; Оружейная в логове даёт скидку 15% за уровень (до 45%). */
   const shopFor = (sessionId: string) => {
     const armory = Math.min(3, Number(getBase(sessionId).armory || 0));
-    return (SHOPS[genreFor(sessionId)] || SHOPS.fantasy).map(i => ({ ...i, cost: Math.max(1, Math.round(i.cost * (1 - 0.15 * armory))) }));
+    const w = worldOf(sessionId);
+    const own = (w?.items || []).filter(i => i.inShop && i.price).map(i => ({ name: itemLabel(i), cost: i.price!, desc: i.kind === 'consumable' ? 'Расходник' : i.kind === 'gear' ? 'Снаряжение' : (i.desc || 'Товар') }));
+    const base = w?.shopReplace && own.length ? own : [...own, ...(SHOPS[genreFor(sessionId)] || SHOPS.fantasy)];
+    return base.map(i => ({ ...i, cost: Math.max(1, Math.round(i.cost * (1 - 0.15 * armory))) }));
   };
   const REST_COST = 10;
 
@@ -463,7 +485,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
     saveEngineState(req.params.id, chars);
     syncDash(req.params.id, chars);
     const id = crypto.randomUUID();
-    const rewardItem = pickLoot(cfg.pool, 1, [], genreFor(req.params.id)).filter(i => moneyIn(i) === null)[0] || "";
+    const rewardItem = pickLoot(cfg.pool, 1, [], genreFor(req.params.id), worldOf(req.params.id)).filter(i => moneyIn(i) === null)[0] || "";
     db.prepare("INSERT INTO expeditions (id, session_id, char_name, hireling, tier, cost, reward_gold, reward_item, returns_at) VALUES (?,?,?,?,?,?,?,?, datetime('now', ?))")
       .run(id, req.params.id, charName, EXPEDITION_NAMES[tier], tier, cost, cfg.reward, rewardItem, `+${Math.round(cfg.hours * 60)} minutes`);
     broadcast(req.params.id, { type: "update", sessionId: req.params.id });

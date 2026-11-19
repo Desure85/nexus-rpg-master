@@ -282,6 +282,9 @@ async function worldPlay(browser) {
       ],
       scenarios: [{ id: 'dark', title: 'Погасший маяк', hook: 'Этой ночью Северный маяк погас впервые за сто лет, и туман двинулся к порту. Смотритель Ивар не отвечает.', mode: 'short', startLocationId: 'port' }],
       heroes: [{ name: 'Рина', concept: 'Лоцман, знает все отмели', gender: 'Ж', archetype: 'scout' }],
+      enemies: [{ name: 'Безымянный', tier: 'regular', hp: 11, traits: 'Бледная фигура из тумана, зовёт голосами родных, боится огня' }],
+      items: [{ name: 'Свеча маяка', kind: 'consumable', heal: 4, price: 9, inShop: true, rarity: 'common' }],
+      currency: 'раковины', shopReplace: true,
     },
   };
   const w = (await api(page, '/api/worlds', { method: 'POST', body: JSON.stringify(body) })).body;
@@ -305,6 +308,13 @@ async function worldPlay(browser) {
   // тестовая модель лор не читает — проверка только на живом ИИ
   if (process.env.LIVE) check('мир: мастер опирается на карточку (Ивар/ключи/повязка)', /Ивар|ключ|повязк/i.test(txt), txt.slice(0, 120));
   await snap(page, 'world_turn');
+  const shop = (await api(page, `/api/sessions/${sid}/shop`)).body;
+  check('мир: лавка продаёт предметы мира', JSON.stringify(shop.map(i => i.name)) === JSON.stringify(['Свеча маяка (+4 HP)']), JSON.stringify(shop).slice(0, 120));
+  ({ s, ms } = await gmTurn(page, sid, 'Из тумана выходит безымянный и зовёт Рину голосом матери. Рина поднимает фонарь и бьёт его багром', 3));
+  recordTurn('Мир: бой с безымянным', s, ms);
+  const nameless = (lastDash(s)?.threats || []).find(t => /безымян/i.test(t.name));
+  if (nameless) check('мир: HP безымянного из бестиария (11 минус удары)', /\/11$/.test(String(nameless.hp)), nameless.hp);
+  else log('   (безымянный не остался на сцене — HP не проверить)');
   await ctx.close();
 }
 

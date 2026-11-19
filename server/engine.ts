@@ -5,7 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
-import { worldPromptBlock } from "../shared/world";
+import { worldPromptBlock, findEnemy, enemyStats } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -485,9 +485,16 @@ export class Engine {
         const norm = (n: string) => String(n || "").toLowerCase().replace(/ё/g, "е").trim();
         const hpRe = /(\d+)\s*\/\s*(\d+)/;
         const prev = currentDashboard.threats || [];
+        const bestiary = s.config.world?.data?.enemies;
         let threats = (dashboard.threats || []).map(t => {
           const p = prev.find(x => norm(x.name) === norm(t.name));
-          return p && hpRe.test(String(p.hp)) ? { ...t, hp: p.hp } : t;
+          if (p && hpRe.test(String(p.hp))) return { ...t, hp: p.hp };
+          // новый враг из бестиария мира — HP задаёт автор мира, а не модель
+          const e = findEnemy(bestiary, t.name);
+          if (!e) return t;
+          const st = enemyStats(e);
+          const features = (t.features || []).length ? t.features : (e.traits ? [e.traits] : []);
+          return { ...t, hp: `${st.hp}/${st.hp}`, features };
         });
         for (const h of parseCombatTags(aiContent).hits) {
           let i = threats.findIndex(t => norm(t.name) === norm(h.name));
@@ -772,6 +779,8 @@ export const stripStrayTags = (text: string) => text
   .replace(/^[ \t]*\[[a-z][a-z _-]{2,30}\][ \t]*\n?/gm, "")
   .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
   .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST)(:[^\]\n]*)?\]/g, "")
+  // пояснения к числам в скобках: «(урон 1, не 2: тропа выбрана верно)», «(−2 HP)»
+  .replace(/\s*\((?=[^)]*\d)(?:урон|HP|ОЗ|хп|опыт|XP|стресс|DC|сложность|бросок|[+−-]\s*\d+\s*(?:HP|ОЗ|XP|стресс|золот))[^)]{0,100}\)/gi, "")
   .replace(/\n[ \t]+(?=[—–-]\s)/g, "\n")
   .replace(/[ \t]+\n/g, "\n")
   .replace(/\n{3,}/g, "\n\n")

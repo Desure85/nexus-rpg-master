@@ -4,7 +4,9 @@ import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock } from 'lucide
 import { api, appLink } from '../api';
 import { customAlert, customConfirm } from './PromptModal';
 import { ARCHETYPES } from '../../shared/archetypes';
-import { WORLD_GENRES, LORE_KINDS, emptyWorldData, normalizeWorldData, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation } from '../../shared/world';
+import { WORLD_GENRES, LORE_KINDS, ENEMY_TIER_LIST, emptyWorldData, normalizeWorldData, enemyStats, itemLabel, type World, type WorldData, type LoreCard, type WorldHero, type WorldScenario, type WorldLocation, type WorldEnemy, type WorldItem } from '../../shared/world';
+import { ENEMY_TIERS } from '../../shared/balance';
+import { describeEffect } from '../../shared/items';
 
 const input = 'w-full px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-white placeholder-white/25 focus:outline-none focus:border-white/30';
 const label = 'block text-[10px] uppercase tracking-widest font-bold text-white/40 mb-1';
@@ -162,7 +164,7 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; onClose: () => void
 
 /* ------------------------------------------------------------------ редактор ------------------------------------------------------------------ */
 
-type ETab = 'passport' | 'lore' | 'places' | 'scenarios' | 'heroes';
+type ETab = 'passport' | 'lore' | 'places' | 'scenarios' | 'heroes' | 'enemies' | 'items';
 
 const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: World) => void }> = ({ world, onClose, onSaved }) => {
   const [w, setW] = useState<World>(world);
@@ -179,7 +181,7 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
       onSaved(saved);
     } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось сохранить'); } finally { setSaving(false); }
   };
-  const tabs: [ETab, string][] = [['passport', 'Паспорт'], ['lore', `Лор · ${d.cards.length}`], ['places', `Места · ${d.locations.length}`], ['scenarios', `Сюжеты · ${d.scenarios.length}`], ['heroes', `Герои · ${d.heroes.length}`]];
+  const tabs: [ETab, string][] = [['passport', 'Паспорт'], ['lore', `Лор · ${d.cards.length}`], ['places', `Места · ${d.locations.length}`], ['scenarios', `Сюжеты · ${d.scenarios.length}`], ['heroes', `Герои · ${d.heroes.length}`], ['enemies', `Враги · ${(d.enemies || []).length}`], ['items', `Предметы · ${(d.items || []).length}`]];
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-stretch sm:items-center justify-center sm:p-4 bg-black/70" onClick={e => e.stopPropagation()}>
@@ -245,6 +247,27 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
               <button onClick={() => setD({ scenarios: [...d.scenarios, { id: uid(), title: '', hook: '', mode: 'short', heroes: [] }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Сюжет</button>
             </div>
             {d.scenarios.map((s, i) => <ScenarioEditor key={s.id} sc={s} places={d.locations} onChange={ns => setD({ scenarios: d.scenarios.map((x, j) => j === i ? ns : x) })} onDelete={() => setD({ scenarios: d.scenarios.filter((_, j) => j !== i) })} />)}
+          </>}
+
+          {tab === 'enemies' && <>
+            <div className="flex items-center justify-between">
+              <span className={label}>Бестиарий — числа держит движок</span>
+              <button onClick={() => setD({ enemies: [...(d.enemies || []), { id: uid(), name: '', tier: 'regular', traits: '' }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Враг</button>
+            </div>
+            <p className="text-[11px] text-white/40 leading-snug">Ранг задаёт здоровье, урон и сложность по проверенному балансу. Когда мастер выводит врага из бестиария, его здоровье ставит игра, а случайные стычки предлагают подходящих врагов отсюда.</p>
+            {(d.enemies || []).map((e, i) => <EnemyEditor key={e.id} enemy={e} onChange={ne => setD({ enemies: d.enemies!.map((x, j) => j === i ? ne : x) })} onDelete={() => setD({ enemies: d.enemies!.filter((_, j) => j !== i) })} />)}
+          </>}
+
+          {tab === 'items' && <>
+            <div className="grid grid-cols-2 gap-3">
+              <div><span className={label}>Деньги мира</span><input className={input} value={d.currency || ''} maxLength={30} placeholder="золото" onChange={e => setD({ currency: e.target.value })} /></div>
+              <label className="flex items-end gap-2 text-xs text-white/60 pb-2"><input type="checkbox" className="accent-amber-400" checked={!!d.shopReplace} onChange={e => setD({ shopReplace: e.target.checked || undefined })} /> В лавках только предметы мира</label>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className={label}>Предметы — эффекты применяет движок</span>
+              <button onClick={() => setD({ items: [...(d.items || []), { id: uid(), name: '', kind: 'consumable', heal: 3 }] })} className="text-xs text-amber-300 flex items-center gap-1"><Plus size={12} /> Предмет</button>
+            </div>
+            {(d.items || []).map((it, i) => <ItemEditor key={it.id} item={it} onChange={ni => setD({ items: d.items!.map((x, j) => j === i ? ni : x) })} onDelete={() => setD({ items: d.items!.filter((_, j) => j !== i) })} />)}
           </>}
 
           {tab === 'heroes' && <>
@@ -329,3 +352,48 @@ const HeroRow: React.FC<{ hero: WorldHero; onChange: (h: WorldHero) => void; onD
     <input className={`${input} basis-full`} placeholder="Кто он: лоцман, знает все отмели" value={hero.concept} maxLength={300} onChange={e => onChange({ ...hero, concept: e.target.value })} />
   </div>
 );
+
+const numIn = (v: string) => (v === '' ? undefined : Math.max(0, Math.round(Number(v)) || 0));
+
+const EnemyEditor: React.FC<{ enemy: WorldEnemy; onChange: (e: WorldEnemy) => void; onDelete: () => void }> = ({ enemy, onChange, onDelete }) => {
+  const st = enemyStats(enemy);
+  const t = ENEMY_TIERS[enemy.tier];
+  return (
+    <Box onDelete={onDelete}>
+      <input className={input} placeholder="Безымянный" value={enemy.name} maxLength={60} onChange={e => onChange({ ...enemy, name: e.target.value })} />
+      <div className="flex flex-wrap gap-1.5">{ENEMY_TIER_LIST.map(x => <button key={x.id} onClick={() => onChange({ ...enemy, tier: x.id, hp: undefined, dmg: undefined, dc: undefined })} className={chip(enemy.tier === x.id)}>{x.name}</button>)}</div>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="text-[10px] text-white/40">HP <span className="text-white/25">({t.hp[0]}–{t.hp[1]})</span><input type="number" min={1} max={60} className={input} value={enemy.hp ?? ''} placeholder={String(st.hp)} onChange={e => onChange({ ...enemy, hp: numIn(e.target.value) })} /></label>
+        <label className="text-[10px] text-white/40">Урон<input type="number" min={1} max={10} className={input} value={enemy.dmg ?? ''} placeholder={String(st.dmg)} onChange={e => onChange({ ...enemy, dmg: numIn(e.target.value) })} /></label>
+        <label className="text-[10px] text-white/40">Сложность<input type="number" min={5} max={25} className={input} value={enemy.dc ?? ''} placeholder={String(st.dc)} onChange={e => onChange({ ...enemy, dc: numIn(e.target.value) })} /></label>
+      </div>
+      <textarea className={`${input} min-h-[50px]`} placeholder="Повадки и слабости: зовёт голосами родных, боится огня маяка" maxLength={400} value={enemy.traits} onChange={e => onChange({ ...enemy, traits: e.target.value })} />
+    </Box>
+  );
+};
+
+const RARITY: [NonNullable<WorldItem['rarity']>, string][] = [['common', 'Обычный'], ['uncommon', 'Необычный'], ['rare', 'Редкий'], ['epic', 'Легендарный']];
+
+const ItemEditor: React.FC<{ item: WorldItem; onChange: (i: WorldItem) => void; onDelete: () => void }> = ({ item, onChange, onDelete }) => {
+  const label = itemLabel({ ...item, name: item.name || 'Предмет' });
+  return (
+    <Box onDelete={onDelete}>
+      <input className={input} placeholder="Свеча маяка" value={item.name} maxLength={60} onChange={e => onChange({ ...item, name: e.target.value })} />
+      <div className="flex flex-wrap gap-1.5">{([['consumable', 'Расходник'], ['gear', 'Снаряжение'], ['misc', 'Прочее']] as const).map(([id, n]) => <button key={id} onClick={() => onChange({ ...item, kind: id })} className={chip(item.kind === id)}>{n}</button>)}</div>
+      {item.kind === 'consumable' && <div className="grid grid-cols-2 gap-2">
+        <label className="text-[10px] text-white/40">Лечит HP<input type="number" min={0} max={20} className={input} value={item.heal ?? ''} onChange={e => onChange({ ...item, heal: numIn(e.target.value) })} /></label>
+        <label className="text-[10px] text-white/40">Снимает стресс<input type="number" min={0} max={5} className={input} value={item.calm ?? ''} onChange={e => onChange({ ...item, calm: numIn(e.target.value) })} /></label>
+      </div>}
+      {item.kind === 'gear' && <select className={input} value={item.bonus || ''} onChange={e => onChange({ ...item, bonus: e.target.value || undefined })}>
+        <option value="">Без бонуса</option>
+        {['атаке', 'защите', 'скрытности', 'внимательности', 'убеждению', 'магии', 'взлому', 'ловкости', 'лечению'].flatMap(w => [1, 2].map(n => `+${n} к ${w}`)).map(b => <option key={b} value={b}>{b}</option>)}
+      </select>}
+      <div className="grid grid-cols-2 gap-2">
+        <label className="text-[10px] text-white/40">Цена<input type="number" min={1} max={500} className={input} value={item.price ?? ''} onChange={e => onChange({ ...item, price: numIn(e.target.value) })} /></label>
+        <label className="text-[10px] text-white/40">В добыче<select className={input} value={item.rarity || ''} onChange={e => onChange({ ...item, rarity: (e.target.value || undefined) as WorldItem['rarity'] })}><option value="">Не выпадает</option>{RARITY.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>
+      </div>
+      <label className="flex items-center gap-2 text-[11px] text-white/50"><input type="checkbox" className="accent-amber-400" checked={!!item.inShop} disabled={!item.price} onChange={e => onChange({ ...item, inShop: e.target.checked || undefined })} /> Продаётся в лавках{!item.price ? ' (укажите цену)' : ''}</label>
+      <p className="text-[11px] text-white/40">В игре: <span className="text-white/70">{label}</span>{item.kind === 'consumable' && describeEffect(label) ? ` · ${describeEffect(label)}` : ''}</p>
+    </Box>
+  );
+};
