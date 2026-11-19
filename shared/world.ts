@@ -112,6 +112,8 @@ export interface World {
   official?: boolean;
   /** маркетплейс: цена в кредитах (0 — бесплатно), куплен ли, закрыт ли (лор скрыт до покупки) */
   price?: number; owned?: boolean; locked?: boolean;
+  /** адрес обложки (если автор загрузил) */
+  cover?: string;
   /** отзывы: средняя оценка, число отзывов, моя оценка, играл ли я в этом мире */
   rating?: number; reviews?: number; myRating?: number; played?: boolean;
   /** только автору: продажи и заработок в кредитах */

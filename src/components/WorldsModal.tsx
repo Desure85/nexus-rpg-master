@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { WorldCover, resizeCover } from './WorldCover';
 import { createPortal } from 'react-dom';
 import { X, Plus, Trash2, Copy, Pencil, Play, Link2, Globe2, Lock, Heart, Flag, Search, Upload, Download, Sparkles, ScrollText, Check, EyeOff } from 'lucide-react';
 import { customPrompt } from './PromptModal';
@@ -147,9 +148,11 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
               {list.map(w => {
                 const counts = (w.data as any).counts || { cards: w.data.cards.length, locations: w.data.locations.length, scenarios: w.data.scenarios.length };
                 return (
-                  <div key={w.id} className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col gap-2">
+                  <div key={w.id} className="rounded-2xl bg-white/[0.03] border border-white/10 flex flex-col overflow-hidden">
+                    <button onClick={async () => setPlaying(await full(w))} className="block" aria-label={`Открыть мир «${w.title}»`}><WorldCover w={w} className="h-28" /></button>
+                    <div className="p-4 pt-3 flex flex-col gap-2">
                     <div className="flex items-start gap-3">
-                      <span className="text-3xl leading-none">{w.icon}</span>
+                      {w.cover && <span className="text-3xl leading-none">{w.icon}</span>}
                       <div className="min-w-0 flex-1">
                         <p className="text-white font-bold truncate">{w.title}</p>
                         {w.official && <span className="inline-block mt-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-400/15 text-amber-300 border border-amber-400/30">✦ от Nexus</span>}
@@ -174,6 +177,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
                       {!w.mine && <button onClick={() => report(w)} className="ml-auto p-2 rounded-lg text-white/25 hover:text-red-300" aria-label="Пожаловаться" title="Пожаловаться"><Flag size={14} /></button>}
                       {w.mine && <button onClick={async () => { if (await customConfirm(`Удалить мир «${w.title}»? Начатые игры сохранятся.`)) { try { await api(`/api/worlds/${w.id}`, { method: 'DELETE' }); load(); } catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось удалить'); } } }} className="ml-auto p-1.5 rounded-lg text-white/30 hover:text-red-300" aria-label="Удалить"><Trash2 size={14} /></button>}
                     </div>
+                    </div>
                   </div>
                 );
               })}
@@ -183,7 +187,7 @@ export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart
       </div>
       {chron && <ChronicleModal world={chron} onClose={() => { setChron(null); load(); }} />}
       {genOpen && <WorldGenerator workspaceId={workspaceId} onClose={() => setGenOpen(false)} onDraft={d => { setGenOpen(false); setEditing({ ...newWorld(), ...d }); }} />}
-      {editing && <WorldEditor world={editing} onClose={() => setEditing(null)} onSaved={w => { setEditing(null); setTab('mine'); load('mine'); if (!editing.id) setPlaying(w); }} />}
+      {editing && <WorldEditor world={editing} onCover={() => load()} onClose={() => setEditing(null)} onSaved={w => { setEditing(null); setTab('mine'); load('mine'); if (!editing.id) setPlaying(w); }} />}
       {playing && <WorldPlay world={playing} maxHeroes={maxHeroes} workspaceId={workspaceId} credits={credits} onBought={w => { setPlaying(w); onCredits?.(); load(); }} onClose={() => setPlaying(null)} onPlay={s => { setPlaying(null); onPlay(s); }} />}
     </div>,
     document.body,
@@ -263,6 +267,7 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: strin
   return (
     <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70" onClick={onClose}>
       <div className="w-full sm:max-w-xl max-h-[92dvh] bg-[#1a1614] border border-white/10 rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        {world.cover && <WorldCover w={world} className="h-28 sm:h-36 shrink-0" />}
         <div className="px-5 py-4 border-b border-white/10 flex items-start gap-3 shrink-0">
           <span className="text-3xl">{world.icon}</span>
           <div className="flex-1 min-w-0">
@@ -416,8 +421,9 @@ const WorldReviews: React.FC<{ world: World; onChange: (w: World) => void }> = (
 
 type ETab = 'passport' | 'lore' | 'places' | 'scenarios' | 'heroes' | 'enemies' | 'items' | 'factions';
 
-const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: World) => void }> = ({ world, onClose, onSaved }) => {
+const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: World) => void; onCover?: (w: World) => void }> = ({ world, onClose, onSaved, onCover }) => {
   const [w, setW] = useState<World>(world);
+  const [coverBusy, setCoverBusy] = useState(false);
   const [tab, setTab] = useState<ETab>('passport');
   const [saving, setSaving] = useState(false);
   const d = w.data;
@@ -448,6 +454,27 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
             <div className="grid grid-cols-[4rem_1fr] gap-3">
               <div><span className={label}>Знак</span><input className={`${input} text-center text-xl`} value={w.icon} maxLength={4} onChange={e => setW({ ...w, icon: e.target.value })} /></div>
               <div><span className={label}>Название</span><input className={input} value={w.title} maxLength={80} placeholder="Туманные Острова" onChange={e => setW({ ...w, title: e.target.value })} /></div>
+            </div>
+            <div>
+              <span className={label}>Обложка</span>
+              <div className="rounded-xl overflow-hidden border border-white/10"><WorldCover w={w} className="h-32" /></div>
+              {w.id ? (
+                <div className="flex gap-2 mt-2 items-center">
+                  <label className="px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs font-bold cursor-pointer hover:bg-white/15">
+                    {coverBusy ? 'Загружаем…' : w.cover ? 'Заменить' : 'Загрузить картинку'}
+                    <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={coverBusy} data-testid="cover-input" onChange={async e => {
+                      const f = e.target.files?.[0]; e.target.value = '';
+                      if (!f) return;
+                      setCoverBusy(true);
+                      try { const r = await api<World>(`/api/worlds/${w.id}/cover`, { method: 'PUT', body: { data: await resizeCover(f) } }); setW(prev => ({ ...prev, cover: r.cover })); onCover?.(r); }
+                      catch (err) { customAlert(err instanceof Error ? err.message : 'Не удалось загрузить обложку'); }
+                      finally { setCoverBusy(false); }
+                    }} />
+                  </label>
+                  {w.cover && <button onClick={async () => { const r = await api<World>(`/api/worlds/${w.id}/cover`, { method: 'DELETE' }).catch(() => null); if (r) { setW(prev => ({ ...prev, cover: undefined })); onCover?.(r); } }} className="text-xs text-white/45 hover:text-white">Убрать</button>}
+                  <span className="text-[11px] text-white/35">JPEG, PNG или WebP; ужмём до 1280×720. Только свои картинки или с правом использования.</span>
+                </div>
+              ) : <p className="text-[11px] text-white/35 mt-1.5">Без картинки — фон по жанру. Свою обложку можно загрузить после создания мира.</p>}
             </div>
             <div>
               <span className={label}>Жанр — от него зависят лавки и добыча</span>
