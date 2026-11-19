@@ -120,6 +120,12 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isDiceTrayOpen, setIsDiceTrayOpen] = useState(false);
+  useEffect(() => {
+    if (!isDiceTrayOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog][aria-modal=true]')) setIsDiceTrayOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isDiceTrayOpen]);
   const [mobileView, setMobileView] = useState<'narrative' | 'dashboard'>('narrative');
   const [isBookView, setIsBookView] = useState(false);
   const [confirmFinale, setConfirmFinale] = useState(false);
@@ -1006,8 +1012,8 @@ export default function App() {
             <div className={`flex-1 flex flex-col min-h-0 min-w-0 ${mobileView !== 'narrative' ? 'hidden lg:flex' : 'flex'}`}>
               {/* Narrative Header */}
               <div className="px-4 lg:px-8 py-3 lg:py-4 border-b border-white/5 flex justify-between items-center gap-4 bg-black/20 overflow-x-auto">
-                <div className="flex items-center gap-4 shrink-0">
-                  <h2 className="font-display font-bold text-white/80 truncate max-w-[40vw] lg:max-w-xs" title={currentSession.name}>{currentSession.name}</h2>
+                <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                  <h2 className="font-display font-bold text-white/80 truncate min-w-0 lg:max-w-xs" title={currentSession.name}>{currentSession.name}</h2>
                   {currentSession.config?.daily && (() => {
                     const m = DAILY_MODIFIERS.find(x => x.id === currentSession.config!.daily!.modifier);
                     return m ? <span className="shrink-0 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/25 text-[10px] text-amber-200" title={`Испытание дня: ${m.desc}`}>{m.icon} {m.title}</span> : null;
@@ -1017,20 +1023,21 @@ export default function App() {
                       <div className="h-4 w-px bg-white/10" />
                       <button
                         onClick={() => setIsBookView(!isBookView)}
-                        className={`flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold transition-all ${isBookView ? 'text-emerald-400' : 'text-white/40 hover:text-white'}`}
+                        title={isBookView ? 'Режим книги' : 'Книга'}
+                        className={`shrink-0 flex items-center gap-2 p-1 sm:p-0 text-[10px] uppercase tracking-widest font-bold transition-all ${isBookView ? 'text-emerald-400' : 'text-white/40 hover:text-white'}`}
                       >
-                        <Library size={12} /> {isBookView ? 'Режим книги' : 'Книга'}
+                        <Library size={14} className="sm:w-3 sm:h-3" /> <span className="hidden sm:inline">{isBookView ? 'Режим книги' : 'Книга'}</span>
                       </button>
                     </>
                   )}
                   <div className="h-4 w-px bg-white/10" />
-                  <div className="relative group/dl">
+                  <div className="relative group/dl shrink-0">
                     <button
                       onClick={isTale ? downloadTale : exportBook}
-                      className="flex items-center gap-2 text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-all"
+                      className="flex items-center gap-2 p-1 sm:p-0 text-[10px] uppercase tracking-widest font-bold text-white/40 hover:text-white transition-all"
                       title={isTale ? 'Скачать сказку (Markdown)' : 'Скачать книгу (Markdown)'}
                     >
-                      <Download size={12} /> Скачать
+                      <Download size={14} className="sm:w-3 sm:h-3" /> <span className="hidden sm:inline">Скачать</span>
                     </button>
                     {!isTale && (
                       <div className="absolute left-0 top-full pt-2 hidden group-hover/dl:block group-focus-within/dl:block z-30">
@@ -1707,11 +1714,11 @@ export default function App() {
             <button
               onClick={() => startScenario(quickScenario())}
               disabled={isLoading}
-              className="group px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-lg shadow-lg shadow-orange-900/30 hover:scale-[1.02] active:scale-[0.99] transition-all disabled:opacity-50 flex items-center gap-3"
+              className="group px-8 py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold text-lg shadow-lg shadow-orange-900/30 hover:scale-[1.02] active:scale-[0.99] transition-all disabled:opacity-50 flex flex-col sm:flex-row items-center gap-0.5 sm:gap-3"
               title="Случайный готовый сценарий и герой — сразу в игру"
             >
-              ⚡ Быстрая игра
-              <span className="text-xs font-semibold text-black/60 group-hover:text-black/80">готовый сюжет, 1 клик</span>
+              <span className="whitespace-nowrap">⚡ Быстрая игра</span>
+              <span className="text-xs font-semibold text-black/60 group-hover:text-black/80 whitespace-nowrap">готовый сюжет, 1 клик</span>
             </button>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl px-4">
