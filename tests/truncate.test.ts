@@ -27,3 +27,24 @@ describe('чистка служебного в тексте', () => {
     expect(stripStrayTags('Надпись гласила: [неразборчиво].')).toBe('Надпись гласила: [неразборчиво].');
   });
 });
+
+import { normalizeBlocks } from '../shared/parse';
+describe('кривая разметка блоков', () => {
+  it('[dashboard_json]{…}</dashboard_json>', () => {
+    const t = normalizeBlocks('Текст.\n\n[must roll]\n[dashboard_json]{"atmosphere":"x"}</dashboard_json>');
+    expect(t).toContain('<dashboard_json>{"atmosphere":"x"}</dashboard_json>');
+  });
+  it('```json без тегов', () => {
+    expect(normalizeBlocks('Текст.\n```json\n{"atmosphere":"x","characters":[]}\n```')).toContain('<dashboard_json>{"atmosphere":"x","characters":[]}</dashboard_json>');
+  });
+  it('нет открывающего тега', () => {
+    const t = normalizeBlocks('Текст сцены.\n{\n"atmosphere": "x"\n}</dashboard_json>');
+    expect(t).toMatch(/<dashboard_json>\s*\{\s*"atmosphere": "x"\s*\}<\/dashboard_json>/);
+  });
+  it('```json внутри тега', () => {
+    expect(normalizeBlocks('<dashboard_json>```json\n{"a":1}\n```</dashboard_json>')).toBe('<dashboard_json>{"a":1}</dashboard_json>');
+  });
+  it('[must roll] уходит из текста', () => {
+    expect(stripStrayTags('Сцена.\n[must roll]\nДальше.')).toBe('Сцена.\nДальше.');
+  });
+});

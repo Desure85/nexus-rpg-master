@@ -10,7 +10,7 @@ import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
   META_COMMAND_RE, IDLE_RULES, type TaleConfig,
 } from "../shared/rules";
-import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags } from "../shared/parse";
+import { parseDashboard, parseStateTags, parseSideTags, parseTale, extractRollEffects, parseCombatTags, parseDramaTags, normalizeBlocks } from "../shared/parse";
 import { resolveRolls, resolvedOutcomes, armorOf } from "../shared/resolve";
 import { archetypeById, applyArchetype } from "../shared/archetypes";
 import { genreOf } from "../shared/genre";
@@ -358,8 +358,8 @@ export class Engine {
     const stream = this.streamTo(sessionId, turnId);
     let aiContent: string;
     try {
-      aiContent = await this.callLlm(s, cfg, request, isClarify ? "clarify" : "turn", stream.push);
-      if (!isClarify && isTruncatedTurn(aiContent)) aiContent = await this.repairTurn(s, cfg, request, aiContent);
+      aiContent = normalizeBlocks(await this.callLlm(s, cfg, request, isClarify ? "clarify" : "turn", stream.push));
+      if (!isClarify && isTruncatedTurn(aiContent)) aiContent = normalizeBlocks(await this.repairTurn(s, cfg, request, aiContent));
     } finally {
       stream.end();
       this.busy.delete(sessionId);
@@ -665,7 +665,7 @@ export class Engine {
     }
 
     const fresh = loadSession(this.db, sessionId) || s;
-    const t = parseTale(raw);
+    const t = parseTale(normalizeBlocks(raw));
     // Развилка обязательна: без вариантов слушатели застрянут — даём запасные, близкие к стилю сказки
     let choices = (t.choices || []).map(c => String(c).replace(/^\s*[\d.)-]+\s*/, "").trim().slice(0, 90)).filter(Boolean);
     choices = [...new Set(choices)].slice(0, 3);
@@ -747,6 +747,7 @@ export function ensurePlayable(d: DashboardData, setting: string) {
  */
 export const stripStrayTags = (text: string) => text
   .replace(/^[ \t]*\[(suggestedRoll|dashboard|actions|threats|clocks|codex)\][^\n]*\n?/gim, "")
+  .replace(/^[ \t]*\[[a-z][a-z _-]{2,30}\][ \t]*\n?/gm, "")
   .replace(/\[(LOOT FOUND|LOOT|ROLL|STATE|ENCOUNTER|WORLD EVENT|MUSE|ACTION SLOTS|PLAYER ACTION|GM Rolls|ECHO RETURN|SYSTEM)[^\]\n]*\]\s*/g, "")
   .replace(/\[(DAMAGE|HEAL|STRESS|GOLD|XP|TOKEN|HIT|USE|CLOCK|TAKE|QUEST)(:[^\]\n]*)?\]/g, "")
   .replace(/\n[ \t]+(?=[—–-]\s)/g, "\n")

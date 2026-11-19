@@ -356,3 +356,30 @@ export const displayUserContent = (content: string): string => {
     .trim();
 };
 
+
+const BLOCK_TAGS = 'dashboard_json|codex_json|lore_update|final_draft|session_summary|choices_json|tale_title|tale_moral';
+
+/**
+ * Модели иногда портят разметку блоков: [dashboard_json]{…}, ```json …``` вместо тега, забытый открывающий тег.
+ * Приводим к каноническому <tag>…</tag>, чтобы JSON не утёк в текст.
+ */
+export const normalizeBlocks = (raw: string): string => {
+  let t = raw.replace(new RegExp(`\\[(\\/?)(${BLOCK_TAGS})\\]`, 'gi'), (_m, slash, tag) => `<${slash}${tag.toLowerCase()}>`);
+  // ```json внутри тегов
+  t = t.replace(new RegExp(`<(${BLOCK_TAGS})>\\s*\`\`\`(?:json)?\\s*([\\s\\S]*?)\\s*\`\`\`\\s*<\\/\\1>`, 'gi'), (_m, tag, body) => `<${tag}>${body}</${tag}>`);
+  // закрывающий тег без открывающего: начинаем блок с первой «{» после текста
+  for (const tag of ['dashboard_json', 'codex_json']) {
+    if (t.includes(`</${tag}>`) && !t.includes(`<${tag}>`)) {
+      const end = t.indexOf(`</${tag}>`);
+      const open = tag === 'codex_json' ? t.lastIndexOf('[', end) : t.search(/\n\s*\{\s*\n?\s*"/);
+      if (open >= 0 && open < end) t = `${t.slice(0, open)}\n<${tag}>${t.slice(open, end).replace(/^\s*```(?:json)?/, '').replace(/```\s*$/, '')}</${tag}>${t.slice(end + tag.length + 3)}`;
+    }
+  }
+  // дашборд в ```json без тегов
+  if (!/<dashboard_json>/.test(t)) {
+    const fences = [...t.matchAll(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/g)];
+    const dash = fences.reverse().find(m => /"(characters|atmosphere|suggestedRoll)"/.test(m[1]));
+    if (dash) t = t.replace(dash[0], `<dashboard_json>${dash[1]}</dashboard_json>`);
+  }
+  return t;
+};
