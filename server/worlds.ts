@@ -279,7 +279,9 @@ export function createWorlds(db: DB) {
       const owner = (db.prepare("SELECT owner_id FROM worlds WHERE id = ?").get(w.id) as any).owner_id;
       // кошелёк автора — его личное пространство (где он владелец, самое старое)
       const authorWs = owner === SYSTEM_AUTHOR ? null : (db.prepare("SELECT workspace_id FROM memberships WHERE user_id = ? AND role = 'owner' ORDER BY created_at LIMIT 1").get(owner) as any)?.workspace_id;
-      const share = authorWs ? Math.floor(price * authorShare()) : 0;
+      // защита от накрутки: доля автору — только с покупок пространств, которые хоть раз платили (не с приветственных кредитов фейков)
+      const paidBuyer = !!db.prepare("SELECT 1 FROM payments WHERE workspace_id = ? AND status = 'succeeded' LIMIT 1").get(wsId);
+      const share = authorWs && paidBuyer ? Math.floor(price * authorShare()) : 0;
       try {
         db.transaction(() => {
           const bal = (db.prepare("SELECT credits FROM workspaces WHERE id = ?").get(wsId) as any)?.credits ?? 0;

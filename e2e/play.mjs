@@ -440,7 +440,7 @@ async function market(browser) {
   const me = (await api(page, '/api/auth/me')).body;
   check('маркетплейс: списано 120', me.workspaces[0].credits === 100000 - 120 || me.workspaces[0].credits < 100000, String(me.workspaces[0].credits));
   const ame = (await api(author, '/api/worlds?scope=mine')).body.find(x => x.id === w.id);
-  check('маркетплейс: автору 70%', ame?.sales === 1 && ame?.earned === 84, JSON.stringify({ sales: ame?.sales, earned: ame?.earned }));
+  check('маркетплейс: продажа у автора (за приветственные кредиты доли нет)', ame?.sales === 1 && ame?.earned === 0, JSON.stringify({ sales: ame?.sales, earned: ame?.earned }));
   await snap(page, 'market_bought');
   await page.getByText('Играть (', { exact: false }).click();
   await page.waitForTimeout(1500);

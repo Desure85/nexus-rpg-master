@@ -1031,6 +1031,13 @@ describe('миры', () => {
     expect((await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid })).status).toBe(402);
     expect((await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: gm().wid })).status).toBe(403);
     ctx.db.prepare('UPDATE workspaces SET credits = 500 WHERE id = ?').run(fan.wid);
+    // приветственные кредиты: покупка проходит, но автору доля не идёт (накрутка с фейков)
+    const freeFan = await account('free@example.com');
+    const before0 = credits(gm());
+    ctx.db.prepare('UPDATE workspaces SET credits = 500 WHERE id = ?').run(freeFan.wid);
+    expect((await freeFan.post(`/api/worlds/${w.id}/buy`, { workspaceId: freeFan.wid })).body.owned).toBe(true);
+    expect(credits(gm())).toBe(before0);
+    ctx.db.prepare("INSERT INTO payments (id, workspace_id, provider, product_id, amount, credits, status) VALUES ('p1', ?, 'mock', 'credits_s', '100.00', 500, 'succeeded')").run(fan.wid);
     const authorBefore = credits(gm());
     const bought = (await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid })).body;
     expect(bought).toMatchObject({ owned: true });
@@ -1042,7 +1049,7 @@ describe('миры', () => {
     await fan.post(`/api/worlds/${w.id}/buy`, { workspaceId: fan.wid });
     expect(credits(fan)).toBe(400);
     expect(await ids('price=owned')).toEqual([w.id]);
-    expect((await gm().get(`/api/worlds/${w.id}`)).body).toMatchObject({ sales: 1, earned: 70 });
+    expect((await gm().get(`/api/worlds/${w.id}`)).body).toMatchObject({ sales: 2, earned: 70 });
     // игра и отзыв
     const r = await fan.post('/api/sessions', { setup: { worldId: w.id, scenarioId: 'dark', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] }, workspaceId: fan.wid });
     expect(r.status).toBe(201);

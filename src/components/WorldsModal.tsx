@@ -231,7 +231,7 @@ const PriceTag: React.FC<{ w: World }> = ({ w }) => !w.price ? null : (
 const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: string; credits?: number; onBought: (w: World) => void; onClose: () => void; onPlay: (s: WorldStart) => void }> = ({ world, maxHeroes, workspaceId, credits, onBought, onClose, onPlay }) => {
   const [buying, setBuying] = useState(false);
   const buy = async () => {
-    if (!(await customConfirm(`Купить мир «${world.title}» за ${world.price} кредитов пространства? Доступ останется навсегда, ${Math.round(0.7 * 100)}% получит автор.`))) return;
+    if (!(await customConfirm(`Купить мир «${world.title}» за ${world.price} кредитов пространства? Доступ останется навсегда, часть суммы получит автор.`))) return;
     setBuying(true);
     try { onBought(await api<World>(`/api/worlds/${world.id}/buy`, { body: { workspaceId } })); }
     catch (e) { customAlert(e instanceof Error ? e.message : 'Не удалось купить'); }
@@ -426,7 +426,7 @@ const WorldEditor: React.FC<{ world: World; onClose: () => void; onSaved: (w: Wo
                   <input className={`${input} w-28`} type="number" min={0} max={5000} step={10} value={w.price || 0} onChange={e => setW({ ...w, price: Math.max(0, Math.min(5000, Math.round(Number(e.target.value) || 0))) })} />
                   <span className="text-[11px] text-white/45">{w.price ? `вы получите ${Math.floor((w.price || 0) * 0.7)} кр. с каждой покупки (70%)` : 'бесплатно — играть может каждый'}</span>
                 </div>
-                <p className="text-[11px] text-white/35 mt-1.5">До покупки игроки видят описание и сюжеты, а лор, бестиарий и предметы — только после. Заработанные кредиты приходят в ваше личное пространство и тратятся на игру с ИИ.</p>
+                <p className="text-[11px] text-white/35 mt-1.5">До покупки игроки видят описание и сюжеты, а лор, бестиарий и предметы — только после. Заработанные кредиты приходят в ваше личное пространство и тратятся на игру с ИИ. Доля начисляется с покупок за оплаченные кредиты — с бесплатных приветственных нет (защита от накруток).</p>
               </div>
             )}
           </>}
