@@ -5,6 +5,7 @@ import type { Tenancy } from "./tenancy";
 import type { Billing } from "./billing";
 import { completeWithUsage, type ChatMessage, type LlmRequest, type LlmSettings } from "./llm";
 import { DAILY_MODIFIERS } from "../shared/daily";
+import { worldPromptBlock } from "../shared/world";
 import { loadSession, saveSession, lastDashboard, readSettings, mergeMechanics, type StoredSession, type SessionConfig } from "./store";
 import {
   CLARIFY_SYSTEM_PROMPT, SYSTEM_PROMPT, extraInstructionsBlock, getTechnicalInstructions, getStyleInstruction, getTaleSystemPrompt, levelFromXp,
@@ -381,7 +382,7 @@ export class Engine {
     // Условие испытания дня — тоже числа игры
     const dailyMod = !isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.daily ? DAILY_MODIFIERS.find(m => m.id === s.config.daily!.modifier) : undefined;
     if (!isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.heroes?.length) {
-      const genre = genreOf(`${s.setting} ${s.name}`);
+      const genre = genreOf(`${s.config.world?.genre || ""} ${s.setting} ${s.name}`);
       // модель могла не прислать героя (или весь дашборд) — заводим по данным настройки
       const have = new Set((dashboard.characters || []).map(c => c.name));
       for (const h of s.config.heroes) {
@@ -396,6 +397,16 @@ export class Engine {
         if (h.veteran) out = applyVeteran(out, h.veteran);
         return out;
       });
+    }
+    // карта мира автора: его места добавляются на старте, стартовое место сценария — текущее
+    if (!isClarify && userText.startsWith("[SYSTEM COMMAND: GAME START]") && s.config.world?.data?.locations?.length) {
+      const wl = s.config.world.data.locations;
+      const have = dashboard.locations || [];
+      const added = wl.filter(l => !have.some(h => h.id === l.id || h.name.toLowerCase() === l.name.toLowerCase()))
+        .map(l => ({ ...l, status: "known" as const, coordinates: { x: 20 + Math.round(Math.random() * 60), y: 20 + Math.round(Math.random() * 60) } }));
+      dashboard.locations = [...have, ...added] as any;
+      const start = s.config.world.startLocationId && (dashboard.locations || []).find(l => l.id === s.config.world!.startLocationId);
+      if (start) { dashboard.currentLocationId = start.id; (start as any).status = "visited"; }
     }
     if (!isClarify) ensurePlayable(dashboard, s.setting);
     if (dailyMod) {
@@ -615,6 +626,15 @@ export class Engine {
     }
   }
 
+  /** Лор мира автора: постоянная память + карточки, о которых зашла речь в последних сообщениях. */
+  private worldBlock(s: StoredSession) {
+    const w = s.config.world;
+    if (!w?.data) return "";
+    const recent = s.history.slice(-5).map(m => m.content).join("\n");
+    const { text } = worldPromptBlock({ title: w.title, data: w.data }, recent);
+    return text + (w.data.tone ? `\nТон мира от автора: ${w.data.tone}` : "");
+  }
+
   private buildRpgSystem(s: StoredSession, extra: string, mechanics: MechanicConfig[], dash: DashboardData, isClarify: boolean) {
     const isEnabled = (id: string) => this.isEnabled(mechanics, id);
     const filtered: any = structuredClone(dash);
@@ -639,7 +659,7 @@ export class Engine {
     const mechCtx = active ? `\n\n## АКТИВНЫЕ МЕХАНИКИ\nБроски, итоги и исходы считает движок приложения — ты описываешь последствия.\n${active}` : "";
     const base = isClarify ? CLARIFY_SYSTEM_PROMPT : SYSTEM_PROMPT;
     const style = s.style ? getStyleInstruction(s.style) : "";
-    return `${base}${isClarify ? "" : mechCtx}${style}${extraInstructionsBlock(extra)}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
+    return `${base}${isClarify ? "" : mechCtx}${style}${this.worldBlock(s)}${extraInstructionsBlock(extra)}\n\n${getTechnicalInstructions(mechanics)}\n${lore}${codex}${dashCtx}`;
   }
 
   private async runTaleTurn(s: StoredSession, cfg: ReturnType<Engine["effectiveConfig"]>, content: string) {
@@ -650,7 +670,7 @@ export class Engine {
     const isFinal = /^\[TALE_END\]/.test(content) || chapter >= tale.chapters;
     const heroes = (lastDashboard(s.history).characters || []).map(c => `- ${c.name}${c.goal ? `: ${c.goal}` : ""}`).join("\n");
     const memory = (heroes ? `\n\n## ГЕРОИ СКАЗКИ\n${heroes}` : "") + (s.lore ? `\n\n## ПАМЯТЬ СКАЗКИ\n${s.lore}` : "");
-    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, isFinal ? undefined : this.taleIdeaFor(s)) + extraInstructionsBlock(cfg.extraInstructions) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
+    const request: LlmRequest = { system: getTaleSystemPrompt(tale, chapter, isFinal, isFinal ? undefined : this.taleIdeaFor(s)) + this.worldBlock(s) + extraInstructionsBlock(cfg.extraInstructions) + memory, messages: this.contextWindow(s.history, 6), temperature: 0.85 };
 
     const turnId = crypto.randomUUID();
     this.busy.add(sessionId);

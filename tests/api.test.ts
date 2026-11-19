@@ -987,3 +987,84 @@ describe('архетипы, зал героев, достижения', () => {
     expect(list.find((a: any) => a.code === 'storyteller').unlocked_at).toBeNull();
   });
 });
+
+describe('миры', () => {
+  const worldBody = (extra: any = {}) => ({
+    title: 'Туманные Острова', icon: '🌫️', genre: 'cyber', description: 'Острова в вечном тумане', visibility: 'private',
+    data: {
+      setting: 'Архипелаг в тумане, маяки и контрабандисты.',
+      core: 'Туман живой и забирает имена. Маяки — единственная защита.',
+      tone: 'Меланхолично, без жестокости',
+      cards: [
+        { kind: 'npc', name: 'Смотритель Ивар', keys: ['смотритель', 'Ивар'], text: 'Хранит последний огонь маяка, боится темноты.' },
+        { kind: 'faction', name: 'Орден Пепла', keys: ['пепельник'], text: 'Сжигают чужие имена.' },
+        { kind: 'lore', name: 'Закон маяка', keys: [], text: 'Кто погасит маяк — потеряет имя.', always: true },
+        { kind: 'npc', name: '', text: 'мусор без имени' },
+      ],
+      locations: [
+        { id: 'port', name: 'Порт Сольвей', description: 'Причалы', services: ['market', 'tavern'], connections: ['lighthouse', 'nowhere'] },
+        { id: 'lighthouse', name: 'Северный маяк', description: 'Старый маяк' },
+      ],
+      scenarios: [{ id: 'dark', title: 'Погасший маяк', hook: 'Северный маяк погас этой ночью.', mode: 'short', startLocationId: 'lighthouse' }],
+      heroes: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }],
+      ...extra,
+    },
+  });
+
+  it('создание, нормализация и доступ: приватный — только автору, по ссылке — всем вошедшим', async () => {
+    const w = (await gm().post('/api/worlds', worldBody())).body;
+    expect(w.mine).toBe(true);
+    expect(w.data.cards).toHaveLength(3);
+    expect(w.data.locations[0].connections).toEqual(['lighthouse']);
+    expect(w.data.locations[1].connections).toEqual(['port']);
+    const other = await account('reader@example.com');
+    expect((await other.get(`/api/worlds/${w.id}`)).status).toBe(404);
+    await gm().patch(`/api/worlds/${w.id}`, { visibility: 'link' });
+    const seen = (await other.get(`/api/worlds/${w.id}`)).body;
+    expect(seen.mine).toBe(false);
+    expect(seen.version).toBe(2);
+    expect((await other.patch(`/api/worlds/${w.id}`, { title: 'взлом' })).status).toBe(404);
+    expect((await other.get('/api/worlds?scope=public')).body).toEqual([]);
+    await gm().patch(`/api/worlds/${w.id}`, { visibility: 'public' });
+    const pub = (await other.get('/api/worlds?scope=public')).body;
+    expect(pub.map((x: any) => x.id)).toEqual([w.id]);
+    expect(pub[0].data.cards).toEqual([]); // в каталоге — без лора
+    const copy = (await other.post(`/api/worlds/${w.id}/copy`)).body;
+    expect(copy.mine).toBe(true);
+    expect(copy.visibility).toBe('private');
+    expect(copy.data.cards).toHaveLength(3);
+  });
+
+  it('игра в мире: сеттинг, завязка, жанр, карта и лор в промпте; лор не уходит клиенту', async () => {
+    ctx.db.prepare("INSERT INTO settings (key, value) VALUES ('loggingEnabled','true') ON CONFLICT(key) DO UPDATE SET value='true'").run();
+    const w = (await gm().post('/api/worlds', worldBody())).body;
+    const id = await createSession({ worldId: w.id, scenarioId: 'dark', style: 'balanced', characters: [{ name: 'Рина', concept: 'Лоцман', gender: 'Ж' }] });
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    expect(s.setting).toContain('Архипелаг');
+    expect(s.name).toBe('Туманные Острова: Погасший маяк');
+    expect(s.config.world).toEqual({ id: w.id, title: 'Туманные Острова', version: 1, genre: 'cyber' });
+    const d = lastDash(s);
+    expect(d.currentLocationId).toBe('lighthouse');
+    expect(d.locations.some((l: any) => l.name === 'Порт Сольвей')).toBe(true);
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Рина ищет смотрителя маяка' });
+    await ctx.engine.whenIdle(id);
+    const log = ctx.db.prepare("SELECT request FROM logs WHERE session_id = ? ORDER BY id DESC LIMIT 1").get(id) as any;
+    const sys = JSON.parse(log.request).system as string;
+    expect(sys).toContain('МИР «Туманные Острова»');
+    expect(sys).toContain('Туман живой');
+    expect(sys).toContain('Закон маяка');
+    expect(sys).toContain('Смотритель Ивар');
+    expect(sys).not.toContain('Орден Пепла');
+    expect(sys).toContain('Меланхолично');
+    const shop = (await gm().get(`/api/sessions/${id}/shop`)).body;
+    expect(JSON.stringify(shop)).not.toMatch(/Зелье лечения/);
+    expect((await gm().get(`/api/worlds/${w.id}`)).body.plays).toBe(1);
+  });
+
+  it('чужой приватный мир нельзя запустить', async () => {
+    const other = await account('stranger@example.com');
+    const w = (await other.post('/api/worlds', worldBody())).body;
+    const r = await gm().post('/api/sessions', { setup: { worldId: w.id, characters: [{ name: 'Рина', concept: 'x', gender: 'Ж' }] }, workspaceId: gm().wid });
+    expect(r.status).toBe(404);
+  });
+});

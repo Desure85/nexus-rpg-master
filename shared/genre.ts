@@ -8,6 +8,9 @@ const EXPLICIT: [RegExp, Genre][] = [
 
 export const genreOf = (text: string): Genre => {
   const t = (text || '').toLowerCase();
+  // жанр мира задан явно (id в начале строки: «cyber …»)
+  const id = t.match(/^(fantasy|cyber|space|post|horror|west)\b/)?.[1];
+  if (id) return id as Genre;
   // явное название жанра важнее случайных слов в завязке («станция» в вестерне — это вокзал)
   const explicit = EXPLICIT.map(([re, g]) => ({ g, i: t.search(re) })).filter(x => x.i >= 0).sort((a, b) => a.i - b.i)[0];
   if (explicit) return explicit.g;

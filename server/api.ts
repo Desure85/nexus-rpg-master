@@ -5,6 +5,7 @@ import { registerGameRoutes } from "./game";
 import { Engine } from "./engine";
 import { completeWithUsage, describeProvider, LlmError } from "./llm";
 import { createHeroes, veteranLine } from "./heroes";
+import { createWorlds } from "./worlds";
 import { archetypeById } from "../shared/archetypes";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
@@ -31,6 +32,7 @@ const MAX_CHARACTERS = 8;
 export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: string, data: any) => void }) {
   const { db, broadcast } = opts;
   const heroes = createHeroes(db, opts.broadcast);
+  const worlds = createWorlds(db);
   // после каждого хода мастера — проверка достижений
   const broadcastWithHooks = (room: string, data: any) => {
     broadcast(room, data);
@@ -100,11 +102,15 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     try { billing.assertCanSpend(workspaceId, tenancy.resolveLlm(workspaceId).mode); }
     catch (e) { if (e instanceof BillingError) return res.status(e.status).json({ error: e.code, message: e.message }); throw e; }
     const setup = req.body?.setup || {};
-    const mode: StoredSession["mode"] = ["short", "campaign", "tale"].includes(setup.mode) ? setup.mode : "short";
+    // игра в мире автора: сеттинг, завязка и лор берутся из мира (снимок версии)
+    const world = setup.worldId ? worlds.getForPlay(req.auth.user!.id, str(setup.worldId, 64)) : null;
+    if (setup.worldId && !world) return res.status(404).json({ error: "world_not_found", message: "Мир не найден или автор закрыл к нему доступ" });
+    const worldScenario = world ? world.data.scenarios.find(x => x.id === setup.scenarioId) : undefined;
+    const mode: StoredSession["mode"] = worldScenario ? worldScenario.mode : ["short", "campaign", "tale"].includes(setup.mode) ? setup.mode : "short";
     // испытание дня: сюжет и условие пересчитываем по ключу — клиент их не подменит
-    const daily = mode === "short" && isDailyKey(setup.daily) ? dailyChallenge(setup.daily) : null;
-    const setting = daily ? daily.scenario.setting : str(setup.setting, 2000).trim();
-    const plotHook = daily ? daily.plotHook : str(setup.plotHook, 2000).trim();
+    const daily = !world && mode === "short" && isDailyKey(setup.daily) ? dailyChallenge(setup.daily) : null;
+    const setting = world ? (world.data.setting || world.description || world.title) : daily ? daily.scenario.setting : str(setup.setting, 2000).trim();
+    const plotHook = worldScenario ? worldScenario.hook : daily ? daily.plotHook : str(setup.plotHook, 2000).trim();
     const style = ["narrative", "balanced", "combat", "fairytale"].includes(setup.style) ? setup.style : mode === "tale" ? "fairytale" : "balanced";
     const characters = (Array.isArray(setup.characters) ? setup.characters : [])
       .map((c: any) => {
@@ -137,12 +143,16 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       config.tale = { age, chapters, moral: str(setup.tale?.moral, 200).trim() || undefined };
     }
     if (daily) config.daily = { key: daily.key, modifier: daily.modifier.id };
+    if (world) {
+      config.world = { id: world.id, title: world.title, version: world.version, genre: world.genre, startLocationId: worldScenario?.startLocationId, data: world.data };
+      worlds.countPlay(world.id);
+    }
     // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд
     if (mode !== "tale") {
       config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, concept: c.concept, archetype: c.archetype, veteran: c.veteranSheet }));
     }
     const id = crypto.randomUUID();
-    const title = str(setup.title, 80).trim();
+    const title = str(setup.title, 80).trim() || (world ? `${world.title}${worldScenario ? `: ${worldScenario.title}` : ""}`.slice(0, 80) : "");
     const name = title ? (mode === "tale" ? `Сказка: ${title}` : title) : (mode === "tale" ? "Сказка: " : "") + (setting.split(/[.,;\n]/)[0].slice(0, 60) || "Новое приключение");
     const lore = mode === "tale" ? "" : `Сеттинг: ${setting}\nЗавязка: ${plotHook}\nСтиль: ${style}`;
     // В сказке нет игрового дашборда от ИИ — заводим героев сразу, чтобы друзья могли занять их по ссылке
@@ -150,8 +160,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       ? [{ role: "system", content: "Герои сказки", dashboard: { ...structuredClone(INITIAL_DASHBOARD), atmosphere: "", characters: characters.map((c: any) => ({ name: c.name, hp: "", stress: 0, tokens: 0, condition: "", goal: c.concept })) } }]
       : [];
     db.prepare(`INSERT INTO sessions (id, name, genre, setting, style, snapshot, history, lore, codex, archive, mode, workspace_id, created_by, config)
-      VALUES (?, ?, 'Custom', ?, ?, '', ?, ?, '[]', '', ?, ?, ?, ?)`)
-      .run(id, name, setting, style, JSON.stringify(initialHistory), lore, mode, workspaceId, req.auth.user!.id, JSON.stringify(config));
+      VALUES (?, ?, ?, ?, ?, '', ?, ?, '[]', '', ?, ?, ?, ?)`)
+      .run(id, name, world?.genre || "Custom", setting, style, JSON.stringify(initialHistory), lore, mode, workspaceId, req.auth.user!.id, JSON.stringify(config));
     const prompt = mode === "tale"
       ? buildTaleStartPrompt(setting, plotHook, characters)
       : buildGameStartPrompt(setting, plotHook, style, characters.map((c: any) => ({ ...c, veteran: c.veteranSheet ? veteranLine(c.veteranSheet) : undefined })));
@@ -612,6 +622,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   const gameApi = registerGameRoutes(app, { db, broadcast });
   engine = new Engine(db, gameApi, broadcastWithHooks, tenancy, billing);
   heroes.register(app, requireUser);
+  worlds.register(app, requireUser);
 
   // ------------------------------- настройки (админ) -------------------------------
   // Глобальные настройки: дефолтные промпт и механики видны всем вошедшим, ИИ платформы — суперадмину
