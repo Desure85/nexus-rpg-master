@@ -88,6 +88,19 @@ describe('соло', () => {
     expect(state.characters['Арн'].hp_cur).toBe(9);
   });
 
+  it('оборванный ответ модели дописывается: без хвоста на полуслове и с дашбордом', async () => {
+    const id = await createSession(rpgSetup());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн идёт на площадь #cut' });
+    await ctx.engine.whenIdle(id);
+    const s = (await gm().get(`/api/sessions/${id}`)).body;
+    const a = s.history[s.history.length - 1];
+    expect(a.role).toBe('assistant');
+    expect(a.content).toMatch(/колокольный звон\. Из-за поворота выходит ночной патруль\./);
+    expect(a.content).not.toMatch(/из-за поворота пока/);
+    expect(a.content).not.toMatch(/<dashboard_json>/);
+    expect(a.dashboard).toBeTruthy();
+  });
+
   it('итоги партии попадают в архив', async () => {
     const id = await createSession(rpgSetup());
     await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
