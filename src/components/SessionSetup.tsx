@@ -60,7 +60,7 @@ export const SessionSetup: React.FC<Props> = ({ preset, taleAges = [], onStart, 
   const [isStarting, setIsStarting] = useState(false);
   const isTale = mode === 'tale';
   const [veterans, setVeterans] = useState<{ id: string; name: string; concept: string; gender: string; archetype?: string; level: number; adventures: number }[]>([]);
-  useEffect(() => { api<any[]>('/api/heroes').then(setVeterans).catch(() => undefined); }, []);
+  useEffect(() => { api<any[]>('/api/heroes').then(r => setVeterans(r.filter(h => !h.fallen))).catch(() => undefined); }, []);
   const [characters, setCharacters] = useState<{ id: string; name: string; concept: string; gender: string; archetype?: string; veteranId?: string }[]>([
     { id: Date.now().toString() + Math.random().toString(), name: '', concept: '', gender: 'М' }
   ]);

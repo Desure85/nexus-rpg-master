@@ -996,6 +996,40 @@ describe('архетипы, зал героев, достижения', () => {
     expect(arn.abilities.some((a: any) => a.name === 'Стальная хватка')).toBe(true);
   });
 
+  it('сквозные герои: в финале — сами в зал, ветеран обновляется каждый ход, числа — из движка, павший не идёт в новую партию', async () => {
+    const id = await createSession(withArchetypes());
+    await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн учится #xp' });
+    await ctx.engine.whenIdle(id);
+    expect((await gm().get('/api/heroes')).body).toEqual([]); // до итогов — не сохраняем
+    // мастер правит дашборд — в зал всё равно уходят числа движка
+    const eng = (await gm().get(`/api/sessions/${id}/state`)).body.characters['Арн'];
+    ctx.db.prepare('UPDATE sessions SET history = replace(history, \'"gold":\' , \'"gold":9999,"_g":\') WHERE id = ?').run(id);
+    await gm().post(`/api/sessions/${id}/turn`, { content: '[SESSION SUMMARY] подведи итоги' });
+    await ctx.engine.whenIdle(id);
+    const hall = (await gm().get('/api/heroes')).body;
+    expect(hall.map((h: any) => h.name).sort()).toEqual(['Арн', 'Лиса']);
+    const arn = hall.find((h: any) => h.name === 'Арн');
+    expect(arn.gold).toBe(Math.min(300, eng.gold));
+    expect(arn.story).toEqual([expect.objectContaining({ session: id, note: expect.stringContaining('Герои прошли через туман') })]);
+    expect(arn.adventures).toBe(1);
+    // ветеран в новой игре: прошлое — в промпте, прогресс пишется сам каждый ход
+    const id2 = await createSession({ ...rpgSetup(), characters: [{ veteranId: arn.id, name: '', concept: '' }] });
+    expect((await gm().get(`/api/sessions/${id2}`)).body.history[0].content).toContain('прошлое: «');
+    await gm().post(`/api/sessions/${id2}/turn`, { content: 'Арн снова учится #xp' });
+    await ctx.engine.whenIdle(id2);
+    const arn2 = (await gm().get('/api/heroes')).body.find((h: any) => h.name === 'Арн');
+    expect(arn2.xp).toBeGreaterThan(arn.xp);
+    expect(arn2.adventures).toBe(2);
+    // павший: в мемориале этой партии → в новую партию не берётся (придёт обычным героем без опыта)
+    await gm().post(`/api/sessions/${id2}/memorial`, { name: 'Арн', desc: 'Пал у ворот' });
+    await gm().post(`/api/sessions/${id2}/turn`, { content: 'Тишина' });
+    await ctx.engine.whenIdle(id2);
+    const fallen = (await gm().get('/api/heroes')).body.find((h: any) => h.name === 'Арн');
+    expect(fallen.fallen).toBe(true);
+    const id3 = await createSession({ ...rpgSetup(), characters: [{ veteranId: fallen.id, name: 'Арн', concept: 'Новичок' }] });
+    expect((await gm().get(`/api/sessions/${id3}`)).body.history[0].content).not.toContain('[ветеран');
+  });
+
   it('крит открывает достижение', async () => {
     const id = await createSession(rpgSetup());
     await gm().post(`/api/sessions/${id}/turn`, { content: 'Арн бьёт', rolls: ['**Арн** performs *удар*: [ROLL: 1d20 = 20]'] });

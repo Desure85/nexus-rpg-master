@@ -4,7 +4,7 @@ import { X, Trash2 } from 'lucide-react';
 import { api } from '../api';
 import { archetypeById } from '../../shared/archetypes';
 
-interface Hero { id: string; name: string; concept: string; archetype?: string; level: number; xp: number; adventures: number; abilities: { name: string; bonus?: string }[]; gold: number }
+interface Hero { id: string; name: string; concept: string; archetype?: string; level: number; xp: number; adventures: number; abilities: { name: string; bonus?: string }[]; gold: number; fallen?: boolean; story?: { session: string; title: string; world?: string; note?: string; at: string }[] }
 interface Ach { code: string; icon: string; title: string; desc: string; unlocked_at: string | null }
 
 /** Зал героев (ветераны для следующих игр) и достижения. */
@@ -36,16 +36,24 @@ export const HallModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           {tab === 'heroes' && (heroes === null ? <p className="text-white/40 text-sm">Загружаем…</p> : heroes.length === 0 ? (
-            <p className="text-sm text-white/50 leading-relaxed">Пока пусто. В игре нажмите 🎖️ в карточке героя — он попадёт сюда со своим уровнем, способностями и вещами. В новой игре выберите «Ветеран из зала», и герой продолжит путь.</p>
+            <p className="text-sm text-white/50 leading-relaxed">Пока пусто. Когда партия дойдёт до итогов, герои сами попадут сюда со своим уровнем, способностями и вещами (или нажмите 🎖️ в карточке героя раньше). В новой игре или в мире выберите ветерана — и он продолжит путь.</p>
           ) : heroes.map(h => {
             const a = archetypeById(h.archetype);
             return (
-              <div key={h.id} className="p-4 rounded-2xl bg-white/[0.03] border border-white/10 flex gap-3 items-start">
-                <div className="text-2xl">{a?.icon || '🧭'}</div>
+              <div key={h.id} className={`p-4 rounded-2xl border flex gap-3 items-start ${h.fallen ? 'bg-white/[0.01] border-white/5 opacity-70' : 'bg-white/[0.03] border-white/10'}`}>
+                <div className={`text-2xl ${h.fallen ? 'grayscale' : ''}`}>{h.fallen ? '🕯️' : a?.icon || '🧭'}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-bold">{h.name} <span className="text-xs font-normal text-white/40">· ур. {h.level} · {h.xp} опыта · приключений: {h.adventures}</span></p>
+                  <p className="text-white font-bold">{h.name} <span className="text-xs font-normal text-white/40">· ур. {h.level} · {h.xp} опыта · приключений: {h.adventures}{h.fallen ? ' · пал в бою' : ''}</span></p>
                   <p className="text-xs text-white/50">{a ? `${a.name}. ` : ''}{h.concept}</p>
                   {h.abilities?.length > 0 && <p className="text-[11px] text-violet-200/70 mt-1">✦ {h.abilities.map(x => x.name + (x.bonus ? ` (${x.bonus})` : '')).join(' · ')}</p>}
+                  {(h.story?.length || 0) > 0 && (
+                    <details className="mt-1.5">
+                      <summary className="text-[11px] text-white/45 cursor-pointer hover:text-white/70">Путь героя ({h.story!.length})</summary>
+                      <ul className="mt-1 space-y-1">{h.story!.slice().reverse().map(e => (
+                        <li key={e.session} className="text-[11px] text-white/55 leading-snug"><b className="text-white/70">{e.title}</b>{e.world ? ` · ${e.world}` : ''} <span className="text-white/30">· {e.at}</span>{e.note && <span className="block text-white/40">{e.note}</span>}</li>
+                      ))}</ul>
+                    </details>
+                  )}
                 </div>
                 <button onClick={async () => { if (confirm(`Отпустить ${h.name} из зала?`)) { await api(`/api/heroes/${h.id}`, { method: 'DELETE' }); load(); } }} className="p-2 text-white/30 hover:text-red-300" title="Удалить"><Trash2 size={14} /></button>
               </div>
