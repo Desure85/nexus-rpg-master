@@ -47,7 +47,9 @@ const download = (name: string, text: string) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-export interface WorldStart { worldId: string; scenarioId?: string; title?: string; mode: 'short' | 'campaign' | 'tale'; characters: WorldHero[] }
+export interface WorldStart { worldId: string; scenarioId?: string; title?: string; mode: 'short' | 'campaign' | 'tale'; characters: (WorldHero & { veteranId?: string })[] }
+
+interface Veteran { id: string; name: string; concept: string; gender: string; archetype?: string; level: number; adventures: number; fallen?: boolean }
 
 /** Каталог миров: свои и общие; отсюда — редактор и запуск игры. */
 export const WorldsModal: React.FC<{ onClose: () => void; onPlay: (s: WorldStart) => void; openId?: string; maxHeroes?: number; workspaceId?: string; credits?: number; onCredits?: () => void }> = ({ onClose, onPlay, openId, maxHeroes = 4, workspaceId, credits, onCredits }) => {
@@ -262,7 +264,12 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: strin
   const [picked, setPicked] = useState<string[]>([]);
   useEffect(() => { setPicked(pool.slice(0, 1).map(h => h.name)); }, [pool]);
   const [own, setOwn] = useState<WorldHero>({ name: '', concept: '', gender: 'М' });
-  const heroes = [...pool.filter(h => picked.includes(h.name)), ...(own.name.trim() ? [{ ...own, name: own.name.trim() }] : [])].slice(0, maxHeroes);
+  // ветераны из зала: продолжают путь в этом мире с уровнем, способностями и вещами
+  const [veterans, setVeterans] = useState<Veteran[]>([]);
+  const [vetIds, setVetIds] = useState<string[]>([]);
+  useEffect(() => { api<Veteran[]>('/api/heroes').then(r => setVeterans(r.filter(v => !v.fallen))).catch(() => undefined); }, []);
+  const vets = veterans.filter(v => vetIds.includes(v.id)).map(v => ({ name: v.name, concept: v.concept, gender: (v.gender === 'Ж' ? 'Ж' : 'М') as 'М' | 'Ж', archetype: v.archetype, veteranId: v.id }));
+  const heroes = [...vets, ...pool.filter(h => picked.includes(h.name) && !vets.some(v => v.name === h.name)), ...(own.name.trim() ? [{ ...own, name: own.name.trim() }] : [])].slice(0, maxHeroes);
   const copyLink = async () => { await navigator.clipboard?.writeText(worldLink(world.id)).catch(() => undefined); customAlert(`Ссылка на мир скопирована:\n${worldLink(world.id)}`); };
   return (
     <div className="fixed inset-0 z-[10000] flex items-end sm:items-center justify-center sm:p-4 bg-black/70" onClick={onClose}>
@@ -307,6 +314,16 @@ const WorldPlay: React.FC<{ world: World; maxHeroes: number; workspaceId?: strin
                 <button key={h.name} onClick={() => setPicked(p => p.includes(h.name) ? p.filter(x => x !== h.name) : [...p, h.name])} title={h.concept} className={chip(picked.includes(h.name))}>{picked.includes(h.name) ? '✓ ' : ''}{h.name}</button>
               ))}
             </div>
+            {veterans.length > 0 && (
+              <div className="mt-3">
+                <p className="text-[11px] text-white/45 mb-1.5">🎖️ Ветераны из зала — придут со своим уровнем, способностями и вещами:</p>
+                <div className="flex flex-wrap gap-1.5" data-testid="world-veterans">
+                  {veterans.map(v => (
+                    <button key={v.id} onClick={() => setVetIds(p => p.includes(v.id) ? p.filter(x => x !== v.id) : [...p, v.id])} title={v.concept} className={chip(vetIds.includes(v.id))}>{vetIds.includes(v.id) ? '✓ ' : ''}{v.name} · ур. {v.level}</button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="mt-3 grid grid-cols-[1fr_2fr_auto] gap-2">
               <input className={input} placeholder="Свой герой" value={own.name} onChange={e => setOwn({ ...own, name: e.target.value })} maxLength={60} />
               <input className={input} placeholder="Кто он такой" value={own.concept} onChange={e => setOwn({ ...own, concept: e.target.value })} maxLength={200} />

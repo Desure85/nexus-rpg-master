@@ -138,6 +138,7 @@ export default function App() {
   const [travelEvent, setTravelEvent] = useState<{ type: 'encounter' | 'discovery' | 'safe', locationName: string } | null>(null);
   const [pendingClaims, setPendingClaims] = useState<any[]>([]);
   const seenClaims = useRef(new Set<string>());
+  const heroesToasted = useRef(new Set<string>());
   const claimsPrimed = useRef(false);
   const [pendingActions, setPendingActions] = useState<any[]>([]);
   const [gmActionInputs, setGmActionInputs] = useState<Record<string, string>>({});
@@ -327,6 +328,9 @@ export default function App() {
       case 'update':
         loadSessionById(id).catch(() => undefined);
         fetchSessions();
+        break;
+      case 'heroes_saved':
+        if (e.finished && !heroesToasted.current.has(id)) { heroesToasted.current.add(id); showToast('🎖️ Герои сохранены в зал — их уровень и вещи перейдут в следующие приключения'); }
         break;
       case 'chronicle_added':
         showToast(e.status === 'canon' ? '📜 Итоги партии вошли в хронику мира' : '📜 Итоги партии отправлены в хронику мира — автор решит, станут ли они каноном');
@@ -605,7 +609,7 @@ export default function App() {
       mode: w.mode,
       worldId: w.worldId,
       scenarioId: w.scenarioId,
-      characters: w.characters.map((h, k) => ({ id: String(k), name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype })),
+      characters: w.characters.map((h, k) => ({ id: String(k), name: h.name, concept: h.concept, gender: h.gender, archetype: h.archetype, ...(h.veteranId ? { veteranId: h.veteranId } : {}) })),
     } as SetupData);
   };
 

@@ -44,6 +44,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     ops.onEvent(data);
     if (data?.type === "turn_end") {
       try { heroes.checkSession(data.sessionId); } catch (e) { console.error("[achievements]", e); }
+      try { const [h] = heroes.autoSync(data.sessionId); if (h) broadcast(room, { type: "heroes_saved", sessionId: data.sessionId, finished: h.finished }); } catch (e) { console.error("[heroes]", e); }
       try {
         const added = worlds.checkSession(data.sessionId);
         if (added) broadcast(room, { type: "chronicle_added", sessionId: data.sessionId, status: added.status });
@@ -129,7 +130,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     const style = ["narrative", "balanced", "combat", "fairytale"].includes(setup.style) ? setup.style : mode === "tale" ? "fairytale" : "balanced";
     const characters = (Array.isArray(setup.characters) ? setup.characters : [])
       .map((c: any) => {
-        const vet = c?.veteranId ? heroes.getHero(req.auth.user!.id, String(c.veteranId)) : null;
+        const found = c?.veteranId ? heroes.getHero(req.auth.user!.id, String(c.veteranId)) : null;
+        const vet = found && !found.fallen ? found : null; // павший герой в новое приключение не идёт
         return {
           name: vet?.name || str(c?.name, 60).trim(),
           concept: vet?.concept || str(c?.concept, 300).trim(),
@@ -167,7 +169,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     }
     // герои из настройки: движок гарантирует их на старте, даже если модель забыла дашборд
     if (mode !== "tale") {
-      config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, concept: c.concept, archetype: c.archetype, veteran: c.veteranSheet }));
+      config.heroes = characters.map((c: any) => ({ name: c.name, gender: c.gender, concept: c.concept, archetype: c.archetype, veteran: c.veteranSheet, ...(c.veteranSheet ? { veteranId: c.veteranSheet.id } : {}) }));
     }
     const id = crypto.randomUUID();
     const title = str(setup.title, 80).trim() || (world ? `${world.title}${worldScenario ? `: ${worldScenario.title}` : ""}`.slice(0, 80) : "");

@@ -15,7 +15,7 @@ export interface SessionConfig {
   autoApprove?: boolean;
   tale?: TaleConfig & { finished?: boolean; title?: string; moral?: string };
   /** Герои при создании: архетип и ветеран из зала героев (снимок листа) */
-  heroes?: { name: string; gender?: string; concept?: string; archetype?: string; veteran?: any }[];
+  heroes?: { name: string; gender?: string; concept?: string; archetype?: string; veteran?: any; veteranId?: string }[];
   /** Мир автора: снимок на момент старта (правки мира не ломают идущие партии) */
   world?: { id: string; title: string; version: number; genre: string; startLocationId?: string; data: import("../shared/world").WorldData; state?: import("../shared/world").WorldState; npcMemory?: import("../shared/world").NpcMemory[] };
   /** Сдвиги фракций и шкал мира за эту партию (применятся к миру, когда итоги станут каноном) */
