@@ -194,6 +194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
                 <button onClick={onLogout} className="px-3 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold text-white flex items-center gap-2"><LogOut size={14} /> Выйти</button>
               </div>
               <LoginMethods />
+              <NotifyPrefs />
               <div className="space-y-2">
                 <label className={labelCls}><KeyRound size={12} /> {ids?.hasPassword === false ? 'Задать пароль' : 'Сменить пароль'}</label>
                 {ids?.hasPassword !== false && <input type="password" autoComplete="current-password" placeholder="Текущий пароль" value={pw.current} onChange={e => setPw({ ...pw, current: e.target.value })} className={inputCls} />}
@@ -221,6 +222,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ settings, sessionN
 interface Identities { identities: { provider: string; email?: string }[]; hasPassword: boolean; available: { id: string; name: string }[] }
 
 /** Способы входа: VK ID, Яндекс ID, Google — привязать или отвязать. */
+/** Какие уведомления присылать на почту (в колокольчике они есть всегда). */
+const NotifyPrefs: React.FC = () => {
+  const [d, setD] = useState<{ prefs: Record<string, boolean>; kinds: { id: string; name: string }[]; mail: boolean } | null>(null);
+  useEffect(() => { api<any>('/api/notifications/prefs').then(setD).catch(() => undefined); }, []);
+  if (!d) return null;
+  const toggle = async (id: string) => {
+    const r = await api<any>('/api/notifications/prefs', { method: 'PUT', body: { prefs: { [id]: !d.prefs[id] } } }).catch(() => null);
+    if (r) setD({ ...d, prefs: r.prefs });
+  };
+  return (
+    <div className="space-y-2 pt-2" data-testid="notify-prefs">
+      <p className="text-[10px] uppercase tracking-widest font-bold text-white/40">Письма на почту</p>
+      {!d.mail && <p className="text-[11px] text-white/40">Почта на сервере не настроена — уведомления будут только в колокольчике 🔔.</p>}
+      {d.kinds.map(k => (
+        <label key={k.id} className="flex items-center gap-3 text-sm text-white/75 cursor-pointer">
+          <input type="checkbox" checked={!!d.prefs[k.id]} onChange={() => toggle(k.id)} className="accent-amber-500 w-4 h-4" />
+          {k.name}
+        </label>
+      ))}
+      <p className="text-[11px] text-white/35">Письмо приходит, только если вы не увидели уведомление в игре за 10 минут, и не чаще раза в 6 часов.</p>
+    </div>
+  );
+};
+
 const LoginMethods: React.FC = () => {
   const [ids, setIds] = useState<Identities | null>(null);
   const load = () => api<Identities>('/api/auth/identities').then(setIds).catch(() => undefined);
