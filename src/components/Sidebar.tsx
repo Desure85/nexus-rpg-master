@@ -1,3 +1,4 @@
+import { NotificationBell } from './NotificationBell';
 import React from 'react';
 import { Settings as SettingsIcon, Save, Trash2, Plus, Play, ChevronRight, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -43,13 +44,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div className="w-full lg:w-72 h-full flex flex-col border-r border-white/10 bg-[#1a1614] lg:bg-black/40 backdrop-blur-md">
       <div className="p-6 flex items-center justify-between">
-        <h1 className="font-display text-xl font-bold tracking-tight text-white">Nexus Prime</h1>
+        <h1 className="font-display text-xl font-bold tracking-tight text-white">Fate & Dragons</h1>
+        <div className="flex items-center gap-1">
+        <NotificationBell onOpenSession={onSelectSession} panelClass="right-0 lg:right-auto lg:left-0" />
         <button 
           onClick={onOpenSettings}
           className="p-2 hover:bg-white/10 rounded-lg transition-colors text-white/60 hover:text-white"
         >
           <SettingsIcon size={20} />
         </button>
+        </div>
       </div>
 
       {workspace && (

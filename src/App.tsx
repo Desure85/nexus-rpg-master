@@ -16,6 +16,7 @@ import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
 import { api, ApiError, IS_DEMO, useSessionSocket, characterLink, locationSearch, clearLocationSearch, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
 import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
 import { Landing } from './components/Landing';
+import { NotificationBell } from './components/NotificationBell';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
@@ -285,7 +286,9 @@ export default function App() {
   useEffect(() => {
     if (authState !== 'ready' || !workspace?.id) return;
     fetchSessions(workspace.id);
-    // восстановить последнюю открытую сессию
+    // открыть партию из ссылки уведомления (?session=…), иначе — последнюю открытую
+    const fromLink = new URLSearchParams(locationSearch()).get('session');
+    if (fromLink) { clearLocationSearch(); loadSessionById(fromLink).catch(() => undefined); return; }
     const last = localStorage.getItem('nexus_last_session');
     if (last && !currentSession) loadSessionById(last).catch(() => localStorage.removeItem('nexus_last_session'));
   }, [authState, workspace?.id]);
@@ -1688,6 +1691,7 @@ export default function App() {
                 <Menu size={24} />
               </button>
             </div>
+            <div className="lg:hidden absolute top-4 right-4"><NotificationBell onOpenSession={id => loadSessionById(id)} /></div>
 
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}

@@ -41,8 +41,9 @@ export async function createApp(opts: AppOptions = {}) {
   };
 
   setUrlGuard(assertPublicUrl);
-  const { engine, billing, tenancy, ops, worlds } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
+  const { engine, billing, tenancy, ops, worlds, notifier } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
   ops.start();
+  notifier.start();
 
   wss.on("connection", ws => {
     let room: string | null = null;
@@ -124,6 +125,7 @@ export async function createApp(opts: AppOptions = {}) {
   const close = async () => {
     clearInterval(heartbeat);
     ops.stop();
+    notifier.stop();
     for (const ws of wss.clients) ws.terminate();
     await new Promise<void>(r => wss.close(() => r()));
     await new Promise<void>(r => (server.listening ? server.close(() => r()) : r()));
@@ -131,5 +133,5 @@ export async function createApp(opts: AppOptions = {}) {
     db.close();
   };
 
-  return { app, server, wss, db, engine, billing, tenancy, ops, close };
+  return { app, server, wss, db, engine, billing, tenancy, ops, notifier, close };
 }

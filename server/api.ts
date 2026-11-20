@@ -12,6 +12,7 @@ import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
 import { createOps } from "./ops";
 import { createFunnel } from "./funnel";
+import { createNotify } from "./notify";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
@@ -41,6 +42,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   // после каждого хода мастера — проверка достижений
   const ops = createOps(db, { dbPath: opts.dbPath });
   const funnel = createFunnel(db);
+  const notifier = createNotify(db);
+  worlds.setNotify((uid, title, body, url, dedupe) => notifier.notify(uid, "worlds", title, body, url, dedupe));
   const broadcastWithHooks = (room: string, data: any) => {
     broadcast(room, data);
     ops.onEvent(data);
@@ -50,6 +53,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
       try {
         const added = worlds.checkSession(data.sessionId);
         if (added) broadcast(room, { type: "chronicle_added", sessionId: data.sessionId, status: added.status });
+        if (added?.status === "new" && added.authorId) notifier.notify(added.authorId, "worlds", `Новая запись в хронике «${added.worldTitle}»`, "Партия игрока закончилась — решите, станет ли она каноном мира.", `/world/${added.worldId}`, `chronicle:${added.id}`);
       } catch (e) { console.error("[chronicle]", e); }
       try { worlds.rememberSession(data.sessionId); } catch (e) { console.error("[npc-memory]", e); }
     }
@@ -375,6 +379,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     db.prepare("INSERT INTO claims (id, session_id, char_name, player_name, device_id, status) VALUES (?,?,?,?,?,?)")
       .run(id, req.params.id, charName, playerName, deviceId, status);
     broadcast(req.params.id, { type: "claims_changed", sessionId: req.params.id });
+    if (status === "pending") notifier.notify(s.created_by, "mp", `${playerName} хочет играть за ${charName}`, `Партия «${s.name}»: одобрите заявку, чтобы игрок вступил.`, `/?session=${s.id}`, `claim:${id}`);
     res.json({ status, claim: { id, char_name: charName, player_name: playerName, status, mine: true } });
   });
 
@@ -449,6 +454,8 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
     if (action.includes("[ROLL:")) action = resolveRolls(`[PLAYER ACTION: ${charName}] ${action}`, engine.rollContext(s)).text.replace(/^\[PLAYER ACTION: [^\]]+\] /, "");
     const id = crypto.randomUUID();
     db.prepare("INSERT INTO pending_actions (id, session_id, char_name, player_name, action_text, tokens_spent) VALUES (?,?,?,?,?,?)").run(id, req.params.id, charName, claim.player_name, action, tokensSpent);
+    // мастеру: игроки ждут хода (одно уведомление на партию в час — не на каждое действие)
+    notifier.notify(s.created_by, "mp", `Игроки ждут хода в «${s.name}»`, `${claim.player_name} (${charName}): ${action.slice(0, 160)}`, `/?session=${s.id}`, `mp:${s.id}:${Math.floor(Date.now() / 3600_000)}`);
     syncTokensToDashboard(req.params.id);
     broadcast(req.params.id, { type: "actions_changed", sessionId: req.params.id });
     res.json({ status: "ok", id, action });
@@ -724,9 +731,10 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
 
   ops.register(app);
   funnel.register(app);
+  notifier.register(app);
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
-  return { engine, billing, tenancy, gameApi, ops, worlds };
+  return { engine, billing, tenancy, gameApi, ops, worlds, notifier };
 }
 
 /** Ошибки обработчиков — JSON, без стектрейсов наружу. */

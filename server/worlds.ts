@@ -19,6 +19,8 @@ const VIS = ["private", "link", "public"] as const;
 const str = (v: unknown, max: number) => (typeof v === "string" ? v : "").trim().slice(0, max);
 
 export function createWorlds(db: DB) {
+  /** Уведомления автору (продажи, отзывы) — подключаются из api.ts */
+  let notifyAuthor: (userId: string, title: string, body: string, url: string, dedupe: string) => void = () => undefined;
   db.exec(`
     CREATE TABLE IF NOT EXISTS worlds (
       id TEXT PRIMARY KEY,
@@ -294,6 +296,7 @@ export function createWorlds(db: DB) {
           billing.adjustCredits(wsId, -price, "world:buy", w.id);
           if (share) billing.adjustCredits(authorWs, share, "world:sale", w.id);
         })();
+        notifyAuthor(owner, `Мир «${w.title}» купили`, share ? `+${share} кредитов в ваше пространство` : "Покупка за бесплатные кредиты — без доли автору", `/world/${w.id}`, `sale:${w.id}:${uid}`);
       } catch (e: any) {
         if (e?.code === "insufficient_credits") return res.status(402).json({ error: "insufficient_credits", message: `Не хватает кредитов: мир стоит ${price}` });
         if (/UNIQUE|PRIMARY/i.test(String(e?.message))) return res.json(getForPlay(uid, w.id));
@@ -325,6 +328,8 @@ export function createWorlds(db: DB) {
       db.prepare(`INSERT INTO world_reviews (world_id, user_id, rating, text) VALUES (?,?,?,?)
         ON CONFLICT(world_id, user_id) DO UPDATE SET rating = excluded.rating, text = excluded.text, updated_at = CURRENT_TIMESTAMP`).run(w.id, uid, rating, text);
       recountRating(w.id);
+      const ownerId = (db.prepare("SELECT owner_id FROM worlds WHERE id = ?").get(w.id) as any)?.owner_id;
+      notifyAuthor(ownerId, `Отзыв на мир «${w.title}»: ${"★".repeat(rating)}`, text.slice(0, 200), `/world/${w.id}`, `review:${w.id}:${uid}`);
       res.json(getForPlay(uid, w.id));
     });
 
@@ -485,7 +490,10 @@ export function createWorlds(db: DB) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(cid, wid, sessionId, row.created_by || "", row.mode === "tale" ? "tale" : "game", title.slice(0, 120), summary.slice(0, 1200), heroes.slice(0, 200), mode === "auto" ? "canon" : "new", delta ? JSON.stringify(delta) : null);
     if (res.changes && mode === "auto") applyEntry(cid);
-    return res.changes ? { worldId: wid, status: mode === "auto" ? "canon" : "new" } : null;
+    if (!res.changes) return null;
+    const w = db.prepare("SELECT owner_id, title FROM worlds WHERE id = ?").get(wid) as any;
+    // запись своей же партии автору не «новость»
+    return { worldId: wid, status: (mode === "auto" ? "canon" : "new") as "canon" | "new", id: cid, worldTitle: w?.title || "", authorId: w && w.owner_id !== row.created_by ? w.owner_id : null };
   };
 
   /* ---------- память NPC: кого игрок встречал в мире, что с ними и как они относятся к героям ---------- */
@@ -629,5 +637,5 @@ export function createWorlds(db: DB) {
     });
   };
 
-  return { register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, publicPreview, publicIds: () => (db.prepare("SELECT id FROM worlds WHERE visibility = 'public' AND hidden = 0 ORDER BY plays DESC LIMIT 1000").all() as { id: string }[]).map(r => r.id), getForPlay, countPlay, checkSession, canonFor, rememberSession, npcMemoryFor };
+  return { setNotify: (fn: typeof notifyAuthor) => { notifyAuthor = fn; }, register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, publicPreview, publicIds: () => (db.prepare("SELECT id FROM worlds WHERE visibility = 'public' AND hidden = 0 ORDER BY plays DESC LIMIT 1000").all() as { id: string }[]).map(r => r.id), getForPlay, countPlay, checkSession, canonFor, rememberSession, npcMemoryFor };
 }
