@@ -11,7 +11,14 @@ export interface LlmSettings {
   modelName?: string;
   openRouterApiKey?: string;
   openRouterModel?: string;
+  /** URL модели задал пользователь (свой ключ в пространстве): проверять, что он не ведёт во внутреннюю сеть */
+  untrustedUrl?: boolean;
 }
+
+/** Проверка пользовательских адресов (SSRF); на сервере её ставит app.ts, в демо в браузере её нет. */
+let urlGuard: ((url: string) => Promise<void>) | null = null;
+export const setUrlGuard = (fn: (url: string) => Promise<void>) => { urlGuard = fn; };
+export const checkUserUrl = (url: string) => (urlGuard ? urlGuard(url) : Promise.resolve());
 
 export interface ChatMessage { role: "user" | "assistant"; content: string }
 export interface LlmRequest {
@@ -91,7 +98,7 @@ export const resolveProvider = (s: LlmSettings): Provider => {
   return PROVIDERS.includes(s.provider) ? s.provider : "gemini";
 };
 
-interface OpenAiTarget { url: string; key: string; model: string; extraHeaders?: Record<string, string>; reasoningEffort?: string }
+interface OpenAiTarget { url: string; key: string; model: string; extraHeaders?: Record<string, string>; reasoningEffort?: string; guard?: boolean }
 
 const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
   switch (provider) {
@@ -117,6 +124,7 @@ const openAiTarget = (provider: Provider, s: LlmSettings): OpenAiTarget => {
         url: s.modelUrl || env("LOCAL_MODEL_URL") || "http://localhost:1234/v1",
         key: s.apiKey || env("LOCAL_MODEL_KEY"),
         model: s.modelName || env("LOCAL_MODEL_NAME") || "local-model",
+        guard: !!s.untrustedUrl,
       };
   }
 };
@@ -128,10 +136,14 @@ async function openAiStream(t: OpenAiTarget, req: LlmRequest, onDelta: (d: strin
   if (typeof window !== "undefined") delete headers["User-Agent"];
   if (t.key && t.key !== "not-needed") headers.Authorization = `Bearer ${t.key}`;
   const t0 = Date.now();
+  if (t.guard && urlGuard) {
+    try { await urlGuard(t.url); } catch (e: any) { throw new LlmError(e?.message || "Недопустимый URL модели", 400); }
+  }
   const send = (effort?: string) => fetch(`${t.url.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers,
     signal,
+    ...(t.guard ? { redirect: "error" as const } : {}),
     body: JSON.stringify({
       model: t.model,
       messages: [{ role: "system", content: req.system }, ...normalizeMessages(req.messages)],

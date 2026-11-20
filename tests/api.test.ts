@@ -1149,6 +1149,23 @@ describe('миры', () => {
     expect((await other.get(up.cover)).status).toBe(404);
   });
 
+  it('безопасность: чужую запись хроники через свой мир не тронуть, состояние мира — только числа, имя героя «constructor» не ломает экономику', async () => {
+    const mine = (await gm().post('/api/worlds', worldBody())).body;
+    const other = await account('sec-other@example.com');
+    const theirs = (await other.post('/api/worlds', worldBody())).body;
+    const cid = (await other.post(`/api/worlds/${theirs.id}/chronicle`, { title: 'Событие', summary: 'Северный маяк погас' })).body.id;
+    expect((await gm().patch(`/api/worlds/${mine.id}/chronicle/${cid}`, { status: 'hidden', summary: 'взлом' })).status).toBe(404);
+    expect((ctx.db.prepare('SELECT status, summary FROM world_chronicle WHERE id = ?').get(cid) as any)).toEqual({ status: 'canon', summary: 'Северный маяк погас' });
+    const st = (await gm().patch(`/api/worlds/${mine.id}/state`, { factions: { __proto__: 1, constructor: 2 }, clocks: { x: 'abc' } })).body;
+    expect(Object.values(st.factions).every(v => Number.isFinite(v))).toBe(true);
+    const id = await createSession(rpgSetup('campaign'));
+    for (const name of ['constructor', '__proto__', 'toString']) {
+      const r = await gm().post(`/api/sessions/${id}/economy`, { action: 'rest', charName: name });
+      expect(r.status, name).toBeGreaterThanOrEqual(400);
+    }
+    expect(({} as any).hp_cur).toBeUndefined();
+  });
+
   it('стартовые миры: в каталоге от Nexus, играются, правка в коде обновляет мир', async () => {
     const pub = (await gm().get('/api/worlds?scope=public')).body.filter((w: any) => w.official);
     expect(pub.map((w: any) => w.id).sort()).toEqual(['starter-crossroads', 'starter-mercy', 'starter-predel', 'starter-ring', 'starter-sush', 'starter-velsk']);

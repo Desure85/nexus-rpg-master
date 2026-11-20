@@ -148,7 +148,7 @@ export function normalizeWorldData(raw: any): WorldData {
     type: str(l?.type, 20) || undefined,
     services: (Array.isArray(l?.services) ? l.services : []).map((x: any) => str(x, 20)).filter(Boolean).slice(0, 10),
     dangerLevel: Math.min(5, Math.max(1, Number(l?.dangerLevel) || 1)),
-    connections: (Array.isArray(l?.connections) ? l.connections : []).map((x: any) => str(x, 40)).filter(Boolean),
+    connections: (Array.isArray(l?.connections) ? l.connections : []).slice(0, WORLD_LIMITS.locations).map((x: any) => str(x, 40)).filter(Boolean),
   })).filter((l: WorldLocation) => l.name), (l: WorldLocation) => l.id);
   const ids = new Set(locations.map(l => l.id));
   for (const l of locations) l.connections = (l.connections || []).filter(c => ids.has(c) && c !== l.id);
@@ -171,7 +171,7 @@ export function normalizeWorldData(raw: any): WorldData {
   const enemies: WorldEnemy[] = uniq((Array.isArray(d.enemies) ? d.enemies : []).slice(0, WORLD_LIMITS.enemies).map((e: any, i: number) => ({
     id: str(e?.id, 40) || `e${i}`,
     name: str(e?.name, 60),
-    tier: (e?.tier in ENEMY_TIERS ? e.tier : 'regular') as EnemyTier,
+    tier: (typeof e?.tier === 'string' && Object.hasOwn(ENEMY_TIERS, e.tier) ? e.tier : 'regular') as EnemyTier,
     ...(num(e?.hp, 1, 60) ? { hp: num(e.hp, 1, 60) } : {}),
     ...(num(e?.dmg, 1, 10) ? { dmg: num(e.dmg, 1, 10) } : {}),
     ...(num(e?.dc, 5, 25) ? { dc: num(e.dc, 5, 25) } : {}),
@@ -365,9 +365,10 @@ export const chronicleBlock = (entries: ChronicleEntry[], budget = 2000) => {
 /* ------------------------------------------------ состояние мира: фракции и шкалы ------------------------------------------------ */
 
 /** Состояние мира с учётом определений: новые фракции/шкалы получают стартовые значения, удалённые — выпадают. */
+const intOr = (v: unknown, dflt: number) => { const n = Math.round(Number(v)); return v != null && v !== '' && Number.isFinite(n) ? n : dflt; };
 export const worldState = (d: Pick<WorldData, 'factions' | 'clocks'>, stored?: Partial<WorldState> | null): WorldState => ({
-  factions: Object.fromEntries((d.factions || []).map(f => [f.id, Math.max(-3, Math.min(3, stored?.factions?.[f.id] ?? f.attitude))])),
-  clocks: Object.fromEntries((d.clocks || []).map(c => [c.id, Math.max(0, Math.min(c.max, stored?.clocks?.[c.id] ?? c.value))])),
+  factions: Object.fromEntries((d.factions || []).map(f => [f.id, Math.max(-3, Math.min(3, intOr(stored?.factions?.[f.id], f.attitude)))])),
+  clocks: Object.fromEntries((d.clocks || []).map(c => [c.id, Math.max(0, Math.min(c.max, intOr(stored?.clocks?.[c.id], c.value)))])),
 });
 
 /** Сдвиги состояния за партию: id → изменение */

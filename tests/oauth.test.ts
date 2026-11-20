@@ -80,6 +80,14 @@ describe('вход через VK, Яндекс, Google', () => {
     expect(vme.name).toBe('Иван Петров');
   });
 
+  it('next — только путь своего сайта (нет открытого редиректа)', async () => {
+    for (const [next, want] of [['/world/abc?x=1', '/world/abc?x=1'], ['//evil.com', '/'], ['/\\evil.com', '/'], ['https://evil.com', '/'], ['/ok\\..\\x', '/']]) {
+      const start = await request(ctx.app).get(`/api/auth/oauth/google/start?next=${encodeURIComponent(next)}`);
+      const state = new URL(start.headers.location).searchParams.get('state');
+      expect((ctx.db.prepare('SELECT next FROM oauth_states WHERE state = ?').get(state) as any).next, next).toBe(want);
+    }
+  });
+
   it('подмена state или чужой браузер — отказ', async () => {
     const a = request.agent(ctx.app);
     profiles.c5 = { sub: 'g-3', email: 'z@example.com', email_verified: true };

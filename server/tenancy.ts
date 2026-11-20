@@ -5,7 +5,7 @@ import { deleteWorkspaceCascade } from "./db";
 import { hashPassword, verifyPassword, randomToken, sha256, encrypt, decrypt } from "./crypto";
 import { requireUser, rateLimit, setSessionCookie, clearSessionCookie, SESSION_DAYS } from "./security";
 import { effectivePlan, PLANS, paymentsProvider, type Billing } from "./billing";
-import { completeWithUsage, describeProvider, PROVIDERS, type LlmSettings, type Provider } from "./llm";
+import { completeWithUsage, checkUserUrl, describeProvider, PROVIDERS, type LlmSettings, type Provider } from "./llm";
 import { readSettings } from "./store";
 import { sendMail, mailConfigured } from "./mailer";
 import { requireSuperadmin } from "./security";
@@ -71,6 +71,7 @@ export function createTenancy(db: DB, billing: Billing) {
           modelName: ws.ai_model || undefined,
           openRouterModel: ws.ai_provider === "openrouter" ? ws.ai_model || undefined : undefined,
           modelUrl: ws.ai_provider === "local" ? ws.ai_url || undefined : undefined,
+          untrustedUrl: ws.ai_provider === "local",
           apiKey: ws.ai_provider === "openrouter" ? undefined : key,
           openRouterApiKey: ws.ai_provider === "openrouter" ? key : undefined,
         },
@@ -208,8 +209,10 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
   app.post("/api/auth/forgot", authLimiter, async (req, res) => {
     const email = str(req.body?.email, 200).trim().toLowerCase();
     const user = db.prepare("SELECT id, email FROM users WHERE email = ?").get(email) as any;
-    if (user && mailConfigured()) {
-      const link = `${appUrl(req)}/reset/${createResetToken(user.id, 1)}`;
+    // ссылку в письме строим только от APP_URL: адрес из заголовка Host подделывается, и токен сброса ушёл бы на чужой сайт
+    if (user && mailConfigured() && !process.env.APP_URL) console.error("[auth] письмо сброса не отправлено: задайте APP_URL");
+    if (user && mailConfigured() && process.env.APP_URL) {
+      const link = `${process.env.APP_URL.replace(/\/$/, "")}/reset/${createResetToken(user.id, 1)}`;
       await sendMail(user.email, "Восстановление пароля — Nexus RPG", `Чтобы задать новый пароль, откройте ссылку (действует 1 час):\n${link}\n\nЕсли вы не запрашивали сброс — просто проигнорируйте письмо.`);
     }
     // Ответ одинаковый для любых email — нельзя узнать, кто зарегистрирован
@@ -249,7 +252,7 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
     res.json(t.workspaceView(billing.getWs(req.params.wid), (req as any).wsRole));
   });
 
-  app.patch("/api/workspaces/:wid", requireUser, t.requireWsRole("admin"), (req, res) => {
+  app.patch("/api/workspaces/:wid", requireUser, t.requireWsRole("admin"), async (req, res) => {
     const wid = req.params.wid;
     const b = req.body || {};
     if (typeof b.name === "string" && b.name.trim()) db.prepare("UPDATE workspaces SET name = ? WHERE id = ?").run(b.name.trim().slice(0, 80), wid);
@@ -263,6 +266,7 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
             const u = new URL(str(b.ai.url, 300));
             if (!/^https?:$/.test(u.protocol)) throw new Error();
           } catch { return res.status(400).json({ error: "bad_url", message: "Некорректный URL модели" }); }
+          try { await checkUserUrl(str(b.ai.url, 300)); } catch (e: any) { return res.status(400).json({ error: "bad_url", message: e?.message || "Недопустимый URL модели" }); }
         }
         db.prepare("UPDATE workspaces SET ai_mode = 'byok', ai_provider = ?, ai_model = ?, ai_url = ? WHERE id = ?")
           .run(provider, str(b.ai.model, 120) || null, provider === "local" ? str(b.ai.url, 300) : null, wid);

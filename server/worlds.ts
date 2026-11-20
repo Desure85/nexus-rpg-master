@@ -411,11 +411,11 @@ export function createWorlds(db: DB) {
     const data = JSON.parse(w.data);
     const st = worldState(data, w.state ? JSON.parse(w.state) : null);
     const delta: WorldDelta = JSON.parse(e.delta);
-    for (const [k, v] of Object.entries(delta.factions || {})) if (k in st.factions) st.factions[k] = Math.max(-3, Math.min(3, st.factions[k] + Number(v)));
+    for (const [k, v] of Object.entries(delta.factions || {})) if (Object.hasOwn(st.factions, k)) st.factions[k] = Math.max(-3, Math.min(3, st.factions[k] + Number(v)));
     const filled: string[] = [];
     for (const [k, v] of Object.entries(delta.clocks || {})) {
       const c = (data.clocks || []).find((x: any) => x.id === k);
-      if (!c || !(k in st.clocks)) continue;
+      if (!c || !Object.hasOwn(st.clocks, k)) continue;
       st.clocks[k] = Math.max(0, st.clocks[k] + Number(v));
       if (st.clocks[k] >= c.max) { filled.push(k); st.clocks[k] = 0; }
     }
@@ -570,8 +570,9 @@ export function createWorlds(db: DB) {
       const status = ["canon", "hidden", "new"].includes(req.body?.status) ? req.body.status : null;
       const summary = typeof req.body?.summary === "string" ? str(req.body.summary, 1200) : null;
       if (!status && summary === null) return res.status(400).json({ error: "nothing_to_change" });
-      db.prepare(`UPDATE world_chronicle SET ${[status ? "status = @status" : "", summary !== null ? "summary = @summary" : ""].filter(Boolean).join(", ")} WHERE id = @id AND world_id = @wid`)
+      const upd = db.prepare(`UPDATE world_chronicle SET ${[status ? "status = @status" : "", summary !== null ? "summary = @summary" : ""].filter(Boolean).join(", ")} WHERE id = @id AND world_id = @wid`)
         .run({ status, summary, id: req.params.cid, wid: req.params.wid });
+      if (!upd.changes) return res.status(404).json({ error: "entry_not_found" });
       if (status === "canon") applyEntry(req.params.cid);
       res.json({ status: "ok" });
     });

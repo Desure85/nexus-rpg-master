@@ -36,7 +36,7 @@ export const capTurnChanges = <T extends Change>(changes: T[], resolve: (name: s
   for (const { c, delta } of sum.values()) {
     let lim = Infinity;
     if (c.field === 'hp') lim = delta < 0 ? TURN_CAPS.damage : TURN_CAPS.heal;
-    else if (delta > 0 && c.field in TURN_CAPS) lim = (TURN_CAPS as any)[c.field];
+    else if (delta > 0 && Object.hasOwn(TURN_CAPS, c.field)) lim = (TURN_CAPS as any)[c.field];
     const applied = Math.sign(delta) * Math.min(Math.abs(delta), lim);
     if (applied !== delta) cut.push({ field: c.field, name: resolve(c.name), asked: delta, applied });
     if (applied) out.push({ ...c, delta: applied });
