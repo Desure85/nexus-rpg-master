@@ -299,12 +299,13 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
 
   const ensureEngineState = (sessionId: string): any => {
     const row = db.prepare("SELECT * FROM engine_state WHERE session_id = ?").get(sessionId) as any;
-    if (row) return JSON.parse(row.characters);
+    // объект без прототипа: имя героя «constructor» или «__proto__» из запроса не достанет служебные поля
+    if (row) return Object.assign(Object.create(null), JSON.parse(row.characters));
     const sess = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
     if (sess) {
       const history = JSON.parse(sess.history || "[]");
       const dash = history.slice().reverse().find((m: any) => m.dashboard)?.dashboard;
-      const chars: any = {};
+      const chars: any = Object.create(null);
       for (const c of (dash?.characters || [])) {
         const { cur, max } = parseHpNum(c.hp);
         chars[c.name] = { hp_cur: cur, hp_max: max, stress: Number(c.stress) || 0, gold: Number(c.gold) || 0, xp: Number(c.xp) || 0, tokens: Number(c.tokens) || 0, status: "active" };
@@ -314,7 +315,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
         return chars;
       }
     }
-    return {};
+    return Object.create(null);
   };
   const saveEngineState = (sessionId: string, chars: any) => {
     db.prepare("INSERT INTO engine_state (session_id, characters) VALUES (?,?) ON CONFLICT(session_id) DO UPDATE SET characters=excluded.characters").run(sessionId, JSON.stringify(chars));
@@ -342,7 +343,7 @@ export function registerGameRoutes(app: Express, ctx: GameCtx) {
   };
   /** Имя из тега модели → ключ движка: точное, без регистра, затем однозначное вхождение («Арн» → «Арн Железный»). */
   const resolveName = (chars: any, raw: string): string | null => {
-    if (chars[raw]) return raw;
+    if (Object.hasOwn(chars, raw)) return raw;
     const names = Object.keys(chars);
     const low = raw.toLowerCase().replace(/ё/g, "е");
     const norm = (n: string) => n.toLowerCase().replace(/ё/g, "е");

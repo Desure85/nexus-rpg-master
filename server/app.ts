@@ -6,6 +6,8 @@ import fs from "fs";
 import { openDatabase, type DB } from "./db";
 import { initSecret } from "./crypto";
 import { buildApi, apiErrorHandler } from "./api";
+import { setUrlGuard } from "./llm";
+import { assertPublicUrl } from "./netguard";
 
 export interface AppOptions {
   dbPath?: string;
@@ -38,6 +40,7 @@ export async function createApp(opts: AppOptions = {}) {
     for (const c of clients) if (c.readyState === WebSocket.OPEN) c.send(msg);
   };
 
+  setUrlGuard(assertPublicUrl);
   const { engine, billing, tenancy, ops } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
   ops.start();
 
@@ -80,7 +83,10 @@ export async function createApp(opts: AppOptions = {}) {
   const staticDir = opts.staticDir ?? (process.env.NODE_ENV === "production" ? path.resolve(process.env.STATIC_DIR || "dist") : undefined);
   if (staticDir && fs.existsSync(staticDir)) {
     app.use(express.static(staticDir, { index: false, maxAge: "1h", setHeaders: (res, p) => { if (p.includes(`${path.sep}assets${path.sep}`)) res.setHeader("Cache-Control", "public, max-age=31536000, immutable"); } }));
-    app.get("*", (_req, res) => res.sendFile(path.join(staticDir, "index.html")));
+    // CSP для страницы приложения: только свои скрипты, без inline-JS; шрифты Google; список моделей OpenRouter в настройках
+    const CSP = ["default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob:", "connect-src 'self' ws: wss: https://openrouter.ai", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'self'", "form-action 'self'"].join("; ");
+    app.get("*", (_req, res) => { res.setHeader("Content-Security-Policy", process.env.CSP || CSP); res.sendFile(path.join(staticDir, "index.html")); });
   } else if (opts.vite) {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: { server } }, appType: "spa" });

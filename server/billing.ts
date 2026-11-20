@@ -46,7 +46,9 @@ export const getProducts = (): Product[] => {
 
 export const paymentsProvider = (): "none" | "yookassa" | "mock" => {
   const p = (process.env.PAYMENTS_PROVIDER || "").toLowerCase();
-  if (p === "yookassa" || p === "mock") return p;
+  if (p === "yookassa") return p;
+  // тестовая «оплата одним кликом» в продакшене — бесплатные кредиты любому; только с явным разрешением
+  if (p === "mock") return process.env.NODE_ENV !== "production" || process.env.ALLOW_MOCK_PAYMENTS === "true" ? "mock" : "none";
   return "none";
 };
 

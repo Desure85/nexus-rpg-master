@@ -89,7 +89,8 @@ export function registerOAuthRoutes(app: Express, db: DB, t: Tenancy) {
   const limiter = rateLimit({ windowMs: 15 * 60_000, max: Number(process.env.AUTH_ATTEMPTS_PER_15MIN || 20) });
   const baseUrl = (req: Request) => (process.env.APP_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
   const redirectUri = (req: Request, id: string) => `${baseUrl(req)}/api/auth/oauth/${id}/callback`;
-  const safeNext = (v: unknown) => (typeof v === "string" && /^\/(?!\/)[^\s]*$/.test(v) ? v.slice(0, 300) : "/");
+  // только путь своего сайта: без «//», «/\» (браузеры читают как другой хост) и управляющих символов
+  const safeNext = (v: unknown) => (typeof v === "string" && /^\/(?![/\\])[^\s\\]*$/.test(v) ? v.slice(0, 300) : "/");
   const fail = (res: Response, msg: string) => res.redirect(`/?auth_error=${encodeURIComponent(msg)}`);
 
   app.get("/api/auth/providers", (_req, res) => res.json(configured().map(p => ({ id: p.id, name: p.name }))));
