@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://openrouter.ai https://generativelanguage.googleapis.com https://opencode.ai http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'self'">
+    <script>// Окружение «сервера» для демо на GitHub Pages. Встраивается в index.html до загрузки модулей.
+(function () {
+  var base = location.pathname.replace(/[^/]*$/, '');
+  globalThis.__nexusEnv = {
+    NODE_ENV: 'demo',
+    DEFAULT_PROVIDER: 'mock',
+    GEMINI_REST: '1',
+    ALLOW_BYOK_CUSTOM_URL: 'true',
+    MOCK_LLM_DELAY_MS: '18',
+    MOCK_STYLE: 'demo',
+    PAYMENTS_PROVIDER: 'mock',
+    FREE_CREDITS: '300',
+    DISCLAIMER_EXTRA: 'Это демо: всё хранится только в вашем браузере. По умолчанию вместо ИИ отвечают заготовки; можно подключить свой ключ ИИ в настройках пространства — запросы пойдут из вашего браузера напрямую провайдеру. Оплата тестовая — деньги не списываются.',
+    APP_URL: location.origin + base + '#',
+  };
+})();
+</script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0502" />
+    <meta name="description" content="Настольная ролевая игра с ИИ-мастером: соло, с друзьями или интерактивная сказка на ночь. Честные кубики, живые миры, герои растут из партии в партию." />
+    <title>Fate &amp; Dragons — настольная ролевая игра с ИИ-мастером</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Fate &amp; Dragons — настольная ролевая игра с ИИ-мастером" />
+    <meta property="og:description" content="Соло, с друзьями или сказка на ночь. Честные кубики, живые миры, герои растут из партии в партию." />
+    <script type="module" crossorigin src="/nexus-rpg-master/assets/index-DHEPK5jD.js"></script>
+    <link rel="modulepreload" crossorigin href="/nexus-rpg-master/assets/react-Cqdkqb_d.js">
+    <link rel="modulepreload" crossorigin href="/nexus-rpg-master/assets/demo-server-DMKT6TTL.js">
+    <link rel="modulepreload" crossorigin href="/nexus-rpg-master/assets/motion-CaceCcKx.js">
+    <link rel="modulepreload" crossorigin href="/nexus-rpg-master/assets/d3-tLBDXW5W.js">
+    <link rel="stylesheet" crossorigin href="/nexus-rpg-master/assets/index-B-kFF6XN.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
