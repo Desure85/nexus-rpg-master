@@ -83,6 +83,8 @@ function qualityMetrics(title, texts, hero) {
 async function register(page) {
   watchDialogs(page);
   await page.goto(BASE);
+  await page.getByTestId('landing').or(page.getByText('РЕГИСТРАЦИЯ', { exact: false })).first().waitFor({ timeout: 15000 });
+  if (await page.getByTestId('landing-start').count()) await page.getByTestId('landing-start').first().click(); // лендинг для гостей
   await page.getByText('РЕГИСТРАЦИЯ', { exact: false }).click();
   await page.fill("input[placeholder='Как вас называть']", 'Тестовый мастер');
   await page.fill('input[type=email]', `gm-${Date.now()}@e2e.local`);

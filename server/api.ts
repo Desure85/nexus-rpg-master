@@ -11,6 +11,7 @@ import { WORLD_GEN_SYSTEM, parseGeneratedWorld, closeJson } from "../shared/worl
 import { normalizeBlocks } from "../shared/parse";
 import { archetypeById } from "../shared/archetypes";
 import { createOps } from "./ops";
+import { createFunnel } from "./funnel";
 import { authMiddleware, csrfGuard, requireUser, requireSuperadmin, rateLimit, securityHeaders } from "./security";
 import { createBilling, registerBillingRoutes, effectivePlan, PLANS, BillingError, paymentsProvider } from "./billing";
 import { createTenancy, registerTenancyRoutes, registrationMode } from "./tenancy";
@@ -39,6 +40,7 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   const worlds = createWorlds(db);
   // после каждого хода мастера — проверка достижений
   const ops = createOps(db, { dbPath: opts.dbPath });
+  const funnel = createFunnel(db);
   const broadcastWithHooks = (room: string, data: any) => {
     broadcast(room, data);
     ops.onEvent(data);
@@ -721,9 +723,10 @@ export function buildApi(app: Express, opts: { db: DB; broadcast: (roomId: strin
   });
 
   ops.register(app);
+  funnel.register(app);
   app.use("/api", (_req, res) => res.status(404).json({ error: "not_found" }));
 
-  return { engine, billing, tenancy, gameApi, ops };
+  return { engine, billing, tenancy, gameApi, ops, worlds };
 }
 
 /** Ошибки обработчиков — JSON, без стектрейсов наружу. */

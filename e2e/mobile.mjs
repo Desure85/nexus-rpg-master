@@ -71,7 +71,11 @@ async function run(browser, width, height) {
   const page = await ctx.newPage();
   page.on('dialog', d => d.dismiss().catch(() => undefined));
   await page.goto(BASE);
-  await snap(page, 'auth');
+  await page.waitForTimeout(800);
+  await snap(page, 'landing');
+  await page.mouse.wheel(0, 1500); await snap(page, 'landing_worlds'); await page.mouse.wheel(0, -3000);
+  await page.getByTestId('landing').or(page.getByText('РЕГИСТРАЦИЯ', { exact: false })).first().waitFor({ timeout: 15000 });
+  if (await page.getByTestId('landing-start').count()) await page.getByTestId('landing-start').first().click(); // лендинг для гостей
   await page.getByText('РЕГИСТРАЦИЯ', { exact: false }).click();
   await page.fill("input[placeholder='Как вас называть']", 'Мобильный мастер');
   await page.fill('input[type=email]', `m-${width}-${Date.now()}@e2e.local`);

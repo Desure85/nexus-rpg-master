@@ -13,8 +13,9 @@ import { Send, Loader2, Sparkles, BookOpen, History, Plus, Minus, Settings as Se
 import { motion, AnimatePresence } from 'motion/react';
 import { MECHANIC_INFO, levelFromXp, INITIAL_DASHBOARD, TALE_AGES } from '../shared/rules';
 import { cleanStreamForDisplay, displayUserContent } from '../shared/parse';
-import { api, ApiError, useSessionSocket, characterLink, locationSearch, clearLocationSearch, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
+import { api, ApiError, IS_DEMO, useSessionSocket, characterLink, locationSearch, clearLocationSearch, getSavedWorkspace, saveWorkspace, onUnauthorized, type SocketEvent } from './api';
 import { AuthScreen, ResetPasswordScreen } from './components/AuthScreen';
+import { Landing } from './components/Landing';
 import { WorkspaceModal, type WorkspaceTab } from './components/WorkspaceModal';
 import { AdminPanel } from './components/AdminPanel';
 import { OraclePanel } from './components/OraclePanel';
@@ -57,6 +58,12 @@ const ResetRoute: React.FC<{ onDone: () => void }> = ({ onDone }) => {
 
 /** Приглашение мастера в пространство: /invite/:token */
 /** Ссылка на мир: открываем каталог миров с этим миром и уходим на главную. */
+/** /world/:id — без входа лендинг показывает этот мир, после входа открывается окно мира. */
+const WorldGate: React.FC<{ gate: (node: React.ReactNode, worldId?: string) => React.ReactNode; onOpen: (id: string) => void }> = ({ gate, onOpen }) => {
+  const { worldId = '' } = useParams();
+  return <>{gate(<WorldLinkRoute onOpen={onOpen} />, worldId)}</>;
+};
+
 const WorldLinkRoute: React.FC<{ onOpen: (id: string) => void }> = ({ onOpen }) => {
   const { worldId } = useParams();
   useEffect(() => { if (worldId) onOpen(worldId); }, [worldId]);
@@ -912,11 +919,12 @@ export default function App() {
     } catch (e) { reportError(e); }
   };
 
-  const gate = (node: React.ReactNode) =>
+  const gate = (node: React.ReactNode, worldId?: string) =>
     authState === 'loading' ? (
       <div className="h-[100dvh] flex items-center justify-center bg-[#0a0502]"><Loader2 className="animate-spin text-white/40" /></div>
     ) : authState === 'anon' ? (
-      <AuthScreen registration={serverConfig?.registration || 'open'} onDone={() => loadMe()} />
+      IS_DEMO ? <AuthScreen registration={serverConfig?.registration || 'open'} onDone={() => loadMe()} />
+        : <Landing registration={serverConfig?.registration || 'open'} onDone={() => loadMe()} worldId={worldId} />
     ) : node;
 
   return (
@@ -924,7 +932,7 @@ export default function App() {
       <Route path="/character/:sessionId/:charName" element={<><CharacterView /><PromptModal /></>} />
       <Route path="/invite/:token" element={authState === 'loading' ? gate(null) : <InviteRoute user={user} registration={serverConfig?.registration || 'open'} onAccepted={(wid) => loadMe(wid)} />} />
       <Route path="/reset/:token" element={<ResetRoute onDone={() => loadMe()} />} />
-      <Route path="/world/:worldId" element={gate(<WorldLinkRoute onOpen={id => setWorldsOpen({ openId: id })} />)} />
+      <Route path="/world/:worldId" element={<WorldGate gate={gate} onOpen={id => setWorldsOpen({ openId: id })} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
       <Route path="/" element={gate(
         <div className="flex h-screen h-[100dvh] bg-[#0a0502] overflow-hidden relative">

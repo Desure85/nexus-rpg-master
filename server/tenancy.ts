@@ -1,3 +1,4 @@
+import { recordSignupSource } from "./funnel";
 import type { Express, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
 import type { DB } from "./db";
@@ -155,6 +156,7 @@ export function registerTenancyRoutes(app: Express, db: DB, t: Tenancy, billing:
     const isSuper = superEmails.length ? superEmails.includes(email) : firstUser;
     const id = crypto.randomUUID();
     db.prepare("INSERT INTO users (id, email, name, password_hash, is_superadmin) VALUES (?,?,?,?,?)").run(id, email, name, await hashPassword(password), isSuper ? 1 : 0);
+    recordSignupSource(db, id, req);
     if (invite) t.acceptInvite(invite, id);
     else t.createWorkspace(`Пространство ${name}`, id);
     if (isSuper) t.adoptLegacySessions(id);

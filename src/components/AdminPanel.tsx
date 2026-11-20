@@ -16,7 +16,7 @@ const fmt = (s?: string | null) => (s ? new Date(String(s).replace(' ', 'T') + '
 
 /** Панель администратора платформы: пространства, кредиты, выручка, ИИ платформы. */
 export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSettingsSaved }) => {
-  const [tab, setTab] = useState<'workspaces' | 'ai' | 'health'>('workspaces');
+  const [tab, setTab] = useState<'workspaces' | 'ai' | 'health' | 'funnel'>('workspaces');
   const [data, setData] = useState<{ workspaces: any[]; revenue: any[] } | null>(null);
   const [error, setError] = useState('');
   const [local, setLocal] = useState<AppSettings>(settings);
@@ -60,9 +60,9 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
           <h1 className="font-display text-2xl font-bold text-white">Администрирование платформы</h1>
         </div>
         <div className="flex gap-2">
-          {(['workspaces', 'ai', 'health'] as const).map(t => (
+          {(['workspaces', 'ai', 'health', 'funnel'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest ${tab === t ? 'bg-white text-black' : 'bg-white/5 text-white/50'}`}>
-              {t === 'workspaces' ? 'Пространства' : t === 'ai' ? 'ИИ платформы' : 'Здоровье'}
+              {t === 'workspaces' ? 'Пространства' : t === 'ai' ? 'ИИ платформы' : t === 'health' ? 'Здоровье' : 'Воронка'}
             </button>
           ))}
         </div>
@@ -130,6 +130,7 @@ export const AdminPanel: React.FC<Props> = ({ settings, serverLlm, onBack, onSet
         )}
 
         {tab === 'health' && <OpsPanel />}
+        {tab === 'funnel' && <FunnelPanel />}
 
         {tab === 'ai' && (
           <div className="max-w-2xl space-y-4">
@@ -191,6 +192,48 @@ const OpsPanel: React.FC = () => {
         <p className="text-xs text-white/55">Почта: {d.alerts.email ? 'включена' : 'нет (ALERT_EMAIL + SMTP_URL)'} · вебхук: {d.alerts.webhook ? 'включён' : 'нет (ALERT_WEBHOOK_URL)'}. Срабатывают при ≥30% ошибок ходов или p95 больше 3 минут за 15 минут, и если бэкап не удался или устарел; не чаще раза в час на тему.</p>
       </div>
       {msg && <p className="text-xs text-emerald-300">{msg}</p>}
+    </div>
+  );
+};
+
+/** Воронка: заходы на лендинг → регистрации → начали игру → сыграли 3+ хода → вернулись в другой день → оплатили. */
+const FunnelPanel: React.FC = () => {
+  const [days, setDays] = useState(30);
+  const [d, setD] = useState<any>(null);
+  useEffect(() => { setD(null); api<any>(`/api/admin/funnel?days=${days}`).then(setD).catch(() => setD({ error: true })); }, [days]);
+  const STEPS: [string, string][] = [['visits', 'Заходы на лендинг'], ['signups', 'Регистрации'], ['started', 'Начали игру'], ['played', 'Сыграли 3+ хода'], ['returned', 'Вернулись в другой день'], ['paid', 'Оплатили']];
+  const pct = (a: number, b: number) => b ? `${Math.round((a / b) * 100)}%` : '—';
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">{[7, 30, 90].map(n => <button key={n} onClick={() => setDays(n)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${days === n ? 'bg-white text-black' : 'bg-white/5 text-white/50'}`}>{n} дней</button>)}</div>
+      {!d ? <p className="text-xs text-white/40">Загрузка…</p> : d.error ? <p className="text-xs text-red-300">Не удалось загрузить</p> : <>
+        <div className="space-y-1.5">
+          {STEPS.map(([k, name], i) => {
+            const v = d[k] || 0, top = Math.max(1, d.visits || d.signups || 1);
+            const prev = i > 0 ? d[STEPS[i - 1][0]] || 0 : 0;
+            return (
+              <div key={k} className="flex items-center gap-3 text-sm">
+                <span className="w-48 text-white/60 text-xs">{name}</span>
+                <div className="flex-1 h-6 bg-white/[0.04] rounded-md overflow-hidden"><div className="h-full bg-amber-500/50" style={{ width: `${Math.min(100, (v / top) * 100)}%` }} /></div>
+                <span className="w-24 text-right text-white font-semibold">{v} <span className="text-[10px] text-white/40 font-normal">{i > 0 ? pct(v, prev) : ''}</span></span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-white/35">Шаги после регистрации считаются по когорте зарегистрировавшихся за период; процент — от предыдущего шага. Заходы считаются раз в день на браузер, без сторонних счётчиков. Источник — <code>?utm_source=</code> или <code>?ref=</code> в ссылке на сайт.</p>
+        {d.bySource?.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="text-white/40 text-left">{['Источник', 'Заходы', 'Регистрации', 'Начали', '3+ хода', 'Вернулись', 'Оплатили'].map(h => <th key={h} className="py-1.5 pr-3 font-semibold">{h}</th>)}</tr></thead>
+              <tbody>{d.bySource.map((r: any) => (
+                <tr key={r.source} className="border-t border-white/5 text-white/70">
+                  <td className="py-1.5 pr-3 text-white">{r.source}</td><td className="pr-3">{r.visits}</td><td className="pr-3">{r.signups}</td><td className="pr-3">{r.started}</td><td className="pr-3">{r.played}</td><td className="pr-3">{r.returned}</td><td className="pr-3">{r.paid}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </>}
     </div>
   );
 };
