@@ -8,14 +8,16 @@ interface Props {
   registration: 'open' | 'invite' | 'closed';
   inviteToken?: string;
   onDone: () => void;
+  /** с лендинга: сразу форма регистрации */
+  initialMode?: 'login' | 'register';
 }
 
 const inputCls = 'w-full px-4 py-3 bg-black/40 border border-white/10 rounded-xl text-white placeholder:text-white/30 focus:outline-none focus:border-emerald-500/50 transition-all';
 
 /** Вход и регистрация мастеров. Игрокам по ссылке на героя аккаунт не нужен. */
-export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone }) => {
+export const AuthScreen: React.FC<Props> = ({ registration, inviteToken, onDone, initialMode }) => {
   const canRegister = registration === 'open' || !!inviteToken;
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(inviteToken ? 'register' : 'login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>(inviteToken ? 'register' : initialMode === 'register' && canRegister ? 'register' : 'login');
   const [info, setInfo] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

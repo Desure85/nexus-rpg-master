@@ -41,7 +41,7 @@ export async function createApp(opts: AppOptions = {}) {
   };
 
   setUrlGuard(assertPublicUrl);
-  const { engine, billing, tenancy, ops } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
+  const { engine, billing, tenancy, ops, worlds } = buildApi(app, { db, broadcast, dbPath: opts.db ? undefined : dbPath });
   ops.start();
 
   wss.on("connection", ws => {
@@ -86,7 +86,33 @@ export async function createApp(opts: AppOptions = {}) {
     // CSP для страницы приложения: только свои скрипты, без inline-JS; шрифты Google; список моделей OpenRouter в настройках
     const CSP = ["default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", "font-src 'self' data: https://fonts.gstatic.com",
       "img-src 'self' data: blob:", "connect-src 'self' ws: wss: https://openrouter.ai", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'self'", "form-action 'self'"].join("; ");
-    app.get("*", (_req, res) => { res.setHeader("Content-Security-Policy", process.env.CSP || CSP); res.sendFile(path.join(staticDir, "index.html")); });
+    // Превью ссылок (VK, Telegram, поисковики): для /world/:id — название, описание и обложка мира в og-тегах
+    const indexHtml = fs.readFileSync(path.join(staticDir, "index.html"), "utf8");
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const base = () => (process.env.APP_URL || "").replace(/\/$/, "");
+    const withMeta = (title: string, desc: string, image?: string, url?: string) => indexHtml
+      .replace(/\s*<meta property="og:[^>]*>/g, "")
+      .replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`)
+      .replace(/<meta name="description"[^>]*>/, `<meta name="description" content="${esc(desc)}" />`)
+      .replace(/<\/head>/, [
+        `<meta property="og:type" content="website" />`, `<meta property="og:title" content="${esc(title)}" />`, `<meta property="og:description" content="${esc(desc)}" />`,
+        ...(image && base() ? [`<meta property="og:image" content="${esc(base() + image)}" />`, `<meta name="twitter:card" content="summary_large_image" />`] : []),
+        ...(url && base() ? [`<meta property="og:url" content="${esc(base() + url)}" />`] : []),
+      ].join("\n    ") + "\n  </head>");
+    // Поисковикам: публичные миры в sitemap (адреса — от APP_URL)
+    app.get("/sitemap.xml", (_req, res) => {
+      if (!base()) return res.status(404).end();
+      const ids = worlds.publicIds();
+      res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n<url><loc>${esc(base())}/</loc></url>\n${ids.map(id => `<url><loc>${esc(`${base()}/world/${id}`)}</loc></url>`).join("\n")}\n</urlset>`);
+    });
+    app.get("/robots.txt", (_req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\nAllow: /world/\nDisallow: /api/\nDisallow: /invite/\nDisallow: /reset/\nDisallow: /character/\n${base() ? `Sitemap: ${base()}/sitemap.xml\n` : ""}`));
+    app.get("*", (req, res) => {
+      res.setHeader("Content-Security-Policy", process.env.CSP || CSP);
+      const m = req.path.match(/^\/world\/([0-9a-z-]{1,64})\/?$/i);
+      const w = m ? worlds.publicPreview(m[1]) : null;
+      if (w) return res.type("html").send(withMeta(`${w.title} — мир для игры с ИИ-мастером`, (w.description || w.scenarios[0]?.hook || "").slice(0, 200), w.cover, req.path));
+      res.sendFile(path.join(staticDir, "index.html"));
+    });
   } else if (opts.vite) {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({ server: { middlewareMode: true, hmr: { server } }, appType: "spa" });

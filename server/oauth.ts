@@ -1,3 +1,4 @@
+import { recordSignupSource } from "./funnel";
 // Вход через VK ID, Яндекс ID и Google (OAuth 2.0 / 2.1 + PKCE).
 // Провайдер включается, когда заданы его ключи в окружении; без ключей кнопка не показывается.
 import crypto from "crypto";
@@ -155,6 +156,7 @@ export function registerOAuthRoutes(app: Express, db: DB, t: Tenancy) {
       const superEmails = (process.env.SUPERADMIN_EMAILS || "").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
       const isSuper = superEmails.length ? superEmails.includes(freeEmail) : firstUser;
       db.prepare("INSERT INTO users (id, email, name, password_hash, is_superadmin) VALUES (?, ?, ?, '', ?)").run(userId, freeEmail, name, isSuper ? 1 : 0);
+    recordSignupSource(db, userId, req);
       if (invite) t.acceptInvite(invite, userId);
       else t.createWorkspace(`Пространство ${name}`, userId);
     }

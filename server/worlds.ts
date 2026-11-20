@@ -337,6 +337,28 @@ export function createWorlds(db: DB) {
       res.json({ ok: true });
     });
 
+    /* ---------- без входа: витрина для лендинга и ссылок «поделиться» (только каталог и «по ссылке», без лора) ---------- */
+    app.get("/api/public/worlds", (_req, res) => {
+      const rows = db.prepare(`${SELECT_FOR} WHERE w.visibility = 'public' AND w.hidden = 0 ORDER BY (w.owner_id = '${SYSTEM_AUTHOR}') DESC, w.plays DESC, w.likes DESC LIMIT 12`).all(...U("")) as any[];
+      res.setHeader("Cache-Control", "public, max-age=300");
+      res.json(rows.map(r => publicCard(row2world(r, undefined, false))));
+    });
+    app.get("/api/public/worlds/:wid", (req, res) => {
+      const w = publicPreview(req.params.wid);
+      if (!w) return res.status(404).json({ error: "world_not_found" });
+      res.json(w);
+    });
+    // обложка публичного мира без входа (для превью ссылок в мессенджерах)
+    app.get("/api/public/worlds/:wid/cover", (req, res) => {
+      const r = db.prepare("SELECT w.id FROM worlds w WHERE w.id = ? AND w.visibility IN ('public','link') AND w.hidden = 0").get(req.params.wid) as any;
+      const row = r ? db.prepare("SELECT mime, data FROM world_covers WHERE world_id = ?").get(r.id) as any : null;
+      if (!row) return res.status(404).end();
+      res.setHeader("Content-Type", row.mime);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+      res.end(row.data);
+    });
+
     /* ---------- обложка: JPEG/PNG/WebP до 400 КБ, клиент заранее ужимает до 1280×720 ---------- */
     const COVER_MAX = 400 * 1024;
     const sniff = (b: Uint8Array) =>
@@ -523,6 +545,18 @@ export function createWorlds(db: DB) {
       ORDER BY (abs(level) >= 3) DESC, updated_at DESC, abs(level) DESC LIMIT ?`).all(worldId, userId, limit) as any[])
       .map(r => ({ name: r.name, description: r.description, status: r.status, level: r.level, hero: r.hero, sessions: r.sessions, updatedAt: r.updated_at }));
 
+  /** Карточка мира без входа: название, описание, жанр, сюжеты (заголовки и завязки), оценка — без лора, авторских данных и цен покупок. */
+  const publicCard = (w: World) => ({
+    id: w.id, title: w.title, icon: w.icon, genre: w.genre, description: w.description, author: w.author, official: w.official,
+    plays: w.plays, likes: w.likes, rating: w.rating, reviews: w.reviews, price: w.price,
+    ...(w.cover ? { cover: `/api/public/worlds/${w.id}/cover?v=${(w.cover.match(/v=(\d+)/) || [])[1] || 1}` } : {}),
+    scenarios: (w.data.scenarios || []).map(sc => ({ title: sc.title, hook: sc.hook.slice(0, 300), mode: sc.mode })),
+  });
+  const publicPreview = (id: string) => {
+    const r = db.prepare(`${SELECT_FOR} WHERE w.id = ? AND w.visibility IN ('public','link') AND w.hidden = 0`).get(...U(""), id) as any;
+    return r ? publicCard(row2world(r, undefined, false)) : null;
+  };
+
   /** Канон хроники для промпта новой партии (последние события, кроме этой же партии). */
   const canonFor = (worldId: string, exceptSession?: string, limit = 6) =>
     db.prepare(`SELECT kind, title, summary, heroes, created_at FROM world_chronicle WHERE world_id = ? AND status = 'canon' AND (session_id IS NULL OR session_id != ?)
@@ -595,5 +629,5 @@ export function createWorlds(db: DB) {
     });
   };
 
-  return { register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, getForPlay, countPlay, checkSession, canonFor, rememberSession, npcMemoryFor };
+  return { register: (app: Express, requireUser: any) => { registerChronicle(app, requireUser); register(app, requireUser); }, publicPreview, publicIds: () => (db.prepare("SELECT id FROM worlds WHERE visibility = 'public' AND hidden = 0 ORDER BY plays DESC LIMIT 1000").all() as { id: string }[]).map(r => r.id), getForPlay, countPlay, checkSession, canonFor, rememberSession, npcMemoryFor };
 }
